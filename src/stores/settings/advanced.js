@@ -671,10 +671,11 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     async function setAutoJoinGroupCertification() {
-        autoJoinGroupCertification.value = !autoJoinGroupCertification.value;
+        // Force disabled: auto-join feature removed
+        autoJoinGroupCertification.value = false;
         await configRepository.setBool(
             'VRCX_autoJoinGroupCertification',
-            autoJoinGroupCertification.value
+            false
         );
     }
 
