@@ -1252,7 +1252,7 @@
                         "description": "Encrypt Password (Disables Auto Login)"
                     },
                     "auto_join_group_certification": {
-                        "header": "Certification"
+                        "header": "Certification (Disabled)"
                     },
                     "relaunch_vrchat": {
                         "header": "Auto Relaunch VRChat After Crash",
