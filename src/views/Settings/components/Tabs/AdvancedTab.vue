@@ -24,9 +24,9 @@
                 :description="t('view.settings.advanced.advanced.self_invite.description')">
                 <Switch :model-value="selfInviteOverride" @update:modelValue="setSelfInviteOverride" />
             </SettingsItem>
-            
+
             <SettingsItem :label="t('view.settings.advanced.advanced.auto_join_group_certification.header')">
-                <Switch :model-value="autoJoinGroupCertification" @update:modelValue="setAutoJoinGroupCertification" />
+                <Switch :model-value="false" disabled class="opacity-50 cursor-not-allowed"/>
             </SettingsItem>
         </SettingsGroup>
 
