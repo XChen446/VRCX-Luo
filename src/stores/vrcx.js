@@ -151,9 +151,6 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 172800
             );
 
-            if (!(await VRCXStorage.Get('VRCX_DatabaseLocation'))) {
-                await VRCXStorage.Set('VRCX_DatabaseLocation', '');
-            }
             if (!(await VRCXStorage.Get('VRCX_ProxyServer'))) {
                 await VRCXStorage.Set('VRCX_ProxyServer', '');
             }
