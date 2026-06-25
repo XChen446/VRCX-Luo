@@ -122,6 +122,7 @@ declare global {
         Flush(): Promise<void>;
         Save(): Promise<void>;
         Load(): Promise<void>;
+        Backup(): Promise<void>;
         GetArray(key: string): Promise<any[]>;
         SetArray(key: string, value: any[]): Promise<void>;
         GetObject(key: string): Promise<object>;

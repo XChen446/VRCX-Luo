@@ -64,5 +64,6 @@ export function runLoginSuccessFlow(json) {
 
     updateLoopStore.setNextCurrentUserRefresh(420); // 7mins
     applyCurrentUser(json);
+    VRCXStorage.Backup();
     initWebsocket();
 }

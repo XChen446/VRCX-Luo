@@ -27,8 +27,25 @@ namespace VRCX
 
         public void Load()
         {
-            // Deserialize JSON with nested object flattening support
-            var tmp = JsonFileSerializer.DeserializeFlat(JsonPath);
+            // Deserialize JSON with nested object flattening support.
+            // null means file existed but was corrupted — try backup.
+            var tmp = JsonFileSerializer.DeserializeFlatOrNull(JsonPath);
+
+            if (tmp == null)
+            {
+                var bakPath = JsonPath + ".bak";
+                if (File.Exists(bakPath))
+                {
+                    try
+                    {
+                        File.Copy(bakPath, JsonPath, overwrite: true);
+                        tmp = JsonFileSerializer.DeserializeFlatOrNull(JsonPath);
+                    }
+                    catch { }
+                }
+            }
+
+            tmp ??= new Dictionary<string, string>();
 
             // Migrate old flat key VRCX_DatabaseLocation → VRCX_Database.* structure
             if (tmp.TryGetValue("VRCX_DatabaseLocation", out var oldLocation))
@@ -59,6 +76,38 @@ namespace VRCX
             {
                 var snapshot = new Dictionary<string, string>(_storage);
                 JsonFileSerializer.SerializeNested(JsonPath, snapshot);
+            }
+        }
+
+        private static bool _backupAttempted;
+
+        /// <summary>
+        /// Creates a backup of the current VRCX.json to VRCX.json.bak.
+        /// Runs at most once per process lifetime — the first successful call
+        /// sets the flag, preventing repeated writes on re-login storms.
+        /// Called by upper layers when a safe checkpoint is reached
+        /// (e.g. successful VRChat login), providing a recovery point
+        /// in case the config file is later corrupted.
+        /// </summary>
+        public void Backup()
+        {
+            if (_backupAttempted)
+                return;
+
+            var bakPath = JsonPath + ".bak";
+            try
+            {
+                if (File.Exists(JsonPath))
+                {
+                    File.Copy(JsonPath, bakPath, overwrite: true);
+                }
+                _backupAttempted = true;
+            }
+            catch (Exception ex)
+            {
+                var logger = NLog.LogManager.GetCurrentClassLogger();
+                logger.Warn(ex, "VRCXStorage backup failed");
+                // Don't set flag — allow retry on next login
             }
         }
 

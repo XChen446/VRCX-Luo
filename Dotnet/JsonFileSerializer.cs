@@ -55,9 +55,24 @@ namespace VRCX
         /// Deserializes VRCX.json with nested object support.
         /// Nested objects (e.g. "VRCX_Database": { "mode": "sqlite" })
         /// are flattened into dot-separated keys (e.g. "VRCX_Database.mode").
+        /// Returns an empty dictionary when the file is missing or any error occurs.
         /// </summary>
         public static Dictionary<string, string> DeserializeFlat(string path)
         {
+            return DeserializeFlatOrNull(path) ?? new Dictionary<string, string>();
+        }
+
+        /// <summary>
+        /// Like DeserializeFlat but returns null when the file exists but is
+        /// unparseable (corrupted). Returns empty dict when the file is missing
+        /// or genuinely empty ({}). This lets callers distinguish between
+        /// "no config yet" and "config is broken — try backup".
+        /// </summary>
+        public static Dictionary<string, string>? DeserializeFlatOrNull(string path)
+        {
+            if (!File.Exists(path))
+                return new Dictionary<string, string>();
+
             try
             {
                 var json = File.ReadAllText(path, Encoding.UTF8);
@@ -68,7 +83,7 @@ namespace VRCX
             }
             catch
             {
-                return new Dictionary<string, string>();
+                return null;
             }
         }
 
