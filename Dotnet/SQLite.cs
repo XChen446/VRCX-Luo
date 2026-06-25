@@ -29,11 +29,11 @@ namespace VRCX
 #if LINUX
             Instance = this;
 #endif
-            var dataSource = VRCXStorage.Instance.Get("VRCX_DatabaseLocation");
+            var dataSource = VRCXStorage.Instance.Get("VRCX_Database.location");
             if (string.IsNullOrEmpty(dataSource))
             {
                 dataSource = Program.ConfigLocation;
-                VRCXStorage.Instance.Set("VRCX_DatabaseLocation", dataSource);
+                VRCXStorage.Instance.Set("VRCX_Database.location", dataSource);
             }
 
             m_Connection = new SQLiteConnection($"Data Source=\"{dataSource}\";Version=3;PRAGMA locking_mode=NORMAL;PRAGMA busy_timeout=5000;PRAGMA journal_mode=WAL;PRAGMA optimize=0x10002;", true);
