@@ -86,8 +86,8 @@ namespace VRCX
 
         public void Set(string key, string value)
         {
-            // Safety guard: keys with '.' must target an already-initialized nested namespace.
-            // This prevents accidental creation of unintended nestable config keys.
+            // Safety guard 1: keys with '.' must target an already-initialized nested namespace,
+            // preventing accidental creation of unintended nestable config keys at any depth.
             if (key.Contains('.'))
             {
                 var prefix = key[..key.IndexOf('.')];
@@ -97,6 +97,14 @@ namespace VRCX
                         $"VRCXStorage: cannot Set('{key}') — parent namespace '{prefix}' has not been initialized. " +
                         "Initialize the namespace first (e.g. via VRCXStorage.Load migration) before writing dot-path keys.");
                 }
+            }
+            // Safety guard 2: flat keys must not conflict with an existing nested namespace,
+            // as it would make serialization impossible (same key as both value and container).
+            else if (_storage.Keys.Any(k => k.StartsWith(key + ".")))
+            {
+                throw new InvalidOperationException(
+                    $"VRCXStorage: cannot Set('{key}') — a nested namespace under '{key}' already exists. " +
+                    "Remove the nested keys first, or use a different key name.");
             }
 
             _storage[key] = value;

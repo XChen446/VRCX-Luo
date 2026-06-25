@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using NLog;
 
 namespace VRCX
 {
@@ -119,8 +120,9 @@ namespace VRCX
                     root.WriteTo(writer);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                NLog.LogManager.GetCurrentClassLogger().Error(ex, "VRCXStorage serialization failed");
             }
         }
 
