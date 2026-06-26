@@ -177,7 +177,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 }
                 // == target: 无事可做
             } else {
-                // ── Branch B: version == 0 / null（版本丢失或全新库）──
+                // ── Branch B: version <= 0 / null（版本丢失或全新库）──
                 const ok = await handleUninitializedDatabase(
                     TARGET_DB_VERSION
                 );
