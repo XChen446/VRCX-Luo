@@ -2951,6 +2951,8 @@
             "upgrade_in_progress_wait": "在升级完成前，交互操作将被暂时禁止。",
             "upgrade_failed_title": "数据库升级失败",
             "upgrade_failed_description": "数据库升级失败，请查看调试控制台以获取详细信息。",
+            "repair_failed_title": "数据库初始化失败",
+            "repair_failed_description": "数据库初始化失败，请手动强制结束进程后重试。\n\n错误原因：{error}",
             "disk_space": "请释放一些磁盘空间。",
             "disk_error": "请检查你的磁盘是否有错误。"
         },

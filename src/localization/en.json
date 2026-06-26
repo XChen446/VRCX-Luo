@@ -2899,6 +2899,8 @@
             "upgrade_in_progress_wait": "User actions are temporarily blocked until the upgrade finishes.",
             "upgrade_failed_title": "Database upgrade failed",
             "upgrade_failed_description": "Database upgrade failed. Check the console for details.",
+            "repair_failed_title": "Database initialization failed",
+            "repair_failed_description": "Database initialization failed. Click OK to close the application and fix the issue.\n\nError reason: {error}",
             "disk_space": "Please free up some disk space.",
             "disk_error": "Please check your disk for errors."
         },

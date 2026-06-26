@@ -379,14 +379,13 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         } catch (err) {
             console.error('Database init + fix failed:', err);
             await modalStore.alert({
-                title: t('message.database.upgrade_failed_title'),
+                title: t('message.database.repair_failed_title'),
                 description: t(
-                    'message.database.upgrade_failed_description'
+                    'message.database.repair_failed_description',
+                    { error: err.message || String(err) }
                 ),
                 dismissible: false
             });
-            // 不抛——error dialog (dismissible: false) 已卡住 UI，
-            // 通知调用方失败，让其跳过后续初始化
             return false;
         }
         return true;
@@ -457,9 +456,10 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         } catch (err) {
             console.error('Database migration failed:', err);
             await modalStore.alert({
-                title: t('message.database.upgrade_failed_title'),
+                title: t('message.database.repair_failed_title'),
                 description: t(
-                    'message.database.upgrade_failed_description'
+                    'message.database.repair_failed_description',
+                    { error: err.message || String(err) }
                 ),
                 dismissible: false
             });
