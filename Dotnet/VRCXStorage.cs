@@ -183,6 +183,25 @@ namespace VRCX
             return JsonSerializer.Serialize(new Dictionary<string, string>(_storage));
         }
 
+        /// <summary>
+        /// Reads and returns the content of VRCX.json.bak as a JSON string.
+        /// Returns an empty object <c>{}</c> if the backup file does not exist
+        /// or cannot be read (permissions, corruption, etc.) — never null.
+        /// </summary>
+        public string GetBackup()
+        {
+            try
+            {
+                var bakPath = JsonPath + ".bak";
+                var data = JsonFileSerializer.DeserializeFlat(bakPath);
+                return JsonSerializer.Serialize(data);
+            }
+            catch
+            {
+                return "{}";
+            }
+        }
+
         private static void ScheduleSave()
         {
             SaveTimer.Change(SaveDebounce, Timeout.InfiniteTimeSpan);
