@@ -43,6 +43,7 @@ import { clearVRCXCache } from '../coordinators/vrcxCoordinator';
 import { resetSearchIndexOnLogin } from '../coordinators/searchIndexCoordinator';
 import { watchState } from '../services/watchState';
 
+import sqliteService from '../services/sqlite';
 import configRepository from '../services/config';
 
 export const useVrcxStore = defineStore('Vrcx', () => {
@@ -77,7 +78,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         toVersion: 0
     });
     const databaseReadyForAutoLogin = ref(false);
-    let resolveDatabaseInit = () => {};
+    let resolveDatabaseInit = (..._args) => {};
     const databaseInitComplete = new Promise((resolve) => {
         resolveDatabaseInit = resolve;
     });
@@ -156,9 +157,31 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 'VRCX_databaseVersion',
                 0
             );
-            const databaseUpgradeSucceeded = await updateDatabaseVersion();
-            if (!databaseUpgradeSucceeded) {
-                return;
+
+            // ── 升级策略决策树 ─────────────────────────────────────
+            const TARGET_DB_VERSION = 16;
+
+            if (state.databaseVersion > 0) {
+                // ── Branch A: 已有版本号的数据库 ──
+                if (state.databaseVersion < TARGET_DB_VERSION) {
+                    const ok = await upgradeInPlace(
+                        state.databaseVersion,
+                        TARGET_DB_VERSION
+                    );
+                    if (!ok) return;
+                } else if (state.databaseVersion > TARGET_DB_VERSION) {
+                    console.warn(
+                        `Database version ${state.databaseVersion} is ahead of built-in target ${TARGET_DB_VERSION}. ` +
+                        'Data written by a newer VRCX version may not be fully compatible.'
+                    );
+                }
+                // == target: 无事可做
+            } else {
+                // ── Branch B: version == 0 / null（版本丢失或全新库）──
+                const ok = await handleUninitializedDatabase(
+                    TARGET_DB_VERSION
+                );
+                if (!ok) return;
             }
 
             clearVRCXCacheFrequency.value = await configRepository.getInt(
@@ -235,58 +258,273 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     resetSearchIndexOnLogin();
     init();
 
+    // ── 内部 Helper ─────────────────────────────────────────────────
+
     /**
-     * Upgrades the database schema and data to the latest version.
-     *
-     * The non-cancelable dialog is managed by the caller (`init()`). This
-     * function only updates the `fromVersion`/`toVersion` fields to reflect
-     * progress.  Dialog visibility is NOT touched here — it is set at the
-     * start of `init()` and cleared in its `finally` block.
-     *
-     * @returns {Promise<boolean>} true on success, false on failure
+     * Runs all data-fix and schema-alter operations on the CURRENT database.
+     * These are idempotent — safe to call on any version >= 0.
      */
-    async function updateDatabaseVersion() {
-        // requires dbVars.userPrefix to be already set
-        const databaseVersion = 16;
-        if (state.databaseVersion < databaseVersion) {
-            databaseUpgradeState.value.fromVersion = state.databaseVersion;
-            databaseUpgradeState.value.toVersion = databaseVersion;
-            console.log(
-                `Updating database from ${state.databaseVersion} to ${databaseVersion}...`
+    async function runFixes() {
+        await database.cleanLegendFromFriendLog();
+        await database.fixGameLogTraveling();
+        await database.fixNegativeGPS();
+        await database.fixBrokenLeaveEntries();
+        await database.fixBrokenGroupInvites();
+        await database.fixBrokenNotifications();
+        await database.fixBrokenGroupChange();
+        await database.fixCancelFriendRequestTypo();
+        await database.fixBrokenGameLogDisplayNames();
+        await database.upgradeDatabaseVersion();
+        await database.vacuum();
+        await database.optimize();
+    }
+
+    /**
+     * Branch A: 原地升级 —— 当前 DB 版本 > 0 且 < target。
+     *
+     * @param {number} fromVersion
+     * @param {number} targetVersion
+     * @returns {Promise<boolean>}
+     */
+    async function upgradeInPlace(fromVersion, targetVersion) {
+        databaseUpgradeState.value.fromVersion = fromVersion;
+        databaseUpgradeState.value.toVersion = targetVersion;
+        console.log(
+            `Upgrading database from ${fromVersion} to ${targetVersion}...`
+        );
+        try {
+            await runFixes();
+            await configRepository.setInt(
+                'VRCX_databaseVersion',
+                targetVersion
             );
-            try {
-                await database.cleanLegendFromFriendLog(); // fix friendLog spammed with crap
-                await database.fixGameLogTraveling(); // fix bug with gameLog location being set as traveling
-                await database.fixNegativeGPS(); // fix GPS being a negative value due to VRCX bug with traveling
-                await database.fixBrokenLeaveEntries(); // fix user instance timer being higher than current user location timer
-                await database.fixBrokenGroupInvites(); // fix notification v2 in wrong table
-                await database.fixBrokenNotifications(); // fix notifications being null
-                await database.fixBrokenGroupChange(); // fix spam group left & name change
-                await database.fixCancelFriendRequestTypo(); // fix CancelFriendRequst typo
-                await database.fixBrokenGameLogDisplayNames(); // fix gameLog display names "DisplayName (userId)"
-                await database.upgradeDatabaseVersion(); // update database version
-                await database.vacuum(); // succ
-                await database.optimize();
-                await configRepository.setInt(
-                    'VRCX_databaseVersion',
-                    databaseVersion
-                );
-                console.log('Database update complete.');
-                state.databaseVersion = databaseVersion;
-            } catch (err) {
-                console.error(err);
-                await modalStore.alert({
-                    title: t('message.database.upgrade_failed_title'),
-                    description: t(
-                        'message.database.upgrade_failed_description'
-                    ),
-                    dismissible: false
-                });
-                AppApi.ShowDevTools();
-                return false;
-            }
+            console.log('Database upgrade complete.');
+            state.databaseVersion = targetVersion;
+        } catch (err) {
+            console.error(err);
+            await modalStore.alert({
+                title: t('message.database.upgrade_failed_title'),
+                description: t(
+                    'message.database.upgrade_failed_description'
+                ),
+                dismissible: false
+            });
+            AppApi.ShowDevTools();
+            return false;
         }
         return true;
+    }
+
+    /**
+     * Branch B: version == 0 / null —— 尝试从 .bak 恢复。
+     *
+     * @param {number} targetVersion
+     * @returns {Promise<boolean>}
+     */
+    async function handleUninitializedDatabase(targetVersion) {
+        let bakConfig = null;
+        try {
+            const bakJson = await VRCXStorage.GetBackup();
+            if (bakJson && bakJson !== '{}') {
+                bakConfig = JSON.parse(bakJson);
+            }
+        } catch (err) {
+            console.warn('Failed to read backup config:', err);
+        }
+
+        const bakDbPath = bakConfig?.['VRCX_Database.location'];
+        const currentDbPath = await VRCXStorage.Get(
+            'VRCX_Database.location'
+        );
+
+        // ── Self-reference 去重 ──
+        // bak 指向当前已连上的数据库 → 环境不可信 → 跳过 bak
+        if (bakDbPath && currentDbPath && bakDbPath === currentDbPath) {
+            console.warn(
+                'Backup refers to the current database file — environment untrustworthy. ' +
+                    'Falling back to in-place init + fix.'
+            );
+            return await initAndFixInPlace(targetVersion);
+        }
+
+        // ── bak 指向不同的旧库 → 搬迁迁移 ──
+        if (bakDbPath && bakDbPath !== currentDbPath) {
+            return await migrateFromOldDb(bakDbPath, targetVersion);
+        }
+
+        // ── 无 bak / 无 DB 配置 → 当前库 init + fix ──
+        return await initAndFixInPlace(targetVersion);
+    }
+
+    /**
+     * 在当前库上 init（补表）+ fix（修数据）+ 设版本。
+     * 适用于全新安装、bak 为空、或 self-reference 去重后。
+     */
+    async function initAndFixInPlace(targetVersion) {
+        console.log(
+            'No valid backup config found. Running init + fix in place...'
+        );
+        databaseUpgradeState.value.fromVersion = 0;
+        databaseUpgradeState.value.toVersion = targetVersion;
+
+        try {
+            await database.initTables();
+            await runFixes();
+            await configRepository.setInt(
+                'VRCX_databaseVersion',
+                targetVersion
+            );
+            state.databaseVersion = targetVersion;
+            console.log('Database init + fix complete.');
+        } catch (err) {
+            console.error('Database init + fix failed:', err);
+            await modalStore.alert({
+                title: t('message.database.upgrade_failed_title'),
+                description: t(
+                    'message.database.upgrade_failed_description'
+                ),
+                dismissible: false
+            });
+            // 不抛——error dialog (dismissible: false) 已卡住 UI，
+            // 通知调用方失败，让其跳过后续初始化
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 从 bak 指定的旧库搬迁到当前（新）库。
+     * 旧库以只读方式打开，全部写只发生在当前连接上。
+     *
+     * @param {string} oldPath
+     * @param {number} targetVersion
+     * @returns {Promise<boolean>}
+     */
+    async function migrateFromOldDb(oldPath, targetVersion) {
+        console.log(
+            `Migrating data from old database: ${oldPath}`
+        );
+        databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
+        databaseUpgradeState.value.toVersion = targetVersion;
+
+        try {
+            // 1) 读出旧库版本号
+            const versionRows = await sqliteService.executeReadOnly(
+                oldPath,
+                "SELECT value FROM configs WHERE key = @key",
+                { '@key': 'config:VRCX_databaseversion' }
+            );
+            const oldVersion =
+                versionRows && versionRows.length > 0
+                    ? parseInt(versionRows[0][0], 10)
+                    : 0;
+
+            const oldIsAhead = oldVersion > targetVersion;
+            if (oldIsAhead) {
+                console.warn(
+                    `Old database version ${oldVersion} is ahead of target ${targetVersion}. ` +
+                        'Copying data as-is; some features may behave unexpectedly.'
+                );
+            }
+
+            // 2) 确保新库有完整的表结构
+            await database.initTables();
+
+            // 3) 枚举旧库所有表，搬运数据
+            const tableRows = await sqliteService.executeReadOnly(
+                oldPath,
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            );
+
+            if (tableRows) {
+                for (const row of tableRows) {
+                    const tableName = row[0];
+                    await copyTableData(oldPath, tableName);
+                }
+            }
+
+            // 4) 对新库跑 fix（数据清洗）
+            await runFixes();
+
+            // 5) 设版本号
+            await configRepository.setInt(
+                'VRCX_databaseVersion',
+                targetVersion
+            );
+            state.databaseVersion = targetVersion;
+            console.log('Database migration complete.');
+            return true;
+        } catch (err) {
+            console.error('Database migration failed:', err);
+            await modalStore.alert({
+                title: t('message.database.upgrade_failed_title'),
+                description: t(
+                    'message.database.upgrade_failed_description'
+                ),
+                dismissible: false
+            });
+            AppApi.ShowDevTools();
+            return false;
+        }
+    }
+
+    /**
+     * 通过只读连接从旧库读出一个表的所有数据，写入当前库。
+     * 使用 INSERT OR IGNORE 跳过主键冲突的行。
+     */
+    async function copyTableData(oldPath, tableName) {
+        // 读列信息（构造占位符用）
+        const colRows = await sqliteService.executeReadOnly(
+            oldPath,
+            `PRAGMA table_xinfo(\"${tableName}\")`
+        );
+        if (!colRows || colRows.length === 0) return;
+
+        // 过滤掉隐藏列 (colRows[i][5] = hidden flag)
+        const columns = colRows
+            .filter((c) => !c[5])
+            .map((c) => c[1]);
+        if (columns.length === 0) return;
+
+        const colList = columns.join(', ');
+
+        // 读数据
+        const dataRows = await sqliteService.executeReadOnly(
+            oldPath,
+            `SELECT ${colList} FROM \"${tableName}\"`
+        );
+        if (!dataRows || dataRows.length === 0) return;
+
+        // 分批写入（每批 500 行）
+        const BATCH = 500;
+        const colCount = columns.length;
+        for (let i = 0; i < dataRows.length; i += BATCH) {
+            const batch = dataRows.slice(i, i + BATCH);
+
+            // 构造 @p0..@pN 参数化批量 INSERT
+            const paramKeys = [];
+            const args = {};
+            for (let ri = 0; ri < batch.length; ri++) {
+                for (let ci = 0; ci < colCount; ci++) {
+                    const pk = `@p${ri * colCount + ci}`;
+                    paramKeys.push(pk);
+                    args[pk] = batch[ri][ci];
+                }
+            }
+
+            const valueGroups = [];
+            for (let ri = 0; ri < batch.length; ri++) {
+                const start = ri * colCount;
+                valueGroups.push(
+                    `(${paramKeys.slice(start, start + colCount).join(', ')})`
+                );
+            }
+
+            await sqliteService.executeNonQuery(
+                `INSERT OR IGNORE INTO \"${tableName}\" (${colList}) VALUES ${valueGroups.join(', ')}`,
+                args
+            );
+        }
     }
 
     async function waitForDatabaseInit() {
@@ -905,7 +1143,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         ipcEvent,
         dragEnterCef,
         backupVrcRegistry,
-        updateDatabaseVersion,
+        // updateDatabaseVersion was removed; callers should use upgradeInPlace
+        upgradeInPlace,
         waitForDatabaseInit
     };
 });
