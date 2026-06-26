@@ -80,6 +80,27 @@ class SQLiteService {
             this.handleSQLiteError(e);
         }
     }
+
+    /**
+     * Opens a NEW read-only connection to the specified database file,
+     * executes the given SQL, and returns the parsed result array.
+     * The connection is closed after the query.
+     *
+     * This does NOT affect the main database connection.
+     *
+     * @param {string} path - Full path to the target SQLite file
+     * @param {string} sql - SQL to execute (SELECT / PRAGMA / read-only)
+     * @param {object|null} [args=null] - Named parameters { '@key': value }
+     * @returns {Promise<Array<Array>>} Array of row arrays
+     */
+    async executeReadOnly(path, sql, args = null) {
+        try {
+            const json = await SQLite.ExecuteReadOnlyJson(path, sql, args);
+            return JSON.parse(json);
+        } catch (e) {
+            this.handleSQLiteError(e);
+        }
+    }
 }
 
 var self = new SQLiteService();

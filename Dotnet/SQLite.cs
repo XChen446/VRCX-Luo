@@ -110,5 +110,47 @@ namespace VRCX
 
             return result;
         }
+
+        /// <summary>
+        /// Opens a NEW disposable read-only connection to the specified database file,
+        /// executes the given SQL, and returns the result set serialized as a JSON array.
+        /// The connection is closed (and disposed) after the query completes.
+        ///
+        /// This does NOT touch <see cref="m_Connection"/> — it is completely independent,
+        /// intended for reading data from an OLD database during migration/upgrade.
+        /// </summary>
+        /// <param name="path">Full path to the target SQLite database file.</param>
+        /// <param name="sql">SQL to execute (SELECT / PRAGMA only; writes will fail on a read-only DB).</param>
+        /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
+        /// <returns>JSON array of row arrays, e.g. [["val1", 42], ["val2", 99]].</returns>
+        public string ExecuteReadOnlyJson(string path, string sql, IDictionary<string, object>? args = null)
+        {
+            // Fresh connection — NOT shared with m_Connection
+            using var connection = new SQLiteConnection($"Data Source=\"{path}\";Read Only=True;Version=3;");
+            connection.Open();
+
+            using var command = new SQLiteCommand(sql, connection);
+            if (args != null)
+            {
+                foreach (var arg in args)
+                {
+                    command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                }
+            }
+
+            using var reader = command.ExecuteReader();
+            var result = new List<object[]>();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    values[i] = reader.GetValue(i);
+                }
+                result.Add(values);
+            }
+
+            return JsonSerializer.Serialize(result);
+        }
     }
 }

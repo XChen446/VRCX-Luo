@@ -134,6 +134,7 @@ declare global {
         Execute: (sql: string, args: string) => Promise<any[]>;
         ExecuteJson: (sql: string, args: string) => Promise<string>;
         ExecuteNonQuery: (sql: string, args: string) => Promise<Number>;
+        ExecuteReadOnlyJson: (path: string, sql: string, args: string) => Promise<string>;
     };
 
     const LogWatcher: {
