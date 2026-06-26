@@ -1,0 +1,47 @@
+{
+  "version": 16,
+  "description": "清理好友日志中的 Legend 刷屏条目、修复 traveling 日志、负数 GPS、损坏的离开记录等数据修复",
+  "type": "data",
+  "dependencies": [16],
+  "params": {
+    "traveling_fix": {
+      "source": "subquery",
+      "bind": ["display_name", "created_at"],
+      "sql": "SELECT location FROM gamelog_join_leave WHERE type = 'OnPlayerJoined' AND display_name = @display_name AND created_at <= @created_at ORDER BY created_at DESC LIMIT 1"
+    }
+  },
+  "fixes": [
+    {
+      "table": "%_friend_log_history",
+      "operation": "delete",
+      "where": "type = 'TrustLevel' AND created_at > '2022-05-04T01:00:00.000Z' AND ((trust_level = 'Veteran User' AND previous_trust_level = 'Trusted User') OR (trust_level = 'Trusted User' AND previous_trust_level = 'Veteran User'))"
+    },
+    {
+      "table": "%_gps",
+      "operation": "update",
+      "set": { "time": 0 },
+      "where": "time < 0"
+    },
+    {
+      "table": "%_notifications",
+      "operation": "delete",
+      "where": "type LIKE '%.%'"
+    },
+    {
+      "table": "%_notifications",
+      "operation": "delete",
+      "where": "(created_at is null or created_at = '')"
+    },
+    {
+      "table": "%_notifications",
+      "operation": "delete",
+      "where": "type = 'groupChange' AND created_at < '2024-04-23T03:00:00.000Z'"
+    },
+    {
+      "table": "%_friend_log_history",
+      "operation": "update",
+      "set": { "type": "'CancelFriendRequest'" },
+      "where": "type = 'CancelFriendRequst'"
+    }
+  ]
+}
