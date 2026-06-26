@@ -92,9 +92,24 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     const appStartAt = Date.now();
 
     /**
+     * Pre-login initialization gate.
      *
+     * Runs at store creation. Shows a non-cancelable (DatabaseUpgradeDialog) from
+     * the very start and keeps it visible until all pre-login work is done —
+     * database version upgrade, VRCXStorage init, window state restore, etc.
+     *
+     * The dialog is hidden in the `finally` block. Any caller that needs to
+     * wait for init to complete should await `waitForDatabaseInit()`.
+     * `autoLoginAfterMounted()` already does this, so auto-login is naturally
+     * blocked until the gate lifts.
      */
     async function init() {
+        // BLOCKING GATE: freeze the UI before ANY write-capable operation
+        databaseUpgradeState.value = {
+            visible: true,
+            fromVersion: 0,
+            toVersion: 0
+        };
         try {
             if (LINUX) {
                 try {
@@ -207,6 +222,12 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             refreshCustomScript();
             databaseReadyForAutoLogin.value = true;
         } finally {
+            // Lift the gate: hide dialog, signal waiters
+            databaseUpgradeState.value = {
+                visible: false,
+                fromVersion: 0,
+                toVersion: 0
+            };
             resolveDatabaseInit();
         }
     }
@@ -215,17 +236,21 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     init();
 
     /**
+     * Upgrades the database schema and data to the latest version.
      *
+     * The non-cancelable dialog is managed by the caller (`init()`). This
+     * function only updates the `fromVersion`/`toVersion` fields to reflect
+     * progress.  Dialog visibility is NOT touched here — it is set at the
+     * start of `init()` and cleared in its `finally` block.
+     *
+     * @returns {Promise<boolean>} true on success, false on failure
      */
     async function updateDatabaseVersion() {
         // requires dbVars.userPrefix to be already set
         const databaseVersion = 16;
         if (state.databaseVersion < databaseVersion) {
-            databaseUpgradeState.value = {
-                visible: state.databaseVersion > 0,
-                fromVersion: state.databaseVersion,
-                toVersion: databaseVersion
-            };
+            databaseUpgradeState.value.fromVersion = state.databaseVersion;
+            databaseUpgradeState.value.toVersion = databaseVersion;
             console.log(
                 `Updating database from ${state.databaseVersion} to ${databaseVersion}...`
             );
@@ -248,10 +273,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 );
                 console.log('Database update complete.');
                 state.databaseVersion = databaseVersion;
-                databaseUpgradeState.value.visible = false;
             } catch (err) {
                 console.error(err);
-                databaseUpgradeState.value.visible = false;
                 await modalStore.alert({
                     title: t('message.database.upgrade_failed_title'),
                     description: t(

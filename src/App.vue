@@ -68,6 +68,9 @@
     });
 
     onMounted(async () => {
+        // PRE-LOGIN GATE: wait for DB/config init before any write-capable operation
+        await store.vrcx.waitForDatabaseInit();
+
         getGameLogTable();
         await store.auth.migrateStoredUsers();
         store.auth.autoLoginAfterMounted();
