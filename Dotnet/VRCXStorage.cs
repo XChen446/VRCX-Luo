@@ -79,19 +79,37 @@ namespace VRCX
             }
         }
 
+        /// <summary>
+        /// Global flag tracking whether the .bak backup has been attempted.
+        /// - true:  backup succeeded at least once this process lifetime
+        /// - false: backup has never been attempted (or last attempt failed)
+        /// </summary>
         private static bool _backupAttempted;
 
         /// <summary>
         /// Creates a backup of the current VRCX.json to VRCX.json.bak.
-        /// Runs at most once per process lifetime — the first successful call
-        /// sets the flag, preventing repeated writes on re-login storms.
+        ///
+        /// BACKUP GUARD:
+        /// The static field <see cref="_backupAttempted"/> ensures the .bak file
+        /// is written at most ONCE per process lifetime — even if this method
+        /// is called multiple times (e.g. on re-login storms).  After a
+        /// successful write the flag is permanently set; subsequent calls return
+        /// immediately with no I/O (unless <paramref name="force"/> is true).
+        ///
+        /// This guard also handles the case where the .bak file is NOT writable
+        /// (e.g. permission denied, disk full, or the file is locked by another
+        /// process).  On failure the flag remains false, allowing a retry on the
+        /// next call (e.g. next successful login).
+        ///
         /// Called by upper layers when a safe checkpoint is reached
         /// (e.g. successful VRChat login), providing a recovery point
         /// in case the config file is later corrupted.
         /// </summary>
-        public void Backup()
+        /// <param name="force">When true, bypass the <see cref="_backupAttempted"/> guard
+        /// and force a new .bak write even if one was already made this process lifetime.</param>
+        public void Backup(bool force = false)
         {
-            if (_backupAttempted)
+            if (_backupAttempted && !force)
                 return;
 
             var bakPath = JsonPath + ".bak";
@@ -107,7 +125,7 @@ namespace VRCX
             {
                 var logger = NLog.LogManager.GetCurrentClassLogger();
                 logger.Warn(ex, "VRCXStorage backup failed");
-                // Don't set flag — allow retry on next login
+                // Don't set flag — allow retry on next login / next call
             }
         }
 
