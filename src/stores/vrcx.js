@@ -269,10 +269,10 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      * 运行所有数据修复和 schema 变更操作。
      * 这些操作是幂等的 —— 可安全地在任何版本 >= 0 上调用。
      */
-    async function runFixes(targetVersion) {
+    async function runFixes(targetVersion, options = {}) {
         if (USE_NEW_MIGRATION) {
             // 新路径: 使用 .map 文件的声明式迁移系统
-            await database.runMigrations(state.databaseVersion, targetVersion);
+            await database.runMigrations(state.databaseVersion, targetVersion, options);
         } else {
             // 旧路径: 调用遗留的 fix 函数
             await database.cleanLegendFromFriendLog();
@@ -304,11 +304,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             `升级数据库从 ${fromVersion} 到 ${targetVersion}...`
         );
         try {
-            if (USE_NEW_MIGRATION) {
-                await database.runMigrations(fromVersion, targetVersion);
-            } else {
-                await runFixes(targetVersion);
-            }
+            await runFixes(targetVersion);
             await configRepository.setInt(
                 'VRCX_databaseVersion',
                 targetVersion
@@ -384,11 +380,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
         try {
             await database.initTables();
-            if (USE_NEW_MIGRATION) {
-                await database.runMigrations(0, targetVersion);
-            } else {
-                await runFixes(targetVersion);
-            }
+            await runFixes(targetVersion);
             await configRepository.setInt(
                 'VRCX_databaseVersion',
                 targetVersion
@@ -462,11 +454,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             }
 
             // 4) 对新库跑迁移/修复
-            if (USE_NEW_MIGRATION) {
-                await database.runMigrations(oldVersion, targetVersion, { oldDbPath: oldPath });
-            } else {
-                await runFixes(targetVersion);
-            }
+            await runFixes(targetVersion, { oldDbPath: oldPath });
 
             // 5) 设版本号
             await configRepository.setInt(

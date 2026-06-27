@@ -16,7 +16,7 @@ import { tableFixes } from './tableFixes.js';
 import { tableSize } from './tableSize.js';
 import { trackedNonFriends } from './trackedNonFriends.js';
 import { worldFavorites } from './worldFavorites.js';
-import { runMigrations, MIGRATION_ENABLED } from './migrations/index.js';
+import { runMigrations } from './migrations/index.js';
 
 import sqliteService from '../sqlite.js';
 
@@ -265,4 +265,4 @@ const database = {
 };
 
 window.database = database;
-export { database, dbVars, MIGRATION_ENABLED };
+export { database, dbVars };

@@ -16,9 +16,6 @@
 import sqliteService from '../../sqlite.js';
 import configRepository from '../../config.js';
 
-// MIGRATION_ENABLED: 切换新旧迁移系统
-// 设置为 true 以使用新的 .map 迁移系统
-const MIGRATION_ENABLED = true;
 
 /**
  * 从 currentVersion 迁移到 targetVersion，执行所有迁移。
@@ -262,11 +259,10 @@ function topologicalSort(migrations) {
 
     // 循环依赖检测
     if (result.length !== migrations.length) {
-        console.warn('[迁移] DAG 拓扑排序检测到循环引用，回退到版本顺序排序');
-        return migrations.sort((a, b) => {
-            if (a.version !== b.version) return a.version - b.version;
-            return a.type === 'schema' ? -1 : 1;
-        });
+        throw new Error(
+            `[迁移] DAG 拓扑排序检测到循环引用：已解析 ${result.length}/${migrations.length} 个节点，` +
+            `剩余节点存在无法满足的依赖关系，终止迁移`
+        );
     }
 
     return result;
@@ -282,7 +278,10 @@ async function executeMigration(migration, options) {
 
     console.log(`[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`);
 
-    // 为每个版本包一层事务
+    // 每个版本包一层事务
+    // 注意：同版本内 schema.map 和 data.map 是分开的两个事务（各自执行一次 executeMigration）
+    // 如果 data fix 失败而 schema change 成功，未更新的版本号会阻止下次重试（checkpoint 在 COMMIT 前）
+    // 但由于所有操作设计为幂等，重试迁移即可安全恢复
     try {
         await sqliteService.executeNonQuery('BEGIN');
 
@@ -388,6 +387,7 @@ async function executeCreateIndex(tablePattern, op) {
             console.log(`[迁移] 已在 ${table} 上创建索引 ${indexName}`);
         } catch (e) {
             console.error(`[迁移] 创建索引 ${indexName} 失败:`, e);
+            throw e;
         }
     }
 }
@@ -433,7 +433,16 @@ async function executeRenameTable(tablePattern, op) {
             await sqliteService.executeNonQuery(sql);
             console.log(`[迁移] 已重命名 ${table} 为 ${newName}`);
         } catch (e) {
-            console.error(`[迁移] 重命名 ${table} 失败:`, e);
+            const errStr = e.toString();
+            // 幂等处理: 表已被重命名或不存在，跳过
+            if (errStr.includes('no such table')) {
+                console.log(`[迁移] 表 ${table} 不存在（可能已被重命名），跳过`);
+            } else if (errStr.includes('already exists')) {
+                console.log(`[迁移] 目标表 ${newName} 已存在，跳过`);
+            } else {
+                console.error(`[迁移] 重命名 ${table} 失败:`, e);
+                throw e;
+            }
         }
     }
 }
@@ -567,12 +576,14 @@ async function expandWildcard(tablePattern) {
     // 通配符模式: %_suffix
     // 匹配以 suffix 结尾的任何表
     const suffix = tablePattern.substring(1); // 移除开头的 %
-    const escapedSuffix = suffix.replace(/[_%]/g, '\\$&');
 
     const tables = [];
     await sqliteService.execute((row) => {
         tables.push(row[0]);
-    }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%${suffix}' ESCAPE '\\'`);
+    },
+        `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern ESCAPE '\\'`,
+        { '@pattern': `%${suffix}` }
+    );
 
     return tables;
 }
@@ -621,15 +632,24 @@ async function resolveParam(paramName, params, options) {
     }
 
     if (source === 'subquery') {
-        // 在当前数据库执行子查询
-        // 注: 这是简化实现，实际使用可能需要行迭代
+        // 在当前数据库执行子查询，返回第一个结果行的第一列
         if (!sql) {
             console.warn(`[迁移] 子查询参数 ${paramName} 缺少 SQL`);
             return null;
         }
 
-        // 对于简单标量子查询，执行并返回第一个值
-        const rows = await executeWithParams(sql, {});
+        // 如果定义了 bind 参数，构造参数化查询的 args
+        // bind 数组中的值从 paramDef 的对应字段获取
+        let queryArgs = {};
+        if (Array.isArray(bind) && bind.length > 0) {
+            for (const key of bind) {
+                if (paramDef[key] !== undefined) {
+                    queryArgs[`@${key}`] = paramDef[key];
+                }
+            }
+        }
+
+        const rows = await executeWithParams(sql, queryArgs);
         return rows && rows.length > 0 ? rows[0][0] : null;
     }
 
@@ -640,8 +660,14 @@ async function resolveParam(paramName, params, options) {
             console.warn(`[迁移] 参数 ${paramName} 缺少 SQL`);
             return null;
         }
+        // 基本安全校验：确保嵌入内容是 SQL 子查询（以 ( 开头）
+        const trimmed = sql.trim();
+        if (!trimmed.startsWith('(')) {
+            console.warn(`[迁移] sql_embed 参数 ${paramName} 应以 ( 开头，实际: ${trimmed.slice(0, 40)}`);
+            return null;
+        }
         // 特殊标记，表示这不是一个值而是要嵌入的 SQL 片段
-        return { __sqlEmbed: true, sql };
+        return { __sqlEmbed: true, sql: trimmed };
     }
 
     if (source === 'old_db') {
@@ -720,6 +746,5 @@ async function recordCheckpoint(version) {
 }
 
 export {
-    runMigrations,
-    MIGRATION_ENABLED
+    runMigrations
 };
