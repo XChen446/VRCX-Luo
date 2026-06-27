@@ -1,0 +1,98 @@
+// Database Migration Map Template
+//
+// This file serves as a reference for creating new migration files.
+// Copy this structure into a new version directory (e.g., migrations/17/schema.map)
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                             schema.map                                      │
+// │   Declares table structure changes: ADD COLUMN, CREATE INDEX, etc.          │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// {
+//   "version": 17,                         // Required: version number (must match directory name)
+//   "description": "Description of changes", // Optional: human-readable description
+//   "type": "schema",                       // Required: "schema" or "data"
+//   "dependencies": [],                      // Optional: required prior versions
+//   "changes": [                            // Required for type="schema"
+//     {
+//       "table": "%_feed_gps",              // Table name pattern (see below)
+//       "operation": "add_column",           // Operation type
+//       "column": "group_name",             // Column name (for add_column)
+//       "type": "TEXT",                     // Column type (for add_column)
+//       "default": "''"                      // Default value (for add_column)
+//     },
+//     {
+//       "table": "gamelog_location",        // Exact table name (no wildcard)
+//       "operation": "create_index",         // Create index
+//       "name": "idx_custom",               // Index name
+//       "columns": ["world_id", "created_at"] // Index columns
+//     }
+//   ]
+// }
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                             data.map                                         │
+// │   Declares data fixes: DELETE, UPDATE operations                            │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// {
+//   "version": 17,
+//   "description": "Clean corrupted entries",
+//   "type": "data",
+//   "dependencies": [17],                    // Requires schema.map 17 to run first
+//   "params": {                              // Optional: parameter definitions
+//     "traveling_fix": {
+//       "source": "subquery",                // "subquery" | "fixed" | "old_db"
+//       "bind": ["display_name", "created_at"],
+//       "sql": "SELECT location FROM gamelog_join_leave WHERE ..."
+//     }
+//   },
+//   "fixes": [                              // Required for type="data"
+//     {
+//       "table": "%_friend_log_history",
+//       "operation": "delete",
+//       "where": "type = 'TrustLevel' AND trust_level = 'Veteran User'"
+//     },
+//     {
+//       "table": "gamelog_join_leave",
+//       "operation": "update",
+//       "set": { "location": "@traveling_fix" },
+//       "where": "type = 'OnPlayerLeft' AND location = 'traveling'"
+//     }
+//   ]
+// }
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                         Table Name Patterns                                  │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// | Pattern          | Meaning                              | Example              |
+// |-----------------|--------------------------------------|----------------------|
+// | %_feed_gps       | User-prefixed table wildcard         | abc123_feed_gps      |
+// | gamelog_location | Exact match (global table)          | gamelog_location     |
+//
+// The % at the beginning means "any user prefix". The wildcard is expanded at
+// runtime by querying sqlite_schema for matching table names.
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                         Operation Types                                     │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// Schema operations:
+//   - add_column:   ALTER TABLE {table} ADD COLUMN {column} {type} DEFAULT {default}
+//   - create_index: CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})
+//
+// Data operations:
+//   - delete:  DELETE FROM {table} WHERE {where}
+//   - update: UPDATE {table} SET {set} WHERE {where}
+//   - insert: INSERT OR IGNORE INTO {table} (...) VALUES (...)
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                         Parameter Resolution                               │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// Parameters are prefixed with @ and resolved from the params section:
+//
+//   "source: subquery"  - Execute SQL on current database
+//   "source: fixed"     - Use literal value
+//   "source: old_db"    - Execute SQL on old database (for migration)

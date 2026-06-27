@@ -1,0 +1,85 @@
+{
+  "version": 16,
+  "description": "添加 group_name 列、friend_number 列、avatar_history time 列，以及性能优化索引",
+  "type": "schema",
+  "dependencies": [],
+  "changes": [
+    {
+      "table": "%_feed_gps",
+      "operation": "add_column",
+      "column": "group_name",
+      "type": "TEXT",
+      "default": "''"
+    },
+    {
+      "table": "%_feed_online_offline",
+      "operation": "add_column",
+      "column": "group_name",
+      "type": "TEXT",
+      "default": "''"
+    },
+    {
+      "table": "gamelog_location",
+      "operation": "add_column",
+      "column": "group_name",
+      "type": "TEXT",
+      "default": "''"
+    },
+    {
+      "table": "gamelog_location",
+      "operation": "drop_column",
+      "column": "groupName"
+    },
+    {
+      "table": "%_friend_log_current",
+      "operation": "add_column",
+      "column": "friend_number",
+      "type": "INTEGER",
+      "default": 0
+    },
+    {
+      "table": "%_friend_log_history",
+      "operation": "add_column",
+      "column": "friend_number",
+      "type": "INTEGER",
+      "default": 0
+    },
+    {
+      "table": "%_avatar_history",
+      "operation": "add_column",
+      "column": "time",
+      "type": "INTEGER",
+      "default": 0
+    },
+    {
+      "table": "gamelog_location",
+      "operation": "create_index",
+      "name": "idx_gamelog_location_world_created",
+      "columns": ["world_id", "created_at"]
+    },
+    {
+      "table": "gamelog_join_leave",
+      "operation": "create_index",
+      "name": "idx_gamelog_jl_location",
+      "columns": ["location"]
+    },
+    {
+      "table": "gamelog_join_leave",
+      "operation": "create_index",
+      "name": "idx_gamelog_jl_user_created",
+      "columns": ["user_id", "created_at"]
+    },
+    {
+      "table": "gamelog_join_leave",
+      "operation": "create_index",
+      "name": "idx_gamelog_jl_display_created",
+      "columns": ["display_name", "created_at"]
+    },
+    {
+      "table": "%_friend_log_history",
+      "operation": "create_index",
+      "name": "user_id_idx",
+      "columns": ["user_id"]
+    }
+  ]
+}

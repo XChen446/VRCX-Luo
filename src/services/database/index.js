@@ -16,6 +16,7 @@ import { tableFixes } from './tableFixes.js';
 import { tableSize } from './tableSize.js';
 import { trackedNonFriends } from './trackedNonFriends.js';
 import { worldFavorites } from './worldFavorites.js';
+import { runMigrations, MIGRATION_ENABLED } from './migrations/index.js';
 
 import sqliteService from '../sqlite.js';
 
@@ -248,8 +249,20 @@ const database = {
 
     async optimize() {
         await sqliteService.executeNonQuery('PRAGMA optimize');
+    },
+
+    /**
+     * 执行数据库迁移 (基于 .map 文件的新迁移系统)。
+     * @param {number} currentVersion - 当前版本
+     * @param {number} targetVersion - 目标版本
+     * @param {object} [options] - 选项
+     * @param {string} [options.oldDbPath] - 旧数据库路径
+     * @returns {Promise<boolean>}
+     */
+    async runMigrations(currentVersion, targetVersion, options = {}) {
+        return await runMigrations(currentVersion, targetVersion, options);
     }
 };
 
 window.database = database;
-export { database, dbVars };
+export { database, dbVars, MIGRATION_ENABLED };

@@ -46,6 +46,13 @@ import { watchState } from '../services/watchState';
 import sqliteService from '../services/sqlite';
 import configRepository from '../services/config';
 
+// 迁移系统开关: true=使用新的 .map 迁移系统, false=使用旧的 runFixes() 方式
+// 阶段 A (验证期): 默认为 false，上线后改为 true
+const USE_NEW_MIGRATION = false;
+
+// 目标数据库版本
+const TARGET_DB_VERSION = 16;
+
 export const useVrcxStore = defineStore('Vrcx', () => {
     const gameStore = useGameStore();
     const locationStore = useLocationStore();
@@ -159,8 +166,6 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             );
 
             // ── 升级策略决策树 ─────────────────────────────────────
-            const TARGET_DB_VERSION = 16;
-
             if (state.databaseVersion > 0) {
                 // ── Branch A: 已有版本号的数据库 ──
                 if (state.databaseVersion < TARGET_DB_VERSION) {
@@ -261,26 +266,32 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     // ── 内部 Helper ─────────────────────────────────────────────────
 
     /**
-     * Runs all data-fix and schema-alter operations on the CURRENT database.
-     * These are idempotent — safe to call on any version >= 0.
+     * 运行所有数据修复和 schema 变更操作。
+     * 这些操作是幂等的 —— 可安全地在任何版本 >= 0 上调用。
      */
-    async function runFixes() {
-        await database.cleanLegendFromFriendLog();
-        await database.fixGameLogTraveling();
-        await database.fixNegativeGPS();
-        await database.fixBrokenLeaveEntries();
-        await database.fixBrokenGroupInvites();
-        await database.fixBrokenNotifications();
-        await database.fixBrokenGroupChange();
-        await database.fixCancelFriendRequestTypo();
-        await database.fixBrokenGameLogDisplayNames();
-        await database.upgradeDatabaseVersion();
-        await database.vacuum();
-        await database.optimize();
+    async function runFixes(targetVersion) {
+        if (USE_NEW_MIGRATION) {
+            // 新路径: 使用 .map 文件的声明式迁移系统
+            await database.runMigrations(state.databaseVersion, targetVersion);
+        } else {
+            // 旧路径: 调用遗留的 fix 函数
+            await database.cleanLegendFromFriendLog();
+            await database.fixGameLogTraveling();
+            await database.fixNegativeGPS();
+            await database.fixBrokenLeaveEntries();
+            await database.fixBrokenGroupInvites();
+            await database.fixBrokenNotifications();
+            await database.fixBrokenGroupChange();
+            await database.fixCancelFriendRequestTypo();
+            await database.fixBrokenGameLogDisplayNames();
+            await database.upgradeDatabaseVersion();
+            await database.vacuum();
+            await database.optimize();
+        }
     }
 
     /**
-     * Branch A: 原地升级 —— 当前 DB 版本 > 0 且 < target。
+     * 分支 A: 原地升级 —— 当前 DB 版本 > 0 且 < target。
      *
      * @param {number} fromVersion
      * @param {number} targetVersion
@@ -290,15 +301,19 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value.fromVersion = fromVersion;
         databaseUpgradeState.value.toVersion = targetVersion;
         console.log(
-            `Upgrading database from ${fromVersion} to ${targetVersion}...`
+            `升级数据库从 ${fromVersion} 到 ${targetVersion}...`
         );
         try {
-            await runFixes();
+            if (USE_NEW_MIGRATION) {
+                await database.runMigrations(fromVersion, targetVersion);
+            } else {
+                await runFixes(targetVersion);
+            }
             await configRepository.setInt(
                 'VRCX_databaseVersion',
                 targetVersion
             );
-            console.log('Database upgrade complete.');
+            console.log('数据库升级完成。');
             state.databaseVersion = targetVersion;
         } catch (err) {
             console.error(err);
@@ -316,7 +331,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     }
 
     /**
-     * Branch B: version == 0 / null —— 尝试从 .bak 恢复。
+     * 分支 B: version == 0 / null —— 尝试从 .bak 恢复。
      *
      * @param {number} targetVersion
      * @returns {Promise<boolean>}
@@ -362,22 +377,26 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      */
     async function initAndFixInPlace(targetVersion) {
         console.log(
-            'No valid backup config found. Running init + fix in place...'
+            '未找到有效的备份配置。正在原地初始化 + 修复...'
         );
         databaseUpgradeState.value.fromVersion = 0;
         databaseUpgradeState.value.toVersion = targetVersion;
 
         try {
             await database.initTables();
-            await runFixes();
+            if (USE_NEW_MIGRATION) {
+                await database.runMigrations(0, targetVersion);
+            } else {
+                await runFixes(targetVersion);
+            }
             await configRepository.setInt(
                 'VRCX_databaseVersion',
                 targetVersion
             );
             state.databaseVersion = targetVersion;
-            console.log('Database init + fix complete.');
+            console.log('数据库初始化 + 修复完成。');
         } catch (err) {
-            console.error('Database init + fix failed:', err);
+            console.error('数据库初始化 + 修复失败:', err);
             await modalStore.alert({
                 title: t('message.database.repair_failed_title'),
                 description: t(
@@ -401,7 +420,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      */
     async function migrateFromOldDb(oldPath, targetVersion) {
         console.log(
-            `Migrating data from old database: ${oldPath}`
+            `正在从旧数据库迁移数据: ${oldPath}`
         );
         databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
         databaseUpgradeState.value.toVersion = targetVersion;
@@ -421,8 +440,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             const oldIsAhead = oldVersion > targetVersion;
             if (oldIsAhead) {
                 console.warn(
-                    `Old database version ${oldVersion} is ahead of target ${targetVersion}. ` +
-                        'Copying data as-is; some features may behave unexpectedly.'
+                    `旧数据库版本 ${oldVersion} 高于目标版本 ${targetVersion}。` +
+                        '将按原样复制数据，部分功能可能行为异常。'
                 );
             }
 
@@ -442,8 +461,12 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 }
             }
 
-            // 4) 对新库跑 fix（数据清洗）
-            await runFixes();
+            // 4) 对新库跑迁移/修复
+            if (USE_NEW_MIGRATION) {
+                await database.runMigrations(oldVersion, targetVersion, { oldDbPath: oldPath });
+            } else {
+                await runFixes(targetVersion);
+            }
 
             // 5) 设版本号
             await configRepository.setInt(
@@ -451,10 +474,10 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 targetVersion
             );
             state.databaseVersion = targetVersion;
-            console.log('Database migration complete.');
+            console.log('数据库迁移完成。');
             return true;
         } catch (err) {
-            console.error('Database migration failed:', err);
+            console.error('数据库迁移失败:', err);
             await modalStore.alert({
                 title: t('message.database.repair_failed_title'),
                 description: t(
