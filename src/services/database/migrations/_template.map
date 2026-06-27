@@ -175,10 +175,10 @@
 //
 //   "source": "sql_embed"  - Embed raw SQL directly into SET clause
 //                            将原始 SQL 直接嵌入 SET 子句
-//                            Used for correlated subqueries referencing outer table columns.
-//                            用于引用外层表列的相关子查询。
-//                            Must start with '(' — validated at runtime.
-//                            必须以 ( 开头 —— 运行时校验。
+//                            Used for correlated subqueries or scalar expressions.
+//                            用于相关子查询或标量表达式。
+//                            Must start with '(' — validated at runtime (wrap expression in parens if needed).
+//                            必须以 ( 开头 —— 运行时校验（表达式需用括号包裹）。
 //                            NOT parameterized; the SQL text is embedded as-is.
 //                            不参数化，SQL 文本原样嵌入。
 //

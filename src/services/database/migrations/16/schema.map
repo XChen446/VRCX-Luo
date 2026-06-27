@@ -27,6 +27,11 @@
     },
     {
       "table": "gamelog_location",
+      "operation": "execute_sql",
+      "sql": "UPDATE gamelog_location SET group_name = groupName WHERE groupName IS NOT NULL AND groupName != ''"
+    },
+    {
+      "table": "gamelog_location",
       "operation": "drop_column",
       "column": "groupName"
     },

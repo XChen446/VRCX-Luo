@@ -6,7 +6,11 @@
   "params": {
     "traveling_fix_sql": {
       "source": "sql_embed",
-      "sql": "(SELECT sub.location FROM gamelog_join_leave AS sub WHERE sub.type = 'OnPlayerJoined' AND sub.display_name = gamelog_join_leave.display_name AND sub.created_at <= gamelog_join_leave.created_at ORDER BY sub.created_at DESC LIMIT 1)"
+      "sql": "(COALESCE((SELECT sub.location FROM gamelog_join_leave AS sub WHERE sub.type = 'OnPlayerJoined' AND sub.display_name = gamelog_join_leave.display_name AND sub.created_at <= gamelog_join_leave.created_at ORDER BY sub.created_at DESC LIMIT 1), gamelog_join_leave.location))"
+    },
+    "strip_name_sql": {
+      "source": "sql_embed",
+      "sql": "(TRIM(SUBSTR(display_name, 1, INSTR(display_name, ' (') - 1)))"
     }
   },
   "fixes": [
@@ -47,6 +51,18 @@
       "operation": "update",
       "set": { "location": "@traveling_fix_sql" },
       "where": "type = 'OnPlayerLeft' AND location = 'traveling'"
+    },
+    {
+      "table": "gamelog_join_leave",
+      "operation": "update",
+      "set": { "time": 0 },
+      "where": "type = 'OnPlayerLeft' AND time > 0 AND time > (SELECT COALESCE(SUM(time), 0) FROM gamelog_location WHERE gamelog_location.location = gamelog_join_leave.location)"
+    },
+    {
+      "table": "gamelog_join_leave",
+      "operation": "update",
+      "set": { "display_name": "@strip_name_sql" },
+      "where": "display_name LIKE '% (%'"
     }
   ]
 }

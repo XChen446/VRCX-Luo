@@ -58,6 +58,14 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
         await executeMigration(migration, options);
     }
 
+    // 迁移完成后执行维护命令
+    try {
+        await sqliteService.executeNonQuery('VACUUM');
+        await sqliteService.executeNonQuery('PRAGMA optimize');
+    } catch (err) {
+        console.warn('[迁移] 迁移后维护命令执行失败（非关键）:', err.message);
+    }
+
     console.log('[迁移] 所有迁移执行完成');
     return true;
 }
@@ -335,8 +343,30 @@ async function executeSchemaOperation(op) {
         await executeDropColumn(table, op);
     } else if (operation === 'rename_table') {
         await executeRenameTable(table, op);
+    } else if (operation === 'execute_sql') {
+        await executeRawSql(table, op);
     } else {
         console.warn(`[迁移] 未知 schema 操作: ${operation}`);
+    }
+}
+
+/**
+ * 执行原始 SQL 操作（用于 schema 迁移中的非 DDL 逻辑，如数据迁移）。
+ * @param {string} tablePattern
+ * @param {object} op
+ */
+async function executeRawSql(tablePattern, op) {
+    const { sql } = op;
+    if (!sql) {
+        console.warn('[迁移] execute_sql 操作缺少 sql 字段');
+        return;
+    }
+    try {
+        await sqliteService.executeNonQuery(sql);
+        console.log(`[迁移] 已执行 SQL: ${sql.substring(0, 80)}...`);
+    } catch (e) {
+        console.error(`[迁移] 执行 SQL 失败:`, e);
+        throw e;
     }
 }
 
