@@ -1,98 +1,207 @@
 // Database Migration Map Template
+// 数据库迁移映射模板
 //
 // This file serves as a reference for creating new migration files.
+// 此文件作为创建新迁移文件的参考模板。
 // Copy this structure into a new version directory (e.g., migrations/17/schema.map)
+// 将下方结构复制到新版本目录中（如 migrations/17/schema.map）
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │                             schema.map                                      │
-// │   Declares table structure changes: ADD COLUMN, CREATE INDEX, etc.          │
+// │   Schema 迁移 / Schema Migration                                            │
+// │   声明表结构变更：ADD COLUMN, DROP COLUMN, CREATE INDEX, RENAME TABLE       │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //
 // {
-//   "version": 17,                         // Required: version number (must match directory name)
-//   "description": "Description of changes", // Optional: human-readable description
-//   "type": "schema",                       // Required: "schema" or "data"
-//   "dependencies": [],                      // Optional: required prior versions
-//   "changes": [                            // Required for type="schema"
+//   "version": 17,                         // Required / 必填：版本号（必须与目录名一致）
+//   "description": "Description of changes", // Optional / 可选：变更说明
+//   "type": "schema",                       // Required / 必填："schema" 或 "data"
+//   "dependencies": [],                      // Optional / 可选：依赖的版本号数组。
+//                                           //   data.map 依赖指定版本的 schema
+//                                           //   schema.map 依赖指定版本的 schema
+//                                           //   空数组或省略 = 无显式依赖。
+//                                           //   跨版本隐式排序：vN 在 vN+1 之前执行。
+//                                           //   同版本内：schema 始终在 data 之前。
+//   "changes": [                            // Required for type="schema" / schema 必填
 //     {
-//       "table": "%_feed_gps",              // Table name pattern (see below)
-//       "operation": "add_column",           // Operation type
-//       "column": "group_name",             // Column name (for add_column)
-//       "type": "TEXT",                     // Column type (for add_column)
-//       "default": "''"                      // Default value (for add_column)
+//       "table": "%_feed_gps",              // Table name pattern / 表名模式（见下文）
+//       "operation": "add_column",           // ALTER TABLE ... ADD COLUMN
+//       "column": "group_name",             // Column name / 列名
+//       "type": "TEXT",                     // Column type / 列类型 (TEXT, INTEGER, REAL, BLOB)
+//       "default": "''"                      // Default value / 默认值（必填）
+//      // Idempotent / 幂等: duplicate column → skip ✓
 //     },
 //     {
-//       "table": "gamelog_location",        // Exact table name (no wildcard)
-//       "operation": "create_index",         // Create index
-//       "name": "idx_custom",               // Index name
-//       "columns": ["world_id", "created_at"] // Index columns
+//       "table": "%_friend_log_history",    // Table name pattern / 表名模式
+//       "operation": "create_index",         // CREATE INDEX IF NOT EXISTS
+//       "name": "idx_user_id",              // Index name / 索引名
+//       "columns": ["user_id"]              // Column(s) for index / 索引列
+//      // Idempotent / 幂等: by IF NOT EXISTS ✓
+//     },
+//     {
+//       "table": "gamelog_location",        // Exact table name / 精确表名
+//       "operation": "drop_column",          // ALTER TABLE ... DROP COLUMN
+//       "column": "groupName"               // Column name to drop / 待删除列名
+//      // Idempotent / 幂等: no such column → skip ✓
+//      // Requires SQLite ≥ 3.35.0 / 需要 SQLite 3.35.0+
+//     },
+//     {
+//       "table": "old_table_name",          // Exact table name (current) / 当前表名
+//       "operation": "rename_table",         // ALTER TABLE ... RENAME TO
+//       "newName": "new_table_name"         // New table name / 新表名
+//      // Idempotent / 幂等: no such table → skip, already exists → skip ✓
 //     }
 //   ]
 // }
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │                             data.map                                         │
-// │   Declares data fixes: DELETE, UPDATE operations                            │
+// │   Data 迁移 / Data Migration                                                 │
+// │   声明数据修复：DELETE, UPDATE（含相关子查询）, INSERT                       │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //
 // {
 //   "version": 17,
-//   "description": "Clean corrupted entries",
+//   "description": "Clean corrupted entries and fix traveling logs / 清理损坏条目并修复 traveling 日志",
 //   "type": "data",
-//   "dependencies": [17],                    // Requires schema.map 17 to run first
-//   "params": {                              // Optional: parameter definitions
-//     "traveling_fix": {
-//       "source": "subquery",                // "subquery" | "fixed" | "old_db"
-//       "bind": ["display_name", "created_at"],
-//       "sql": "SELECT location FROM gamelog_join_leave WHERE ..."
+//   "dependencies": [17],                    // Depends on version 17 schema having run first
+//                                           // 依赖于已执行 v17 schema
+//   "params": {                              // Optional / 可选：UPDATE SET 的参数定义
+//     "traveling_fix_sql": {
+//       "source": "sql_embed",               // 嵌入原始 SQL 作为相关子查询到 SET 子句中
+//                                           // Embed raw SQL as correlated subquery in SET clause
+//                                           //   必须以 ( 开头（运行时校验）
+//                                           //   子查询中通过表名引用外层表
+//       "sql": "(SELECT sub.location FROM gamelog_join_leave AS sub WHERE sub.type = 'OnPlayerJoined' AND sub.display_name = gamelog_join_leave.display_name AND sub.created_at <= gamelog_join_leave.created_at ORDER BY sub.created_at DESC LIMIT 1)"
+//     },
+//     "some_lookup": {
+//       "source": "subquery",                // 在当前库执行标量子查询，返回首行首列
+//                                           // Execute scalar subquery on current DB
+//       "bind": ["key1", "key2"],            // 可选：绑定参数键名，值来自同级字段
+//                                           // Optional: bind keys, values from peer fields.
+//                                           //   传入 SQL 时作为 @key1, @key2
+//       "key1": "someValue",                 // 示例绑定值 / Example bind value
+//       "key2": "anotherValue",
+//       "sql": "SELECT value FROM configs WHERE name = @key1 AND scope = @key2 LIMIT 1"
+//     },
+//     "fixed_value": {
+//       "source": "fixed",                   // 直接返回字面值 / Use a literal value directly
+//       "value": "literal"
+//     },
+//     "old_db_value": {
+//       "source": "old_db",                  // 在旧数据库上执行（需要运行时传入 oldDbPath）
+//                                           // Execute on old database (needs oldDbPath option)
+//       "sql": "SELECT value FROM configs WHERE key = @key LIMIT 1"
 //     }
 //   },
-//   "fixes": [                              // Required for type="data"
+//   "fixes": [                              // Required for type="data" / data 必填
 //     {
 //       "table": "%_friend_log_history",
-//       "operation": "delete",
-//       "where": "type = 'TrustLevel' AND trust_level = 'Veteran User'"
+//       "operation": "delete",               // DELETE FROM {table} WHERE {where}
+//       "where": "type = 'TrustLevel' AND ..."
 //     },
 //     {
 //       "table": "gamelog_join_leave",
-//       "operation": "update",
-//       "set": { "location": "@traveling_fix" },
+//       "operation": "update",               // UPDATE {table} SET {set} WHERE {where}
+//       "set": { "location": "@traveling_fix_sql" },  // 引用 params 中的参数名
 //       "where": "type = 'OnPlayerLeft' AND location = 'traveling'"
+//     },
+//     {
+//       "table": "%_some_table",
+//       "operation": "insert",               // INSERT OR IGNORE INTO ...
+//       "columns": ["col_a", "col_b"],       // 列名列表 / Column list
+//       "values": ["value1", 42]             // 值列表（须与列数一致）/ Values array
 //     }
 //   ]
 // }
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
-// │                         Table Name Patterns                                  │
+// │                         Table Name Patterns  /  表名模式                    │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //
-// | Pattern          | Meaning                              | Example              |
+// | Pattern          | Meaning / 含义                     | Example / 示例        |
 // |-----------------|--------------------------------------|----------------------|
-// | %_feed_gps       | User-prefixed table wildcard         | abc123_feed_gps      |
+// | %_feed_gps       | User-prefixed table wildcard        | abc123_feed_gps      |
+// |                  | 用户前缀通配符表                     |                      |
 // | gamelog_location | Exact match (global table)          | gamelog_location     |
+// |                  | 精确匹配（全局表）                   |                      |
 //
 // The % at the beginning means "any user prefix". The wildcard is expanded at
 // runtime by querying sqlite_schema for matching table names.
+// 开头的 % 表示"任意用户前缀"，运行时通过查询 sqlite_schema 展开。
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
-// │                         Operation Types                                     │
+// │                  Operation Types  /  操作类型（完整参考）                    │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //
-// Schema operations:
-//   - add_column:   ALTER TABLE {table} ADD COLUMN {column} {type} DEFAULT {default}
-//   - create_index: CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})
+// Schema operations / Schema 操作:
+//   - add_column:    ALTER TABLE {table} ADD COLUMN {column} {type} DEFAULT {default}
+//                    Idempotent / 幂等: catches "duplicate column name" → skip
+//   - create_index:  CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})
+//                    Idempotent / 幂等: by SQL IF NOT EXISTS
+//   - drop_column:   ALTER TABLE {table} DROP COLUMN {column}
+//                    Idempotent / 幂等: catches "no such column" → skip
+//                    Requires SQLite ≥ 3.35.0 / 需要 SQLite 3.35.0+
+//   - rename_table:  ALTER TABLE {table} RENAME TO {newName}
+//                    Idempotent / 幂等: catches "no such table" → skip, "already exists" → skip
 //
-// Data operations:
+// Data operations / Data 操作:
 //   - delete:  DELETE FROM {table} WHERE {where}
-//   - update: UPDATE {table} SET {set} WHERE {where}
-//   - insert: INSERT OR IGNORE INTO {table} (...) VALUES (...)
+//   - update:  UPDATE {table} SET {set} WHERE {where}
+//              Supports @param references in {set} object (see Parameter Resolution below)
+//              {set} 对象支持 @param 引用（详见参数解析）
+//   - insert:  INSERT OR IGNORE INTO {table} ({columns}) VALUES ({values})
+//              Idempotent / 幂等: by INSERT OR IGNORE (skips on PK/UNIQUE conflict)
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
-// │                         Parameter Resolution                               │
+// │                    Parameter Resolution  /  参数解析                        │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //
-// Parameters are prefixed with @ and resolved from the params section:
+// Parameters are prefixed with @ and resolved from the params section.
+// Only supported in the "set" object of an "update" operation.
+// 参数以 @ 开头，从 params 节解析。仅支持 update 操作的 set 对象。
 //
-//   "source: subquery"  - Execute SQL on current database
-//   "source: fixed"     - Use literal value
-//   "source: old_db"    - Execute SQL on old database (for migration)
+// Available sources / 可用来源:
+//   "source": "subquery"   - Execute SQL on current database / 在当前库执行 SQL
+//                            If "bind" is provided, values are sourced from sibling keys.
+//                            如果提供 bind 数组，值从同级的对应字段获取，传入 SQL 作为 @key。
+//                            Returns first column of first result row / 返回首行首列。
+//
+//   "source": "fixed"      - Use literal value from "value" field / 使用 value 字段字面值
+//
+//   "source": "old_db"     - Execute SQL on old database (needs oldDbPath runtime option)
+//                            在旧数据库上执行 SQL（需要运行时传入 oldDbPath 选项）
+//                            Returns first column of first result row / 返回首行首列。
+//
+//   "source": "sql_embed"  - Embed raw SQL directly into SET clause
+//                            将原始 SQL 直接嵌入 SET 子句
+//                            Used for correlated subqueries referencing outer table columns.
+//                            用于引用外层表列的相关子查询。
+//                            Must start with '(' — validated at runtime.
+//                            必须以 ( 开头 —— 运行时校验。
+//                            NOT parameterized; the SQL text is embedded as-is.
+//                            不参数化，SQL 文本原样嵌入。
+//
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                    Dependencies & Ordering  /  依赖与排序                   │
+// └─────────────────────────────────────────────────────────────────────────────┘
+//
+// Migrations are topologically sorted (Kahn's algorithm).
+// 迁移按拓扑排序执行（Kahn 算法）。
+//
+// Ordering rules / 排序规则:
+//   1. Within same version: schema.map → data.map (always / 始终)
+//   2. Cross-version: vN runs before vN+1 (implicit / 隐式)
+//   3. Explicit "dependencies" array adds additional edges / 显式 dependencies 添加额外边:
+//      - data.map dependencies: [N] → this data fix requires version N's schema
+//        data.map 依赖 [N] 表示需要 vN 的 schema 已执行
+//      - schema.map dependencies: [N] → this schema change requires version N's schema
+//        schema.map 依赖 [N] 表示需要 vN 的 schema 已执行
+//   4. Circular dependencies are detected and throw error (safe termination / 安全终止)
+//      循环依赖会被检测并抛出错误
+//   5. Each version+type runs in its own transaction (BEGIN/COMMIT/ROLLBACK)
+//      每个 version+type 在独立事务中运行
+//      - Schema and data for the same version are separate transactions
+//        同版本的 schema 和 data 是分开的事务
+//      - All operations are idempotent, so partial failure is recoverable on retry
+//        所有操作幂等，部分失败可在重试时恢复
