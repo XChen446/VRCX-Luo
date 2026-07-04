@@ -3,6 +3,8 @@ build/
 obj/
 obj1/
 .idea/
+.vscode/
+.zed/
 *.log
 *.DotSettings.user
 .vs/
