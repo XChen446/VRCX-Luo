@@ -16,6 +16,10 @@
 //   "version": 17,                         // Required / 必填：版本号（必须与目录名一致）
 //   "description": "Description of changes", // Optional / 可选：变更说明
 //   "type": "schema",                       // Required / 必填："schema" 或 "data"
+//   "database": {                           // Optional / 可选：数据库引擎限制（见下方详细说明）
+//     "before": "",                         //   空字符串则不限制 / Empty string = no restriction
+//     "after": "sqlite"                     //   指定引擎类型 / Specific engine type
+//   },
 //   "dependencies": [],                      // Optional / 可选：依赖的版本号数组。
 //                                           //   data.map 依赖指定版本的 schema
 //                                           //   schema.map 依赖指定版本的 schema
@@ -64,6 +68,10 @@
 //   "version": 17,
 //   "description": "Clean corrupted entries and fix traveling logs / 清理损坏条目并修复 traveling 日志",
 //   "type": "data",
+//   "database": {                           // Optional / 可选：数据库引擎限制
+//     "before": "",
+//     "after": "sqlite"
+//   },
 //   "dependencies": [17],                    // Depends on version 17 schema having run first
 //                                           // 依赖于已执行 v17 schema
 //   "params": {                              // Optional / 可选：UPDATE SET 的参数定义
@@ -116,6 +124,39 @@
 // }
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
+// │                    Database Engine Constraints  /  数据库引擎限制            │
+// └─────────────────────────────────────────────────────────────────────────────┘
+// //
+// // The optional "database" field constrains which database engine a migration
+// // can run on. This is useful when migrating data between different engines
+// // (e.g., SQLite → MySQL) to enforce format safety.
+// // 可选的 "database" 字段用于约束迁移在哪种数据库引擎上执行，
+// // 在跨引擎迁移时用以来确保表格式安全（如 SQLite → MySQL）。
+// //
+// // Structure / 结构:
+// //   "database": {
+// //     "before": <string>,   // Engine before migration / 迁移前的引擎，"" 则不限制
+// //     "after":  <string>    // Engine after migration / 迁移后的引擎，"" 则不限制
+// //   }
+// //
+// // Rules / 规则:
+// //   - "" (empty string) / omitted / null / absent = no restriction / 不限制
+// //   - Non-empty strings are compared case-insensitively / 非空字符串不区分大小写比较
+// //   - If "before" is set and non-empty, the current engine must match
+// //     设置 before 且非空时，当前引擎必须匹配
+// //   - If "after" is set and non-empty, the current engine must match
+// //     设置 after 且非空时，当前引擎必须匹配
+// //   - If both are set and non-empty, the current engine must satisfy both
+// //     同时设置且非空时，当前引擎必须同时满足两者
+// //
+// // Example / 示例:
+// //   { "before": "sqlite", "after": "" }   → must be on SQLite now / 当前必须是 SQLite
+// //   { "before": "",       "after": "mysql" } → must become MySQL / 迁移后必须是 MySQL
+// //   { "before": "mysql",  "after": "sqlite" }→ migrating from MySQL to SQLite
+// //                                              从 MySQL 迁移到 SQLite
+// //   { } / omitted / null / absent           → unrestricted / 不限制
+// //
+// // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │                         Table Name Patterns  /  表名模式                    │
 // └─────────────────────────────────────────────────────────────────────────────┘
 //

@@ -53,9 +53,12 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 
     console.log(`[迁移] 已选中 ${sortedMigrations.length} 个迁移: ${sortedMigrations.map(m => m.version).join(' -> ')}`);
 
+    // 获取当前数据库引擎（全局统一，避免重复调用）
+    const currentEngine = getDatabaseEngine();
+
     // 阶段 3: 执行迁移
     for (const migration of sortedMigrations) {
-        await executeMigration(migration, options);
+        await executeMigration(migration, options, currentEngine);
     }
 
     // 迁移完成后执行维护命令
@@ -157,7 +160,59 @@ function validateMapFile(data, type) {
         }
     }
 
+    // 校验 database 字段（如果存在）
+    if (data.database !== undefined && data.database !== null) {
+        validateDatabaseField(data.database);
+    }
+
     return data;
+}
+
+/**
+ * 校验 database 字段结构。
+ * @param {object} database - database 字段值
+ */
+function validateDatabaseField(database) {
+    if (typeof database !== 'object' || Array.isArray(database)) {
+        throw new Error('无效的 .map 文件: "database" 字段必须是对象');
+    }
+
+    const validKeys = ['before', 'after'];
+    for (const key of validKeys) {
+        const val = database[key];
+        if (val !== undefined && val !== null && typeof val !== 'string') {
+            throw new Error(`无效的 .map 文件: "database.${key}" 必须是字符串`);
+        }
+    }
+}
+
+/**
+ * 获取当前数据库引擎类型。
+ * @returns {string} 引擎类型标识（当前固定返回 "sqlite"）
+ */
+function getDatabaseEngine() {
+    return 'sqlite';
+}
+
+/**
+ * 检查迁移的 database 限制与当前引擎是否兼容。
+ * @param {object|null|undefined} database - map 文件中的 database 字段
+ * @param {string} engine - 当前数据库引擎
+ */
+function checkDatabaseCompatibility(database, engine) {
+    if (!database || typeof database !== 'object') return;
+
+    const check = (key, label) => {
+        const val = database[key];
+        if (val && typeof val === 'string' && val.toLowerCase() !== engine.toLowerCase()) {
+            throw new Error(
+                `数据库引擎不匹配: 迁移要求 ${label} = "${val}", 当前引擎为 "${engine}"`
+            );
+        }
+    };
+
+    check('before', 'database.before');
+    check('after', 'database.after');
 }
 
 /**
@@ -280,9 +335,13 @@ function topologicalSort(migrations) {
  * 执行单个迁移 (schema 或 data)。
  * @param {object} migration
  * @param {object} options
+ * @param {string} engine - 当前数据库引擎
  */
-async function executeMigration(migration, options) {
+async function executeMigration(migration, options, engine) {
     const { version, type, data } = migration;
+
+    // 检查 database 引擎兼容性
+    checkDatabaseCompatibility(data.database, engine);
 
     console.log(`[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`);
 

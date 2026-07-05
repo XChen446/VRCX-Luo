@@ -2,6 +2,10 @@
   "version": 16,
   "description": "添加 group_name 列、friend_number 列、avatar_history time 列，以及性能优化索引",
   "type": "schema",
+  "database": {
+    "before": "",
+    "after": "sqlite"
+  },
   "dependencies": [],
   "changes": [
     {

@@ -2,6 +2,10 @@
   "version": 16,
   "description": "清理好友日志中的 Legend 刷屏条目、修复 traveling 日志、负数 GPS、损坏的离开记录等数据修复",
   "type": "data",
+  "database": {
+    "before": "",
+    "after": "sqlite"
+  },
   "dependencies": [16],
   "params": {
     "traveling_fix_sql": {
