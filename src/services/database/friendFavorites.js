@@ -1,49 +1,35 @@
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const friendFavorites = {
     addFriendToLocalFavorites(userId, groupName) {
-        sqliteService.executeNonQuery(
-            'INSERT OR REPLACE INTO favorite_friend (user_id, group_name, created_at) VALUES (@user_id, @group_name, @created_at)',
-            {
-                '@user_id': userId,
-                '@group_name': groupName,
-                '@created_at': new Date().toJSON()
-            }
-        );
+        adapter.insert('favorite_friend', 'replace', {
+            user_id: userId,
+            group_name: groupName,
+            created_at: new Date().toJSON()
+        });
     },
 
     removeFriendFromLocalFavorites(userId, groupName) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM favorite_friend WHERE user_id = @user_id AND group_name = @group_name`,
-            {
-                '@user_id': userId,
-                '@group_name': groupName
-            }
-        );
+        adapter.delete('favorite_friend', {
+            user_id: userId,
+            group_name: groupName
+        });
     },
 
     renameFriendFavoriteGroup(newGroupName, groupName) {
-        sqliteService.executeNonQuery(
-            `UPDATE favorite_friend SET group_name = @new_group_name WHERE group_name = @group_name`,
-            {
-                '@new_group_name': newGroupName,
-                '@group_name': groupName
-            }
+        adapter.update('favorite_friend',
+            { group_name: newGroupName },
+            { group_name: groupName }
         );
     },
 
     deleteFriendFavoriteGroup(groupName) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM favorite_friend WHERE group_name = @group_name`,
-            {
-                '@group_name': groupName
-            }
-        );
+        adapter.delete('favorite_friend', { group_name: groupName });
     },
 
     async getFriendFavorites() {
         const data = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const row = {
                 created_at: dbRow[1],
                 userId: dbRow[2],

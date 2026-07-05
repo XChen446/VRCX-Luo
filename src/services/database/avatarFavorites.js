@@ -1,30 +1,27 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const avatarFavorites = {
     addAvatarToCache(entry) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO cache_avatar (id, added_at, author_id, author_name, created_at, description, image_url, name, release_status, thumbnail_image_url, updated_at, version) VALUES (@id, @added_at, @author_id, @author_name, @created_at, @description, @image_url, @name, @release_status, @thumbnail_image_url, @updated_at, @version)`,
-            {
-                '@id': entry.id,
-                '@added_at': new Date().toJSON(),
-                '@author_id': entry.authorId,
-                '@author_name': entry.authorName,
-                '@created_at': entry.created_at,
-                '@description': entry.description,
-                '@image_url': entry.imageUrl,
-                '@name': entry.name,
-                '@release_status': entry.releaseStatus,
-                '@thumbnail_image_url': entry.thumbnailImageUrl,
-                '@updated_at': entry.updated_at,
-                '@version': entry.version
-            }
-        );
+        adapter.insert('cache_avatar', 'replace', {
+            id: entry.id,
+            added_at: new Date().toJSON(),
+            author_id: entry.authorId,
+            author_name: entry.authorName,
+            created_at: entry.created_at,
+            description: entry.description,
+            image_url: entry.imageUrl,
+            name: entry.name,
+            release_status: entry.releaseStatus,
+            thumbnail_image_url: entry.thumbnailImageUrl,
+            updated_at: entry.updated_at,
+            version: entry.version
+        });
     },
 
     addAvatarToHistory(avatarId) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT INTO ${dbVars.userPrefix}_avatar_history (avatar_id, created_at, time)
             VALUES (@avatar_id, @created_at, 0)
             ON CONFLICT(avatar_id) DO UPDATE SET created_at = @created_at`,
@@ -40,7 +37,7 @@ const avatarFavorites = {
             timeSpent: 0,
             avatarId
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 ref.timeSpent = row[0];
             },
@@ -55,7 +52,7 @@ const avatarFavorites = {
 
     async getAllAvatarTimeSpent() {
         const map = new Map();
-        await sqliteService.execute((row) => {
+        await adapter.execute((row) => {
             map.set(row[0], row[1] || 0);
         }, `SELECT avatar_id, time FROM ${dbVars.userPrefix}_avatar_history`);
 
@@ -63,7 +60,7 @@ const avatarFavorites = {
     },
 
     addAvatarTimeSpent(avatarId, timeSpent) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `UPDATE ${dbVars.userPrefix}_avatar_history SET time = time + @timeSpent WHERE avatar_id = @avatarId`,
             {
                 '@avatarId': avatarId,
@@ -74,7 +71,7 @@ const avatarFavorites = {
 
     async getAvatarHistory(currentUserId, limit = 100) {
         var data = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 id: dbRow[0],
                 authorId: dbRow[5],
@@ -95,11 +92,10 @@ const avatarFavorites = {
 
     async getCachedAvatarById(id) {
         var data = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data = {
                     id: dbRow[0],
-                    // added_at: dbRow[1],
                     authorId: dbRow[2],
                     authorName: dbRow[3],
                     created_at: dbRow[4],
@@ -121,55 +117,39 @@ const avatarFavorites = {
     },
 
     clearAvatarHistory() {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_avatar_history`
-        );
-        sqliteService.executeNonQuery('DELETE FROM cache_avatar');
+        adapter.executeNonQuery(`DELETE FROM ${dbVars.userPrefix}_avatar_history`);
+        adapter.executeNonQuery('DELETE FROM cache_avatar');
     },
 
     addAvatarToFavorites(avatarId, groupName) {
-        sqliteService.executeNonQuery(
-            'INSERT OR REPLACE INTO favorite_avatar (avatar_id, group_name, created_at) VALUES (@avatar_id, @group_name, @created_at)',
-            {
-                '@avatar_id': avatarId,
-                '@group_name': groupName,
-                '@created_at': new Date().toJSON()
-            }
-        );
+        adapter.insert('favorite_avatar', 'replace', {
+            avatar_id: avatarId,
+            group_name: groupName,
+            created_at: new Date().toJSON()
+        });
     },
 
     renameAvatarFavoriteGroup(newGroupName, groupName) {
-        sqliteService.executeNonQuery(
-            `UPDATE favorite_avatar SET group_name = @new_group_name WHERE group_name = @group_name`,
-            {
-                '@new_group_name': newGroupName,
-                '@group_name': groupName
-            }
+        adapter.update('favorite_avatar',
+            { group_name: newGroupName },
+            { group_name: groupName }
         );
     },
 
     deleteAvatarFavoriteGroup(groupName) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM favorite_avatar WHERE group_name = @group_name`,
-            {
-                '@group_name': groupName
-            }
-        );
+        adapter.delete('favorite_avatar', { group_name: groupName });
     },
 
     removeAvatarFromFavorites(avatarId, groupName) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM favorite_avatar WHERE avatar_id = @avatar_id AND group_name = @group_name`,
-            {
-                '@avatar_id': avatarId,
-                '@group_name': groupName
-            }
-        );
+        adapter.delete('favorite_avatar', {
+            avatar_id: avatarId,
+            group_name: groupName
+        });
     },
 
     async getAvatarFavorites() {
         var data = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 created_at: dbRow[1],
                 avatarId: dbRow[2],
@@ -181,20 +161,14 @@ const avatarFavorites = {
     },
 
     removeAvatarFromCache(avatarId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM cache_avatar WHERE id = @avatar_id`,
-            {
-                '@avatar_id': avatarId
-            }
-        );
+        adapter.delete('cache_avatar', { id: avatarId });
     },
 
     async getAvatarCache() {
         var data = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 id: dbRow[0],
-                // added_at: dbRow[1],
                 authorId: dbRow[2],
                 authorName: dbRow[3],
                 created_at: dbRow[4],

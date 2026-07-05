@@ -1,13 +1,13 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const memos = {
     // user memos
 
     async getUserMemo(userId) {
         var row = {};
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 row = {
                     userId: dbRow[0],
@@ -25,7 +25,7 @@ const memos = {
 
     async getAllUserMemos() {
         var memos = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 userId: dbRow[0],
                 memo: dbRow[1]
@@ -36,30 +36,22 @@ const memos = {
     },
 
     async setUserMemo(entry) {
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO memos (user_id, edited_at, memo) VALUES (@user_id, @edited_at, @memo)`,
-            {
-                '@user_id': entry.userId,
-                '@edited_at': entry.editedAt,
-                '@memo': entry.memo
-            }
-        );
+        await adapter.insert('memos', 'replace', {
+            user_id: entry.userId,
+            edited_at: entry.editedAt,
+            memo: entry.memo
+        });
     },
 
     async deleteUserMemo(userId) {
-        await sqliteService.executeNonQuery(
-            `DELETE FROM memos WHERE user_id = @user_id`,
-            {
-                '@user_id': userId
-            }
-        );
+        await adapter.delete('memos', { user_id: userId });
     },
 
     // world memos
 
     async getWorldMemo(worldId) {
         var row = {};
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 row = {
                     worldId: dbRow[0],
@@ -76,30 +68,22 @@ const memos = {
     },
 
     setWorldMemo(entry) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO world_memos (world_id, edited_at, memo) VALUES (@world_id, @edited_at, @memo)`,
-            {
-                '@world_id': entry.worldId,
-                '@edited_at': entry.editedAt,
-                '@memo': entry.memo
-            }
-        );
+        adapter.insert('world_memos', 'replace', {
+            world_id: entry.worldId,
+            edited_at: entry.editedAt,
+            memo: entry.memo
+        });
     },
 
     deleteWorldMemo(worldId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM world_memos WHERE world_id = @world_id`,
-            {
-                '@world_id': worldId
-            }
-        );
+        adapter.delete('world_memos', { world_id: worldId });
     },
 
     // Avatar memos
 
     async getAvatarMemoDB(avatarId) {
         var row = {};
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 row = {
                     avatarId: dbRow[0],
@@ -116,42 +100,31 @@ const memos = {
     },
 
     setAvatarMemo(entry) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO avatar_memos (avatar_id, edited_at, memo) VALUES (@avatar_id, @edited_at, @memo)`,
-            {
-                '@avatar_id': entry.avatarId,
-                '@edited_at': entry.editedAt,
-                '@memo': entry.memo
-            }
-        );
+        adapter.insert('avatar_memos', 'replace', {
+            avatar_id: entry.avatarId,
+            edited_at: entry.editedAt,
+            memo: entry.memo
+        });
     },
 
     deleteAvatarMemo(avatarId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM avatar_memos WHERE avatar_id = @avatar_id`,
-            {
-                '@avatar_id': avatarId
-            }
-        );
+        adapter.delete('avatar_memos', { avatar_id: avatarId });
     },
 
     // user notes
 
     async addUserNote(note) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${dbVars.userPrefix}_notes (user_id, display_name, note, created_at) VALUES (@user_id, @display_name, @note, @created_at)`,
-            {
-                '@user_id': note.userId,
-                '@display_name': note.displayName,
-                '@note': note.note,
-                '@created_at': note.createdAt
-            }
-        );
+        adapter.insert(`${dbVars.userPrefix}_notes`, 'replace', {
+            user_id: note.userId,
+            display_name: note.displayName,
+            note: note.note,
+            created_at: note.createdAt
+        });
     },
 
     async getAllUserNotes() {
         var data = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 userId: dbRow[0],
                 displayName: dbRow[1],
@@ -164,12 +137,7 @@ const memos = {
     },
 
     async deleteUserNote(userId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_notes WHERE user_id = @userId`,
-            {
-                '@userId': userId
-            }
-        );
+        adapter.delete(`${dbVars.userPrefix}_notes`, { user_id: userId });
     }
 };
 

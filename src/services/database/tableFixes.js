@@ -1,15 +1,12 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const tableFixes = {
     async cleanLegendFromFriendLog() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_friend_log_history'`);
+        var tables = await adapter.listTables('%_friend_log_history');
         for (var tableName of tables) {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${tableName}
                 WHERE type = 'TrustLevel' AND created_at > '2022-05-04T01:00:00.000Z'
                 AND ((trust_level = 'Veteran User' AND previous_trust_level = 'Trusted User') OR (trust_level = 'Trusted User' AND previous_trust_level = 'Veteran User'))`
@@ -19,7 +16,7 @@ const tableFixes = {
 
     async fixGameLogTraveling() {
         var travelingList = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -32,7 +29,7 @@ const tableFixes = {
             travelingList.unshift(row);
         }, "SELECT * FROM gamelog_join_leave WHERE type = 'OnPlayerLeft' AND location = 'traveling'");
         travelingList.forEach(async (travelingEntry) => {
-            await sqliteService.execute(
+            await adapter.execute(
                 (dbRow) => {
                     var onPlayingJoin = {
                         rowId: dbRow[0],
@@ -43,7 +40,7 @@ const tableFixes = {
                         userId: dbRow[5],
                         time: dbRow[6]
                     };
-                    sqliteService.executeNonQuery(
+                    adapter.executeNonQuery(
                         `UPDATE gamelog_join_leave SET location = @location WHERE id = @rowId`,
                         {
                             '@rowId': travelingEntry.rowId,
@@ -61,12 +58,9 @@ const tableFixes = {
     },
 
     async fixNegativeGPS() {
-        var gpsTables = [];
-        await sqliteService.execute((dbRow) => {
-            gpsTables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_gps'`);
+        var gpsTables = await adapter.listTables('%_gps');
         gpsTables.forEach((tableName) => {
-            sqliteService.executeNonQuery(
+            adapter.executeNonQuery(
                 `UPDATE ${tableName} SET time = 0 WHERE time < 0`
             );
         });
@@ -75,7 +69,7 @@ const tableFixes = {
     async getBrokenLeaveEntries() {
         var instances = await this.getGameLogInstancesTime();
         var badEntries = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             if (typeof dbRow[1] === 'number') {
                 var ref = instances.get(dbRow[0]);
                 if (typeof ref !== 'undefined' && dbRow[1] > ref) {
@@ -99,54 +93,42 @@ const tableFixes = {
             }
         });
 
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `UPDATE gamelog_join_leave SET time = 0 WHERE id IN (${badEntriesList})`
         );
     },
 
     async fixBrokenGroupInvites() {
-        var notificationTables = [];
-        await sqliteService.execute((dbRow) => {
-            notificationTables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_notifications'`);
+        var notificationTables = await adapter.listTables('%_notifications');
         notificationTables.forEach((tableName) => {
-            sqliteService.executeNonQuery(
+            adapter.executeNonQuery(
                 `DELETE FROM ${tableName} WHERE type LIKE '%.%'`
             );
         });
     },
 
     async fixBrokenNotifications() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_notifications'`);
+        var tables = await adapter.listTables('%_notifications');
         for (var tableName of tables) {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${tableName} WHERE (created_at is null or created_at = '')`
             );
         }
     },
 
     async fixBrokenGroupChange() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_notifications'`);
+        var tables = await adapter.listTables('%_notifications');
         for (var tableName of tables) {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${tableName} WHERE type = 'groupChange' AND created_at < '2024-04-23T03:00:00.000Z'`
             );
         }
     },
 
     async fixCancelFriendRequestTypo() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_friend_log_history'`);
+        var tables = await adapter.listTables('%_friend_log_history');
         for (var tableName of tables) {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `UPDATE ${tableName} SET type = 'CancelFriendRequest' WHERE type = 'CancelFriendRequst'`
             );
         }
@@ -154,7 +136,7 @@ const tableFixes = {
 
     async getBrokenGameLogDisplayNames() {
         var badEntries = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             badEntries.push({
                 id: dbRow[0],
                 displayName: dbRow[1]
@@ -167,7 +149,7 @@ const tableFixes = {
         var badEntries = await this.getBrokenGameLogDisplayNames();
         badEntries.forEach((entry) => {
             var newDisplayName = entry.displayName.split(' (')[0];
-            sqliteService.executeNonQuery(
+            adapter.executeNonQuery(
                 `UPDATE gamelog_join_leave SET display_name = @new_display_name WHERE id = @id`,
                 {
                     '@new_display_name': newDisplayName,

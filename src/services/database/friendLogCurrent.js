@@ -1,11 +1,11 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const friendLogCurrent = {
     async getFriendLogCurrent() {
         var friendLogCurrent = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 userId: dbRow[0],
                 displayName: dbRow[1],
@@ -18,47 +18,29 @@ const friendLogCurrent = {
     },
 
     setFriendLogCurrent(entry) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${dbVars.userPrefix}_friend_log_current (user_id, display_name, trust_level, friend_number) VALUES (@user_id, @display_name, @trust_level, @friend_number)`,
-            {
-                '@user_id': entry.userId,
-                '@display_name': entry.displayName,
-                '@trust_level': entry.trustLevel,
-                '@friend_number': entry.friendNumber
-            }
-        );
+        adapter.insert(`${dbVars.userPrefix}_friend_log_current`, 'replace', {
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            trust_level: entry.trustLevel,
+            friend_number: entry.friendNumber
+        });
     },
 
     setFriendLogCurrentArray(inputData) {
         if (inputData.length === 0) {
             return;
         }
-        var sqlValues = '';
-        var items = ['userId', 'displayName', 'trustLevel'];
-        for (var line of inputData) {
-            var field = {};
-            for (var item of items) {
-                if (typeof line[item] === 'string') {
-                    field[item] = line[item].replace(/'/g, "''");
-                } else {
-                    field[item] = '';
-                }
-            }
-            sqlValues += `('${field.userId}', '${field.displayName}', '${field.trustLevel}', ${line.friendNumber}), `;
-        }
-        sqlValues = sqlValues.slice(0, -2);
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${dbVars.userPrefix}_friend_log_current (user_id, display_name, trust_level, friend_number) VALUES ${sqlValues}`
-        );
+        const rows = inputData.map((line) => ({
+            user_id: typeof line.userId === 'string' ? line.userId : '',
+            display_name: typeof line.displayName === 'string' ? line.displayName : '',
+            trust_level: typeof line.trustLevel === 'string' ? line.trustLevel : '',
+            friend_number: line.friendNumber
+        }));
+        adapter.bulkInsert(`${dbVars.userPrefix}_friend_log_current`, rows, 'replace');
     },
 
     deleteFriendLogCurrent(userId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_friend_log_current WHERE user_id = @user_id`,
-            {
-                '@user_id': userId
-            }
-        );
+        adapter.delete(`${dbVars.userPrefix}_friend_log_current`, { user_id: userId });
     }
 };
 

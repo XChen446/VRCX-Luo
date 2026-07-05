@@ -1,11 +1,11 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const moderation = {
     async getModeration(userId) {
         var row = {};
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var block = false;
                 var mute = false;
@@ -40,25 +40,17 @@ const moderation = {
         if (entry.mute) {
             mute = 1;
         }
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${dbVars.userPrefix}_moderation (user_id, updated_at, display_name, block, mute) VALUES (@user_id, @updated_at, @display_name, @block, @mute)`,
-            {
-                '@user_id': entry.userId,
-                '@updated_at': entry.updatedAt,
-                '@display_name': entry.displayName,
-                '@block': block,
-                '@mute': mute
-            }
-        );
+        adapter.insert(`${dbVars.userPrefix}_moderation`, 'replace', {
+            user_id: entry.userId,
+            updated_at: entry.updatedAt,
+            display_name: entry.displayName,
+            block: block,
+            mute: mute
+        });
     },
 
     deleteModeration(userId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_moderation WHERE user_id = @user_id`,
-            {
-                '@user_id': userId
-            }
-        );
+        adapter.delete(`${dbVars.userPrefix}_moderation`, { user_id: userId });
     }
 };
 

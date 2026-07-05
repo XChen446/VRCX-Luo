@@ -1,6 +1,6 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const ACTIVITY_VIEW_KIND = {
     ACTIVITY: 'activity',
@@ -30,10 +30,6 @@ function parseJson(value, fallback) {
     }
 }
 
-/**
- * Activity V2 is the formal, stable schema for the refactored Activity tab.
- * Legacy activity_cache_* tables remain only for upgrade compatibility.
- */
 const activityV2 = {
     ACTIVITY_VIEW_KIND,
 
@@ -63,7 +59,7 @@ const activityV2 = {
 
     async getFriendPresenceSliceV2(userId, fromDateIso, toDateIso = '') {
         const rows = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 rows.push({ created_at: dbRow[0], type: dbRow[1] });
             },
@@ -98,7 +94,7 @@ const activityV2 = {
         );
 
         if (toDateIso) {
-            await sqliteService.execute(
+            await adapter.execute(
                 (dbRow) => {
                     rows.push({ created_at: dbRow[0], type: dbRow[1] });
                 },
@@ -123,7 +119,7 @@ const activityV2 = {
 
     async getFriendPresenceAfterV2(userId, afterCreatedAt) {
         const rows = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 rows.push({ created_at: dbRow[0], type: dbRow[1] });
             },
@@ -143,7 +139,7 @@ const activityV2 = {
 
     async getCurrentUserLocationSliceV2(fromDateIso, toDateIso = '') {
         const rows = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 rows.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
             },
@@ -190,7 +186,7 @@ const activityV2 = {
     async getCurrentUserLocationAfterV2(afterCreatedAt, inclusive = false) {
         const rows = [];
         const operator = inclusive ? '>=' : '>';
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 rows.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
             },
@@ -205,7 +201,7 @@ const activityV2 = {
 
     async getActivitySyncStateV2(userId) {
         let row = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 row = {
                     userId: dbRow[0],
@@ -226,24 +222,19 @@ const activityV2 = {
     },
 
     async upsertActivitySyncStateV2(entry) {
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${syncStateTable()}
-             (user_id, updated_at, is_self, source_last_created_at, pending_session_start_at, cached_range_days)
-             VALUES (@userId, @updatedAt, @isSelf, @sourceLastCreatedAt, @pendingSessionStartAt, @cachedRangeDays)`,
-            {
-                '@userId': entry.userId,
-                '@updatedAt': entry.updatedAt || '',
-                '@isSelf': entry.isSelf ? 1 : 0,
-                '@sourceLastCreatedAt': entry.sourceLastCreatedAt || '',
-                '@pendingSessionStartAt': entry.pendingSessionStartAt,
-                '@cachedRangeDays': entry.cachedRangeDays || 0
-            }
-        );
+        await adapter.insert(syncStateTable(), 'replace', {
+            user_id: entry.userId,
+            updated_at: entry.updatedAt || '',
+            is_self: entry.isSelf ? 1 : 0,
+            source_last_created_at: entry.sourceLastCreatedAt || '',
+            pending_session_start_at: entry.pendingSessionStartAt,
+            cached_range_days: entry.cachedRangeDays || 0
+        });
     },
 
     async getActivitySessionsV2(userId) {
         const sessions = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 sessions.push({
                     start: dbRow[0],
@@ -262,16 +253,13 @@ const activityV2 = {
     },
 
     async replaceActivitySessionsV2(userId, sessions = []) {
-        await sqliteService.executeNonQuery('BEGIN');
+        await adapter.begin();
         try {
-            await sqliteService.executeNonQuery(
-                `DELETE FROM ${sessionsTable()} WHERE user_id = @userId`,
-                { '@userId': userId }
-            );
+            await adapter.delete(sessionsTable(), { user_id: userId });
             await insertSessions(userId, sessions);
-            await sqliteService.executeNonQuery('COMMIT');
+            await adapter.commit();
         } catch (error) {
-            await sqliteService.executeNonQuery('ROLLBACK');
+            await adapter.rollback();
             throw error;
         }
     },
@@ -281,10 +269,10 @@ const activityV2 = {
         sessions = [],
         replaceFromStartAt = null
     }) {
-        await sqliteService.executeNonQuery('BEGIN');
+        await adapter.begin();
         try {
             if (replaceFromStartAt !== null) {
-                await sqliteService.executeNonQuery(
+                await adapter.executeNonQuery(
                     `DELETE FROM ${sessionsTable()}
                      WHERE user_id = @userId AND start_at >= @replaceFromStartAt`,
                     {
@@ -294,9 +282,9 @@ const activityV2 = {
                 );
             }
             await insertSessions(userId, sessions);
-            await sqliteService.executeNonQuery('COMMIT');
+            await adapter.commit();
         } catch (error) {
-            await sqliteService.executeNonQuery('ROLLBACK');
+            await adapter.rollback();
             throw error;
         }
     },
@@ -309,7 +297,7 @@ const activityV2 = {
         excludeKey = ''
     }) {
         let row = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 row = {
                     ownerUserId: dbRow[0],
@@ -340,26 +328,21 @@ const activityV2 = {
     },
 
     async upsertActivityBucketCacheV2(entry) {
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${bucketCacheTable()}
-             (user_id, target_user_id, range_days, view_kind, exclude_key, bucket_version, built_from_cursor, raw_buckets_json, normalized_buckets_json, summary_json, built_at)
-             VALUES (@ownerUserId, @targetUserId, @rangeDays, @viewKind, @excludeKey, @bucketVersion, @builtFromCursor, @rawBucketsJson, @normalizedBucketsJson, @summaryJson, @builtAt)`,
-            {
-                '@ownerUserId': entry.ownerUserId,
-                '@targetUserId': entry.targetUserId || '',
-                '@rangeDays': entry.rangeDays,
-                '@viewKind': entry.viewKind,
-                '@excludeKey': entry.excludeKey || '',
-                '@bucketVersion': entry.bucketVersion || 1,
-                '@builtFromCursor': entry.builtFromCursor || '',
-                '@rawBucketsJson': JSON.stringify(entry.rawBuckets || []),
-                '@normalizedBucketsJson': JSON.stringify(
-                    entry.normalizedBuckets || []
-                ),
-                '@summaryJson': JSON.stringify(entry.summary || {}),
-                '@builtAt': entry.builtAt || ''
-            }
-        );
+        await adapter.insert(bucketCacheTable(), 'replace', {
+            user_id: entry.ownerUserId,
+            target_user_id: entry.targetUserId || '',
+            range_days: entry.rangeDays,
+            view_kind: entry.viewKind,
+            exclude_key: entry.excludeKey || '',
+            bucket_version: entry.bucketVersion || 1,
+            built_from_cursor: entry.builtFromCursor || '',
+            raw_buckets_json: JSON.stringify(entry.rawBuckets || []),
+            normalized_buckets_json: JSON.stringify(
+                entry.normalizedBuckets || []
+            ),
+            summary_json: JSON.stringify(entry.summary || {}),
+            built_at: entry.builtAt || ''
+        });
     }
 };
 
@@ -386,7 +369,7 @@ async function insertSessions(userId, sessions = []) {
             return `(@userId_${suffix}, @startAt_${suffix}, @endAt_${suffix}, @isOpenTail_${suffix}, @sourceRevision_${suffix})`;
         });
 
-        await sqliteService.executeNonQuery(
+        await adapter.executeNonQuery(
             `INSERT OR REPLACE INTO ${sessionsTable()}
              (user_id, start_at, end_at, is_open_tail, source_revision)
              VALUES ${values.join(', ')}`,

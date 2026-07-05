@@ -1,6 +1,6 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const gameLog = {
     async getGamelogDatabase() {
@@ -8,7 +8,7 @@ const gameLog = {
         var date = new Date();
         date.setDate(date.getDate() - 1); // 24 hour limit
         var dateOffset = date.toJSON();
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -21,7 +21,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_location WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -33,7 +33,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_join_leave WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -46,7 +46,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_portal_spawn WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -60,7 +60,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_video_play WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -70,7 +70,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_resource_load WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -79,7 +79,7 @@ const gameLog = {
             };
             gamelogDatabase.push(row);
         }, `SELECT * FROM gamelog_event WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
                 created_at: dbRow[1],
@@ -113,7 +113,7 @@ const gameLog = {
     },
 
     addGamelogLocationToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_location (created_at, location, world_id, world_name, time, group_name) VALUES (@created_at, @location, @world_id, @world_name, @time, @group_name)`,
             {
                 '@created_at': entry.created_at,
@@ -127,7 +127,7 @@ const gameLog = {
     },
 
     updateGamelogLocationTimeToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `UPDATE gamelog_location SET time = @time WHERE created_at = @created_at`,
             {
                 '@created_at': entry.created_at,
@@ -137,7 +137,7 @@ const gameLog = {
     },
 
     addGamelogJoinLeaveToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES (@created_at, @type, @display_name, @location, @user_id, @time)`,
             {
                 '@created_at': entry.created_at,
@@ -177,13 +177,13 @@ const gameLog = {
             sqlValues += `('${field.created_at}', '${field.type}', '${field.displayName}', '${field.location}', '${field.userId}', '${field.time}'), `;
         }
         sqlValues = sqlValues.slice(0, -2);
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES ${sqlValues}`
         );
     },
 
     addGamelogPortalSpawnToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_portal_spawn (created_at, display_name, location, user_id, instance_id, world_name) VALUES (@created_at, @display_name, @location, @user_id, @instance_id, @world_name)`,
             {
                 '@created_at': entry.created_at,
@@ -197,7 +197,7 @@ const gameLog = {
     },
 
     addGamelogVideoPlayToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_video_play (created_at, video_url, video_name, video_id, location, display_name, user_id) VALUES (@created_at, @video_url, @video_name, @video_id, @location, @display_name, @user_id)`,
             {
                 '@created_at': entry.created_at,
@@ -212,7 +212,7 @@ const gameLog = {
     },
 
     addGamelogResourceLoadToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_resource_load (created_at, resource_url, resource_type, location) VALUES (@created_at, @resource_url, @resource_type, @location)`,
             {
                 '@created_at': entry.created_at,
@@ -224,7 +224,7 @@ const gameLog = {
     },
 
     addGamelogEventToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_event (created_at, data) VALUES (@created_at, @data)`,
             {
                 '@created_at': entry.created_at,
@@ -234,7 +234,7 @@ const gameLog = {
     },
 
     addGamelogExternalToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO gamelog_external (created_at, message, display_name, user_id, location) VALUES (@created_at, @message, @display_name, @user_id, @location)`,
             {
                 '@created_at': entry.created_at,
@@ -252,7 +252,7 @@ const gameLog = {
             created_at: '',
             worldId: ''
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 ref = {
                     created_at: row[0],
@@ -273,7 +273,7 @@ const gameLog = {
             visitCount: 0,
             worldId: ''
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 ref = {
                     visitCount: row[0],
@@ -293,7 +293,7 @@ const gameLog = {
             timeSpent: 0,
             worldId
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (typeof row[0] === 'number') {
                     ref.timeSpent += row[0];
@@ -311,7 +311,7 @@ const gameLog = {
         var ref = {
             created_at: ''
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 ref = {
                     created_at: row[0]
@@ -327,7 +327,7 @@ const gameLog = {
 
     async getPreviousInstancesByGroupId(groupId) {
         const data = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 let time = 0;
                 if (dbRow[2]) {
@@ -363,7 +363,7 @@ const gameLog = {
             created_at: '',
             userId: ''
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (row[1]) {
                     ref = {
@@ -389,7 +389,7 @@ const gameLog = {
 
     async getLastJoinTimeForUserAtLocation(input, location) {
         let joinTime = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 const ts = Date.parse(row[0]);
                 if (!isNaN(ts)) {
@@ -408,7 +408,7 @@ const gameLog = {
 
     async getRecentlyMetUsers(currentUserId, limit = 8) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     displayName: row[0],
@@ -435,7 +435,7 @@ const gameLog = {
 
     async getRecentlyJoinedLocations(limit = 10) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     worldId: row[0],
@@ -460,7 +460,7 @@ const gameLog = {
             joinCount: '',
             userId: ''
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (row[1]) {
                     ref = {
@@ -488,7 +488,7 @@ const gameLog = {
             timeSpent: 0,
             userId: input.id
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (typeof row[0] === 'number') {
                     ref.timeSpent += row[0];
@@ -513,7 +513,7 @@ const gameLog = {
             userId: input.id,
             previousDisplayNames: new Map()
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (typeof row[2] === 'number') {
                     ref.timeSpent += row[2];
@@ -562,7 +562,7 @@ const gameLog = {
             whereClauses.push(`g.display_name IN (${displayNamesString})`);
         }
 
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var row = {
                     lastSeen: dbRow[0],
@@ -721,7 +721,7 @@ const gameLog = {
             '@perTable': dbVars.searchTableSize,
             ...vipArgs
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const type = dbRow[2];
                 const row = {
@@ -920,7 +920,7 @@ const gameLog = {
             '@limit': maxEntries,
             '@perTable': maxEntries
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const row = {
                     rowId: dbRow[0],
@@ -1142,7 +1142,7 @@ const gameLog = {
             '@perTable': maxEntries,
             ...vipArgs
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const type = dbRow[2];
                 const row = {
@@ -1207,22 +1207,22 @@ const gameLog = {
         var gamelogDatabase = [];
         var date = new Date().toJSON();
         var dateOffset = new Date(Date.now() - 86400000).toJSON(); // 24 hours
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_location ORDER BY id DESC LIMIT 1');
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_join_leave ORDER BY id DESC LIMIT 1');
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_portal_spawn ORDER BY id DESC LIMIT 1');
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_event ORDER BY id DESC LIMIT 1');
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_video_play ORDER BY id DESC LIMIT 1');
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             gamelogDatabase.push(dbRow[0]);
         }, 'SELECT created_at FROM gamelog_resource_load ORDER BY id DESC LIMIT 1');
         if (gamelogDatabase.length > 0) {
@@ -1237,7 +1237,7 @@ const gameLog = {
 
     async getGameLogWorldNameByWorldId(worldId) {
         var worldName = '';
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 worldName = dbRow[0];
             },
@@ -1255,7 +1255,7 @@ const gameLog = {
         var currentGroup;
         var prevEvent;
 
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var [
                     created_at_iso,
@@ -1318,7 +1318,7 @@ const gameLog = {
 
     async getPreviousInstancesByWorldId(input) {
         var data = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var time = 0;
                 if (dbRow[2]) {
@@ -1350,7 +1350,7 @@ const gameLog = {
 
     async getPlayersFromInstance(location) {
         var players = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var time = 0;
                 var count = 0;
@@ -1390,7 +1390,7 @@ const gameLog = {
      */
     async getPlayerDetailFromInstance(location) {
         const entries = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 entries.push({
                     created_at: dbRow[0],
@@ -1412,7 +1412,7 @@ const gameLog = {
 
     async getPreviousDisplayNamesByUserId(ref) {
         var data = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 var row = {
                     created_at: dbRow[0],
@@ -1435,7 +1435,7 @@ const gameLog = {
 
     async getGameLogInstancesTime() {
         var instances = new Map();
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var time = 0;
             var location = dbRow[0];
             if (dbRow[1]) {
@@ -1471,7 +1471,7 @@ const gameLog = {
             params['@fromDate'] = fromDate;
             where.push('created_at >= @fromDate');
 
-            await sqliteService.execute(
+            await adapter.execute(
                 (dbRow) => {
                     data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
                 },
@@ -1489,7 +1489,7 @@ const gameLog = {
 
         const dateClause =
             where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
             },
@@ -1508,7 +1508,7 @@ const gameLog = {
     async getCurrentUserOnlineSessionsAfter(afterCreatedAt, inclusive = false) {
         const data = [];
         const op = inclusive ? '>=' : '>';
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
             },
@@ -1548,7 +1548,7 @@ const gameLog = {
         if (excludeWorldId) {
             params['@excludeWorldId'] = excludeWorldId;
         }
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 results.push({
                     worldId: dbRow[0],
@@ -1578,7 +1578,7 @@ const gameLog = {
 
     async getUserIdFromDisplayName(displayName) {
         var userId = '';
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 userId = row[0];
             },
@@ -1601,7 +1601,7 @@ const gameLog = {
     async getInstanceActivity(startDate, endDate) {
         const currentUserData = [];
         const detailData = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 const rowData = {
                     id: row[0],
@@ -1652,7 +1652,7 @@ const gameLog = {
      */
     async getDateOfInstanceActivity() {
         let result = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 result.push(row[0]);
             },
@@ -1683,7 +1683,7 @@ const gameLog = {
             dedupeKeys.add(key);
             results.push(row);
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 appendResult({
                     location: row[0],
@@ -1721,7 +1721,7 @@ const gameLog = {
 
         const getInferredLocationSessions = async (userId) => {
             const sessions = [];
-            await sqliteService.execute(
+            await adapter.execute(
                 (row) => {
                     sessions.push({
                         location: row[0],
@@ -1816,7 +1816,7 @@ const gameLog = {
             params[`@loc${i}`] = loc;
             return `@loc${i}`;
         });
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 const loc = row[0];
                 if (!result.has(loc)) result.set(loc, []);
@@ -1847,7 +1847,7 @@ const gameLog = {
             params[`@loc${i}`] = loc;
             return `@loc${i}`;
         });
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 entries.push({ location: row[0], createdAt: row[1], time: row[2] || 0 });
             },
@@ -1894,7 +1894,7 @@ const gameLog = {
     async getInstanceJoinHistory() {
         var oneWeekAgo = new Date(Date.now() - 604800000).toJSON();
         var instances = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 if (!instances.has(row[1])) {
                     var epoch = new Date(row[0]).getTime();
@@ -1911,7 +1911,7 @@ const gameLog = {
     },
 
     deleteGameLogInstanceByInstanceId(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_location WHERE location = @location`,
             {
                 '@location': input.location
@@ -1920,7 +1920,7 @@ const gameLog = {
     },
 
     deleteGameLogInstance(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_join_leave WHERE (user_id = @user_id OR display_name = @displayName) AND (location = @location) AND (id in (${input.events.join(',')}))`,
             {
                 '@user_id': input.id,
@@ -1949,7 +1949,7 @@ const gameLog = {
     },
 
     deleteGameLogVideoPlay(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_video_play WHERE created_at = @created_at AND video_url = @video_url AND location = @location`,
             {
                 '@created_at': input.created_at,
@@ -1960,7 +1960,7 @@ const gameLog = {
     },
 
     deleteGameLogEvent(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_event WHERE created_at = @created_at AND data = @data`,
             {
                 '@created_at': input.created_at,
@@ -1970,7 +1970,7 @@ const gameLog = {
     },
 
     deleteGameLogExternal(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_external WHERE created_at = @created_at AND message = @message`,
             {
                 '@created_at': input.created_at,
@@ -1980,7 +1980,7 @@ const gameLog = {
     },
 
     deleteGameLogResourceLoad(input) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `DELETE FROM gamelog_resource_load WHERE created_at = @created_at AND resource_url = @resource_url AND location = @location`,
             {
                 '@created_at': input.created_at,
@@ -2000,7 +2000,7 @@ const gameLog = {
      */
     async getRelationshipTimelineData() {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     userId: row[0],
@@ -2046,7 +2046,7 @@ const gameLog = {
         if (beforeId != null) {
             args['@beforeId'] = beforeId;
         }
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({
                     id: dbRow[0],
@@ -2095,7 +2095,7 @@ const gameLog = {
         const locIn = placeholders.join(', ');
 
         // join/leave events
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({
                     type: dbRow[0],
@@ -2116,7 +2116,7 @@ const gameLog = {
         );
 
         // video_play events
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({
                     type: 'VideoPlay',
@@ -2150,7 +2150,7 @@ const gameLog = {
      */
     async getSessionsLocationSegmentsByAnchor(sinceDate, limit) {
         const data = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 data.push({
                     id: dbRow[0],

@@ -1,6 +1,6 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const mutualGraph = {
     async getMutualGraphSnapshot() {
@@ -10,13 +10,13 @@ const mutualGraph = {
         }
         const friendTable = `${dbVars.userPrefix}_mutual_graph_friends`;
         const linkTable = `${dbVars.userPrefix}_mutual_graph_links`;
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const friendId = dbRow[0];
             if (friendId && !snapshot.has(friendId)) {
                 snapshot.set(friendId, []);
             }
         }, `SELECT friend_id FROM ${friendTable}`);
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const friendId = dbRow[0];
             const mutualId = dbRow[1];
             if (!friendId || !mutualId) {
@@ -40,41 +40,25 @@ const mutualGraph = {
         const linkTable = `${dbVars.userPrefix}_mutual_graph_links`;
         const metaTable = `${dbVars.userPrefix}_mutual_graph_meta`;
         const pairs = entries instanceof Map ? entries : new Map();
-        await sqliteService.executeNonQuery('BEGIN');
+        await adapter.begin();
         try {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${linkTable} WHERE friend_id NOT IN (SELECT friend_id FROM ${metaTable} WHERE opted_out = 1)`
             );
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${friendTable} WHERE friend_id NOT IN (SELECT friend_id FROM ${metaTable} WHERE opted_out = 1)`
             );
             if (pairs.size === 0) {
-                await sqliteService.executeNonQuery('COMMIT');
+                await adapter.commit();
                 return;
             }
-            // Also clean links for friends in the new entries even if they
-            // were previously opted_out. We have fresh data for them now so
-            // old links must not linger.
-            let idsToClean = '';
-            pairs.forEach((_, friendId) => {
-                if (!friendId) return;
-                const safe = friendId.replace(/'/g, "''");
-                idsToClean += `'${safe}',`;
-            });
-            if (idsToClean) {
-                idsToClean = idsToClean.slice(0, -1);
-                await sqliteService.executeNonQuery(
-                    `DELETE FROM ${linkTable} WHERE friend_id IN (${idsToClean})`
-                );
-            }
-            let friendValues = '';
-            let edgeValues = '';
+            const idsToClean = [];
+            const friendRows = [];
+            const edgeRows = [];
             pairs.forEach((mutualIds, friendId) => {
-                if (!friendId) {
-                    return;
-                }
-                const safeFriendId = friendId.replace(/'/g, "''");
-                friendValues += `('${safeFriendId}'),`;
+                if (!friendId) return;
+                idsToClean.push(friendId);
+                friendRows.push({ friend_id: friendId });
                 let collection = [];
                 if (Array.isArray(mutualIds)) {
                     collection = mutualIds;
@@ -82,28 +66,30 @@ const mutualGraph = {
                     collection = Array.from(mutualIds);
                 }
                 for (const mutual of collection) {
-                    if (!mutual) {
-                        continue;
-                    }
-                    const safeMutualId = String(mutual).replace(/'/g, "''");
-                    edgeValues += `('${safeFriendId}', '${safeMutualId}'),`;
+                    if (!mutual) continue;
+                    edgeRows.push({ friend_id: friendId, mutual_id: mutual });
                 }
             });
-            if (friendValues) {
-                friendValues = friendValues.slice(0, -1);
-                await sqliteService.executeNonQuery(
-                    `INSERT OR REPLACE INTO ${friendTable} (friend_id) VALUES ${friendValues}`
+            if (idsToClean.length > 0) {
+                const delParams = {};
+                const delPlaceholders = idsToClean.map((id, i) => {
+                    delParams[`@id_${i}`] = id;
+                    return `@id_${i}`;
+                });
+                await adapter.executeNonQuery(
+                    `DELETE FROM ${linkTable} WHERE friend_id IN (${delPlaceholders.join(', ')})`,
+                    delParams
                 );
             }
-            if (edgeValues) {
-                edgeValues = edgeValues.slice(0, -1);
-                await sqliteService.executeNonQuery(
-                    `INSERT OR REPLACE INTO ${linkTable} (friend_id, mutual_id) VALUES ${edgeValues}`
-                );
+            if (friendRows.length > 0) {
+                await adapter.bulkInsert(friendTable, friendRows, 'replace');
             }
-            await sqliteService.executeNonQuery('COMMIT');
+            if (edgeRows.length > 0) {
+                await adapter.bulkInsert(linkTable, edgeRows, 'replace');
+            }
+            await adapter.commit();
         } catch (err) {
-            await sqliteService.executeNonQuery('ROLLBACK');
+            await adapter.rollback();
             throw err;
         }
     },
@@ -114,26 +100,15 @@ const mutualGraph = {
         }
         const friendTable = `${dbVars.userPrefix}_mutual_graph_friends`;
         const linkTable = `${dbVars.userPrefix}_mutual_graph_links`;
-        const safeFriendId = friendId.replace(/'/g, "''");
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${friendTable} (friend_id) VALUES ('${safeFriendId}')`
-        );
-        await sqliteService.executeNonQuery(
-            `DELETE FROM ${linkTable} WHERE friend_id='${safeFriendId}'`
-        );
-        let edgeValues = '';
+        await adapter.insert(friendTable, 'replace', { friend_id: friendId });
+        await adapter.delete(linkTable, { friend_id: friendId });
+        const edgeRows = [];
         for (const mutual of mutualIds) {
-            if (!mutual) {
-                continue;
-            }
-            const safeMutualId = String(mutual).replace(/'/g, "''");
-            edgeValues += `('${safeFriendId}', '${safeMutualId}'),`;
+            if (!mutual) continue;
+            edgeRows.push({ friend_id: friendId, mutual_id: mutual });
         }
-        if (edgeValues) {
-            edgeValues = edgeValues.slice(0, -1);
-            await sqliteService.executeNonQuery(
-                `INSERT OR REPLACE INTO ${linkTable} (friend_id, mutual_id) VALUES ${edgeValues}`
-            );
+        if (edgeRows.length > 0) {
+            await adapter.bulkInsert(linkTable, edgeRows, 'replace');
         }
     },
 
@@ -143,7 +118,7 @@ const mutualGraph = {
             return mutualCountMap;
         }
         const linkTable = `${dbVars.userPrefix}_mutual_graph_links`;
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const mutualId = dbRow[0];
             const count = dbRow[1];
             if (mutualId) {
@@ -159,7 +134,7 @@ const mutualGraph = {
             return snapshot;
         }
         const oldTable = `${dbVars.userPrefix}_mutual_graph_links_old`;
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const friendId = dbRow[0];
             const mutualId = dbRow[1];
             if (!friendId || !mutualId) {
@@ -181,14 +156,15 @@ const mutualGraph = {
             return results;
         }
         const oldTable = `${dbVars.userPrefix}_mutual_graph_links_old`;
-        const safeFriendId = friendId.replace(/'/g, "''");
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const mutualId = dbRow[0];
             const date = dbRow[1];
             if (mutualId) {
                 results.push({ id: mutualId, date: date || null });
             }
-        }, `SELECT mutual_id, date FROM ${oldTable} WHERE friend_id='${safeFriendId}'`);
+        }, `SELECT mutual_id, date FROM ${oldTable} WHERE friend_id = @friendId`,
+            { '@friendId': friendId }
+        );
         return results;
     },
 
@@ -202,39 +178,22 @@ const mutualGraph = {
             return;
         }
         const now = new Date().toISOString();
-        await sqliteService.executeNonQuery('BEGIN');
-        try {
-            let edgeValues = '';
-            pairs.forEach((mutualIds, friendId) => {
-                if (!friendId) {
-                    return;
-                }
-                const safeFriendId = String(friendId).replace(/'/g, "''");
-                let collection = [];
-                if (Array.isArray(mutualIds)) {
-                    collection = mutualIds;
-                } else if (mutualIds instanceof Set) {
-                    collection = Array.from(mutualIds);
-                }
-                for (const mutual of collection) {
-                    if (!mutual) {
-                        continue;
-                    }
-                    const safeMutualId = String(mutual).replace(/'/g, "''");
-                    edgeValues += `('${safeFriendId}', '${safeMutualId}', '${now}'),`;
-                }
-            });
-            if (edgeValues) {
-                edgeValues = edgeValues.slice(0, -1);
-                await sqliteService.executeNonQuery(
-                    `INSERT OR REPLACE INTO ${oldTable} (friend_id, mutual_id, date) VALUES ${edgeValues}`
-                );
+        const rows = [];
+        pairs.forEach((mutualIds, friendId) => {
+            if (!friendId) return;
+            let collection = [];
+            if (Array.isArray(mutualIds)) {
+                collection = mutualIds;
+            } else if (mutualIds instanceof Set) {
+                collection = Array.from(mutualIds);
             }
-            await sqliteService.executeNonQuery('COMMIT');
-        } catch (err) {
-            await sqliteService.executeNonQuery('ROLLBACK');
-            throw err;
-        }
+            for (const mutual of collection) {
+                if (!mutual) continue;
+                rows.push({ friend_id: friendId, mutual_id: mutual, date: now });
+            }
+        });
+        if (rows.length === 0) return;
+        await adapter.bulkInsert(oldTable, rows, 'replace');
     },
 
     async updateMutualsForFriendInOld(friendId, mutualIds) {
@@ -242,22 +201,14 @@ const mutualGraph = {
             return;
         }
         const oldTable = `${dbVars.userPrefix}_mutual_graph_links_old`;
-        const safeFriendId = friendId.replace(/'/g, "''");
         const now = new Date().toISOString();
-        let edgeValues = '';
+        const rows = [];
         for (const mutual of mutualIds) {
-            if (!mutual) {
-                continue;
-            }
-            const safeMutualId = String(mutual).replace(/'/g, "''");
-            edgeValues += `('${safeFriendId}', '${safeMutualId}', '${now}'),`;
+            if (!mutual) continue;
+            rows.push({ friend_id: friendId, mutual_id: mutual, date: now });
         }
-        if (edgeValues) {
-            edgeValues = edgeValues.slice(0, -1);
-            await sqliteService.executeNonQuery(
-                `INSERT OR REPLACE INTO ${oldTable} (friend_id, mutual_id, date) VALUES ${edgeValues}`
-            );
-        }
+        if (rows.length === 0) return;
+        await adapter.bulkInsert(oldTable, rows, 'replace');
     },
 
     async updateFriendFetchTimeInOld(friendId) {
@@ -265,11 +216,10 @@ const mutualGraph = {
             return;
         }
         const friendsOldTable = `${dbVars.userPrefix}_mutual_graph_friends_old`;
-        const safeFriendId = friendId.replace(/'/g, "''");
-        const now = new Date().toISOString();
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${friendsOldTable} (friend_id, last_updated) VALUES ('${safeFriendId}', '${now}')`
-        );
+        await adapter.insert(friendsOldTable, 'replace', {
+            friend_id: friendId,
+            last_updated: new Date().toISOString()
+        });
     },
 
     async bulkUpdateFriendFetchTimesInOld(friendIds) {
@@ -278,27 +228,13 @@ const mutualGraph = {
         }
         const friendsOldTable = `${dbVars.userPrefix}_mutual_graph_friends_old`;
         const now = new Date().toISOString();
-        const parts = [];
+        const rows = [];
         for (const friendId of friendIds) {
-            if (!friendId) {
-                continue;
-            }
-            const safeFriendId = String(friendId).replace(/'/g, "''");
-            parts.push(`('${safeFriendId}', '${now}')`);
+            if (!friendId) continue;
+            rows.push({ friend_id: friendId, last_updated: now });
         }
-        if (parts.length === 0) {
-            return;
-        }
-        await sqliteService.executeNonQuery('BEGIN');
-        try {
-            await sqliteService.executeNonQuery(
-                `INSERT OR REPLACE INTO ${friendsOldTable} (friend_id, last_updated) VALUES ${parts.join(',')}`
-            );
-            await sqliteService.executeNonQuery('COMMIT');
-        } catch (err) {
-            await sqliteService.executeNonQuery('ROLLBACK');
-            throw err;
-        }
+        if (rows.length === 0) return;
+        await adapter.bulkInsert(friendsOldTable, rows, 'replace');
     },
 
     async getFriendLastFetchedFromOld(friendId) {
@@ -306,11 +242,12 @@ const mutualGraph = {
             return null;
         }
         const friendsOldTable = `${dbVars.userPrefix}_mutual_graph_friends_old`;
-        const safeFriendId = friendId.replace(/'/g, "''");
         let result = null;
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             result = dbRow[0] || null;
-        }, `SELECT last_updated FROM ${friendsOldTable} WHERE friend_id='${safeFriendId}'`);
+        }, `SELECT last_updated FROM ${friendsOldTable} WHERE friend_id = @friendId`,
+            { '@friendId': friendId }
+        );
         return result;
     },
 
@@ -318,16 +255,11 @@ const mutualGraph = {
         if (!dbVars.userPrefix || !friendId) {
             return;
         }
-        const metaTable = `${dbVars.userPrefix}_mutual_graph_meta`;
-        const escapedId = friendId.replace(/'/g, "''");
-        const time = (lastFetchedAt || new Date().toISOString()).replace(
-            /'/g,
-            "''"
-        );
-        const optedOutInt = optedOut ? 1 : 0;
-        await sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${metaTable} (friend_id, last_fetched_at, opted_out) VALUES ('${escapedId}', '${time}', ${optedOutInt})`
-        );
+        await adapter.insert(`${dbVars.userPrefix}_mutual_graph_meta`, 'replace', {
+            friend_id: friendId,
+            last_fetched_at: lastFetchedAt || new Date().toISOString(),
+            opted_out: optedOut ? 1 : 0
+        });
     },
 
     async bulkUpsertMutualGraphMeta(entries) {
@@ -335,20 +267,18 @@ const mutualGraph = {
             return;
         }
         const metaTable = `${dbVars.userPrefix}_mutual_graph_meta`;
-        let values = '';
         const now = new Date().toISOString();
+        const rows = [];
         entries.forEach(({ optedOut }, friendId) => {
             if (!friendId) return;
-            const escapedId = friendId.replace(/'/g, "''");
-            const optedOutInt = optedOut ? 1 : 0;
-            values += `('${escapedId}', '${now}', ${optedOutInt}),`;
+            rows.push({
+                friend_id: friendId,
+                last_fetched_at: now,
+                opted_out: optedOut ? 1 : 0
+            });
         });
-        if (values) {
-            values = values.slice(0, -1);
-            await sqliteService.executeNonQuery(
-                `INSERT OR REPLACE INTO ${metaTable} (friend_id, last_fetched_at, opted_out) VALUES ${values}`
-            );
-        }
+        if (rows.length === 0) return;
+        await adapter.bulkInsert(metaTable, rows, 'replace');
     },
 
     async getMutualGraphMeta() {
@@ -357,7 +287,7 @@ const mutualGraph = {
             return metaMap;
         }
         const metaTable = `${dbVars.userPrefix}_mutual_graph_meta`;
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const friendId = dbRow[0];
             if (friendId) {
                 metaMap.set(friendId, {

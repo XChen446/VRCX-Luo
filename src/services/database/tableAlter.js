@@ -1,29 +1,21 @@
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const tableAlter = {
     async upgradeDatabaseVersion() {
-        // var version = 0;
-        // await sqliteService.execute((dbRow) => {
-        //     version = dbRow[0];
-        // }, 'PRAGMA user_version');
-        // if (version === 0) {
         await this.updateTableForGroupNames();
         await this.addFriendLogFriendNumber();
         await this.updateTableForAvatarHistory();
-        await this.addPerformanceIndexes(); // 16
-        // }
-        // await sqliteService.executeNonQuery('PRAGMA user_version = 1');
+        await this.addPerformanceIndexes();
     },
 
     async updateTableForGroupNames() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_feed_gps' OR name LIKE '%_feed_online_offline' OR name = 'gamelog_location'`);
+        var tables = await adapter.listTables('%_feed_gps');
+        tables.push(...await adapter.listTables('%_feed_online_offline'));
+        if (!tables.includes('gamelog_location')) tables.push('gamelog_location');
         for (var tableName of tables) {
             try {
-                await sqliteService.executeNonQuery(
-                    `ALTER TABLE ${tableName} ADD group_name TEXT DEFAULT ''`
+                await adapter.executeNonQuery(
+                    `ALTER TABLE ${tableName} ADD COLUMN group_name TEXT DEFAULT ''`
                 );
             } catch (e) {
                 e = e.toString();
@@ -32,9 +24,8 @@ const tableAlter = {
                 }
             }
         }
-        // Fix gamelog_location column typo
         try {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `ALTER TABLE gamelog_location DROP COLUMN groupName`
             );
         } catch (e) {
@@ -46,14 +37,12 @@ const tableAlter = {
     },
 
     async addFriendLogFriendNumber() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_friend_log_current' OR name LIKE '%_friend_log_history'`);
+        var tables = await adapter.listTables('%_friend_log_current');
+        tables.push(...await adapter.listTables('%_friend_log_history'));
         for (var tableName of tables) {
             try {
-                await sqliteService.executeNonQuery(
-                    `ALTER TABLE ${tableName} ADD friend_number INTEGER DEFAULT 0`
+                await adapter.executeNonQuery(
+                    `ALTER TABLE ${tableName} ADD COLUMN friend_number INTEGER DEFAULT 0`
                 );
             } catch (e) {
                 e = e.toString();
@@ -65,14 +54,11 @@ const tableAlter = {
     },
 
     async updateTableForAvatarHistory() {
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_avatar_history'`);
+        var tables = await adapter.listTables('%_avatar_history');
         for (var tableName of tables) {
             try {
-                await sqliteService.executeNonQuery(
-                    `ALTER TABLE ${tableName} ADD time INTEGER DEFAULT 0`
+                await adapter.executeNonQuery(
+                    `ALTER TABLE ${tableName} ADD COLUMN time INTEGER DEFAULT 0`
                 );
             } catch (e) {
                 e = e.toString();
@@ -84,33 +70,15 @@ const tableAlter = {
     },
 
     async addPerformanceIndexes() {
-        // gamelog_location: covers getLastVisit, getVisitCount, getTimeSpentInWorld, getPreviousInstancesByWorldId, getMyTopWorlds
-        await sqliteService.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS idx_gamelog_location_world_created ON gamelog_location (world_id, created_at)`
-        );
-        // gamelog_join_leave: covers getPlayersFromInstance, getPlayerDetailFromInstance
-        await sqliteService.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_location ON gamelog_join_leave (location)`
-        );
-        // gamelog_join_leave: covers getUserStats, getAllUserStats, getLastSeen, getPreviousInstancesByUserId, getPreviousDisplayNamesByUserId
-        await sqliteService.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_user_created ON gamelog_join_leave (user_id, created_at)`
-        );
-        // gamelog_join_leave: covers getUserStats, getLastSeen for display_name OR path
-        await sqliteService.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_display_created ON gamelog_join_leave (display_name, created_at)`
-        );
+        await adapter.createIndex('idx_gamelog_location_world_created', 'gamelog_location', ['world_id', 'created_at']);
+        await adapter.createIndex('idx_gamelog_jl_location', 'gamelog_join_leave', ['location']);
+        await adapter.createIndex('idx_gamelog_jl_user_created', 'gamelog_join_leave', ['user_id', 'created_at']);
+        await adapter.createIndex('idx_gamelog_jl_display_created', 'gamelog_join_leave', ['display_name', 'created_at']);
 
-        // per-user friend_log_history: covers getFriendLogHistoryForUserId
-        var tables = [];
-        await sqliteService.execute((dbRow) => {
-            tables.push(dbRow[0]);
-        }, `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%_friend_log_history'`);
+        var tables = await adapter.listTables('%_friend_log_history');
         for (var tableName of tables) {
             try {
-                await sqliteService.executeNonQuery(
-                    `CREATE INDEX IF NOT EXISTS ${tableName}_user_id_idx ON ${tableName} (user_id)`
-                );
+                await adapter.createIndex(`${tableName}_user_id_idx`, tableName, ['user_id']);
             } catch (e) {
                 console.error(e);
             }

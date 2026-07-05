@@ -1,11 +1,11 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const notifications = {
     async getNotifications() {
         var notifications = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             var row = {
                 id: dbRow[0],
                 created_at: dbRow[1],
@@ -54,7 +54,7 @@ const notifications = {
             filterQuery = `AND type IN (${filterTypes.join(',')})`;
         }
 
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             let row = {
                 id: dbRow[0],
                 created_at: dbRow[1],
@@ -109,34 +109,26 @@ const notifications = {
             console.error('Notification is missing required field', entry);
             throw new Error('Notification is missing required field');
         }
-        sqliteService.executeNonQuery(
-            `INSERT OR IGNORE INTO ${dbVars.userPrefix}_notifications (id, created_at, type, sender_user_id, sender_username, receiver_user_id, message, world_id, world_name, image_url, invite_message, request_message, response_message, expired) VALUES (@id, @created_at, @type, @sender_user_id, @sender_username, @receiver_user_id, @message, @world_id, @world_name, @image_url, @invite_message, @request_message, @response_message, @expired)`,
-            {
-                '@id': entry.id,
-                '@created_at': entry.created_at,
-                '@type': entry.type,
-                '@sender_user_id': entry.senderUserId,
-                '@sender_username': entry.senderUsername,
-                '@receiver_user_id': entry.receiverUserId,
-                '@message': entry.message,
-                '@world_id': entry.details.worldId,
-                '@world_name': entry.details.worldName,
-                '@image_url': entry.details.imageUrl,
-                '@invite_message': entry.details.inviteMessage,
-                '@request_message': entry.details.requestMessage,
-                '@response_message': entry.details.responseMessage,
-                '@expired': expired
-            }
-        );
+        adapter.insert(`${dbVars.userPrefix}_notifications`, 'ignore', {
+            id: entry.id,
+            created_at: entry.created_at,
+            type: entry.type,
+            sender_user_id: entry.senderUserId,
+            sender_username: entry.senderUsername,
+            receiver_user_id: entry.receiverUserId,
+            message: entry.message,
+            world_id: entry.details.worldId,
+            world_name: entry.details.worldName,
+            image_url: entry.details.imageUrl,
+            invite_message: entry.details.inviteMessage,
+            request_message: entry.details.requestMessage,
+            response_message: entry.details.responseMessage,
+            expired: expired
+        });
     },
 
     deleteNotification(rowId) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_notifications WHERE id = @row_id`,
-            {
-                '@row_id': rowId
-            }
-        );
+        adapter.delete(`${dbVars.userPrefix}_notifications`, { id: rowId });
     },
 
     updateNotificationExpired(entry) {
@@ -144,12 +136,9 @@ const notifications = {
         if (entry.$isExpired) {
             expired = 1;
         }
-        sqliteService.executeNonQuery(
-            `UPDATE ${dbVars.userPrefix}_notifications SET expired = @expired WHERE id = @id`,
-            {
-                '@id': entry.id,
-                '@expired': expired
-            }
+        adapter.update(`${dbVars.userPrefix}_notifications`,
+            { expired: expired },
+            { id: entry.id }
         );
     },
 
@@ -157,7 +146,7 @@ const notifications = {
 
     async getNotificationsV2() {
         const notifications = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const row = {
                 id: dbRow[0],
                 createdAt: dbRow[1],
@@ -176,7 +165,6 @@ const notifications = {
                 responses: JSON.parse(dbRow[14] || '[]'),
                 details: JSON.parse(dbRow[15] || '{}')
             };
-            // for UI table
             row.created_at = row.createdAt;
             row.version = 2;
             notifications.unshift(row);
@@ -185,31 +173,28 @@ const notifications = {
     },
 
     addNotificationV2ToDatabase(entry) {
-        sqliteService.executeNonQuery(
-            `INSERT OR REPLACE INTO ${dbVars.userPrefix}_notifications_v2 (id, created_at, updated_at, expires_at, type, link, link_text, message, title, image_url, seen, sender_user_id, sender_username, data, responses, details) VALUES (@id, @created_at, @updated_at, @expires_at, @type, @link, @link_text, @message, @title, @image_url, @seen, @sender_user_id, @sender_username, @data, @responses, @details)`,
-            {
-                '@id': entry.id,
-                '@created_at': entry.createdAt,
-                '@updated_at': entry.updatedAt,
-                '@expires_at': entry.expiresAt,
-                '@type': entry.type,
-                '@link': entry.link,
-                '@link_text': entry.linkText,
-                '@message': entry.message,
-                '@title': entry.title,
-                '@image_url': entry.imageUrl,
-                '@seen': entry.seen ? 1 : 0,
-                '@sender_user_id': entry.senderUserId,
-                '@sender_username': entry.senderUsername,
-                '@data': JSON.stringify(entry.data || {}),
-                '@responses': JSON.stringify(entry.responses || []),
-                '@details': JSON.stringify(entry.details || {})
-            }
-        );
+        adapter.insert(`${dbVars.userPrefix}_notifications_v2`, 'replace', {
+            id: entry.id,
+            created_at: entry.createdAt,
+            updated_at: entry.updatedAt,
+            expires_at: entry.expiresAt,
+            type: entry.type,
+            link: entry.link,
+            link_text: entry.linkText,
+            message: entry.message,
+            title: entry.title,
+            image_url: entry.imageUrl,
+            seen: entry.seen ? 1 : 0,
+            sender_user_id: entry.senderUserId,
+            sender_username: entry.senderUsername,
+            data: JSON.stringify(entry.data || {}),
+            responses: JSON.stringify(entry.responses || []),
+            details: JSON.stringify(entry.details || {})
+        });
     },
 
     expireNotificationV2(id) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `UPDATE ${dbVars.userPrefix}_notifications_v2 SET expires_at = @expires_at, seen = 1 WHERE id = @id`,
             {
                 '@id': id,
@@ -219,21 +204,14 @@ const notifications = {
     },
 
     seenNotificationV2(id) {
-        sqliteService.executeNonQuery(
-            `UPDATE ${dbVars.userPrefix}_notifications_v2 SET seen = 1 WHERE id = @id`,
-            {
-                '@id': id
-            }
+        adapter.update(`${dbVars.userPrefix}_notifications_v2`,
+            { seen: 1 },
+            { id: id }
         );
     },
 
     deleteNotificationV2(id) {
-        sqliteService.executeNonQuery(
-            `DELETE FROM ${dbVars.userPrefix}_notifications_v2 WHERE id = @id`,
-            {
-                '@id': id
-            }
-        );
+        adapter.delete(`${dbVars.userPrefix}_notifications_v2`, { id: id });
     }
 };
 

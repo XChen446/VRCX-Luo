@@ -1,9 +1,9 @@
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const avatarTags = {
     async getAvatarTags(avatarId) {
         const tags = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 tags.push({ tag: dbRow[0], color: dbRow[1] || null });
             },
@@ -17,7 +17,7 @@ const avatarTags = {
 
     async getAllAvatarTags() {
         const map = new Map();
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             const avatarId = dbRow[0];
             const tag = dbRow[1];
             const color = dbRow[2] || null;
@@ -31,51 +31,36 @@ const avatarTags = {
 
     async getAllDistinctTags() {
         const tags = [];
-        await sqliteService.execute((dbRow) => {
+        await adapter.execute((dbRow) => {
             tags.push(dbRow[0]);
         }, `SELECT DISTINCT tag FROM avatar_tags ORDER BY tag`);
         return tags;
     },
 
     async addAvatarTag(avatarId, tag, color = null) {
-        await sqliteService.executeNonQuery(
-            `INSERT OR IGNORE INTO avatar_tags (avatar_id, tag, color) VALUES (@avatar_id, @tag, @color)`,
-            {
-                '@avatar_id': avatarId,
-                '@tag': tag,
-                '@color': color
-            }
-        );
+        await adapter.insert('avatar_tags', 'ignore', {
+            avatar_id: avatarId,
+            tag: tag,
+            color: color
+        });
     },
 
     async updateAvatarTagColor(avatarId, tag, color) {
-        await sqliteService.executeNonQuery(
-            `UPDATE avatar_tags SET color = @color WHERE avatar_id = @avatar_id AND tag = @tag`,
-            {
-                '@avatar_id': avatarId,
-                '@tag': tag,
-                '@color': color
-            }
+        await adapter.update('avatar_tags',
+            { color: color },
+            { avatar_id: avatarId, tag: tag }
         );
     },
 
     async removeAvatarTag(avatarId, tag) {
-        await sqliteService.executeNonQuery(
-            `DELETE FROM avatar_tags WHERE avatar_id = @avatar_id AND tag = @tag`,
-            {
-                '@avatar_id': avatarId,
-                '@tag': tag
-            }
-        );
+        await adapter.delete('avatar_tags', {
+            avatar_id: avatarId,
+            tag: tag
+        });
     },
 
     async removeAllAvatarTags(avatarId) {
-        await sqliteService.executeNonQuery(
-            `DELETE FROM avatar_tags WHERE avatar_id = @avatar_id`,
-            {
-                '@avatar_id': avatarId
-            }
-        );
+        await adapter.delete('avatar_tags', { avatar_id: avatarId });
     }
 };
 

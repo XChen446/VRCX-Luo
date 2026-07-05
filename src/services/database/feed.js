@@ -1,10 +1,10 @@
 import { dbVars } from '../database';
 
-import sqliteService from '../sqlite.js';
+import { adapter } from './adapter/index.js';
 
 const feed = {
     addGPSToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO ${dbVars.userPrefix}_feed_gps (created_at, user_id, display_name, location, world_name, previous_location, time, group_name) VALUES (@created_at, @user_id, @display_name, @location, @world_name, @previous_location, @time, @group_name)`,
             {
                 '@created_at': entry.created_at,
@@ -20,7 +20,7 @@ const feed = {
     },
 
     addStatusToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO ${dbVars.userPrefix}_feed_status (created_at, user_id, display_name, status, status_description, previous_status, previous_status_description) VALUES (@created_at, @user_id, @display_name, @status, @status_description, @previous_status, @previous_status_description)`,
             {
                 '@created_at': entry.created_at,
@@ -35,7 +35,7 @@ const feed = {
     },
 
     addBioToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO ${dbVars.userPrefix}_feed_bio (created_at, user_id, display_name, bio, previous_bio) VALUES (@created_at, @user_id, @display_name, @bio, @previous_bio)`,
             {
                 '@created_at': entry.created_at,
@@ -49,7 +49,7 @@ const feed = {
 
     async getLastBioChangeForUser(userId) {
         let result = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 result = {
                     bio: row[0],
@@ -68,7 +68,7 @@ const feed = {
     async searchBiosByContent(query, limit = 10) {
         const results = [];
         const searchLike = `%${query}%`;
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     userId: row[0],
@@ -90,7 +90,7 @@ const feed = {
 
     async getLastStatusChangeForUser(userId) {
         let result = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 result = {
                     status: row[0],
@@ -110,7 +110,7 @@ const feed = {
 
     async getRecentBioChangesForUser(userId, limit = 50) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     bio: row[0],
@@ -128,7 +128,7 @@ const feed = {
     },
 
     addAvatarToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO ${dbVars.userPrefix}_feed_avatar (created_at, user_id, display_name, owner_id, avatar_name, current_avatar_image_url, current_avatar_thumbnail_image_url, previous_current_avatar_image_url, previous_current_avatar_thumbnail_image_url) VALUES (@created_at, @user_id, @display_name, @owner_id, @avatar_name, @current_avatar_image_url, @current_avatar_thumbnail_image_url, @previous_current_avatar_image_url, @previous_current_avatar_thumbnail_image_url)`,
             {
                 '@created_at': entry.created_at,
@@ -154,21 +154,21 @@ const feed = {
      */
     async purgeAvatarFeedData(cutoffDate) {
         if (cutoffDate) {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${dbVars.userPrefix}_feed_avatar WHERE created_at < @cutoff`,
                 {
                     '@cutoff': cutoffDate
                 }
             );
         } else {
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `DELETE FROM ${dbVars.userPrefix}_feed_avatar`
             );
         }
     },
 
     addOnlineOfflineToDatabase(entry) {
-        sqliteService.executeNonQuery(
+        adapter.executeNonQuery(
             `INSERT OR IGNORE INTO ${dbVars.userPrefix}_feed_online_offline (created_at, user_id, display_name, type, location, world_name, time, group_name) VALUES (@created_at, @user_id, @display_name, @type, @location, @world_name, @time, @group_name)`,
             {
                 '@created_at': entry.created_at,
@@ -192,7 +192,7 @@ const feed = {
      */
     async getStatusHistoryForUser(userId) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     createdAt: row[0],
@@ -214,7 +214,7 @@ const feed = {
      */
     async getOnlineOfflineHistoryForUser(userId) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 results.push({
                     createdAt: row[0],
@@ -238,7 +238,7 @@ const feed = {
      */
     async getLastGPSArrivalTimeForUser(userId, location) {
         let arrivalTime = null;
-        await sqliteService.execute(
+        await adapter.execute(
             (row) => {
                 const ts = Date.parse(row[0]);
                 if (!isNaN(ts)) {
@@ -402,7 +402,7 @@ const feed = {
         if (dateTo) {
             args['@dateTo'] = dateTo;
         }
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const type = dbRow[4];
                 const row = {
@@ -573,7 +573,7 @@ const feed = {
             '@perTable': maxEntries,
             ...vipArgs
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const type = dbRow[4];
                 const row = {
@@ -711,7 +711,7 @@ const feed = {
             '@perTable': dbVars.searchTableSize,
             ...vipArgs
         };
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 const type = dbRow[4];
                 const row = {
@@ -753,7 +753,7 @@ const feed = {
     async getHotWorlds(days = 30, limit = 30) {
         const halfDays = Math.floor(days / 2);
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 results.push({
                     worldId: dbRow[0],
@@ -784,7 +784,7 @@ const feed = {
         );
 
         const trendMap = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 trendMap.set(dbRow[0], dbRow[1]);
             },
@@ -805,7 +805,7 @@ const feed = {
         );
 
         const recentMap = new Map();
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 recentMap.set(dbRow[0], dbRow[1]);
             },
@@ -845,7 +845,7 @@ const feed = {
      */
     async getHotWorldFriendDetail(worldId, days = 30) {
         const results = [];
-        await sqliteService.execute(
+        await adapter.execute(
             (dbRow) => {
                 results.push({
                     userId: dbRow[0],
