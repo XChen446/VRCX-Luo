@@ -40,13 +40,13 @@ const moderation = {
         if (entry.mute) {
             mute = 1;
         }
-        adapter.insert(`${dbVars.userPrefix}_moderation`, 'replace', {
+        adapter.insert(`${dbVars.userPrefix}_moderation`, {
             user_id: entry.userId,
             updated_at: entry.updatedAt,
             display_name: entry.displayName,
             block: block,
             mute: mute
-        });
+        }, 'replace');
     },
 
     deleteModeration(userId) {

@@ -36,11 +36,11 @@ const memos = {
     },
 
     async setUserMemo(entry) {
-        await adapter.insert('memos', 'replace', {
+        await adapter.insert('memos', {
             user_id: entry.userId,
             edited_at: entry.editedAt,
             memo: entry.memo
-        });
+        }, 'replace');
     },
 
     async deleteUserMemo(userId) {
@@ -68,11 +68,11 @@ const memos = {
     },
 
     setWorldMemo(entry) {
-        adapter.insert('world_memos', 'replace', {
+        adapter.insert('world_memos', {
             world_id: entry.worldId,
             edited_at: entry.editedAt,
             memo: entry.memo
-        });
+        }, 'replace');
     },
 
     deleteWorldMemo(worldId) {
@@ -100,11 +100,11 @@ const memos = {
     },
 
     setAvatarMemo(entry) {
-        adapter.insert('avatar_memos', 'replace', {
+        adapter.insert('avatar_memos', {
             avatar_id: entry.avatarId,
             edited_at: entry.editedAt,
             memo: entry.memo
-        });
+        }, 'replace');
     },
 
     deleteAvatarMemo(avatarId) {
@@ -114,12 +114,12 @@ const memos = {
     // user notes
 
     async addUserNote(note) {
-        adapter.insert(`${dbVars.userPrefix}_notes`, 'replace', {
+        adapter.insert(`${dbVars.userPrefix}_notes`, {
             user_id: note.userId,
             display_name: note.displayName,
             note: note.note,
             created_at: note.createdAt
-        });
+        }, 'replace');
     },
 
     async getAllUserNotes() {

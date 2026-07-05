@@ -18,12 +18,12 @@ const friendLogCurrent = {
     },
 
     setFriendLogCurrent(entry) {
-        adapter.insert(`${dbVars.userPrefix}_friend_log_current`, 'replace', {
+        adapter.insert(`${dbVars.userPrefix}_friend_log_current`, {
             user_id: entry.userId,
             display_name: entry.displayName,
             trust_level: entry.trustLevel,
             friend_number: entry.friendNumber
-        });
+        }, 'replace');
     },
 
     setFriendLogCurrentArray(inputData) {

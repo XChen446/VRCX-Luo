@@ -2,11 +2,11 @@ import { adapter } from './adapter/index.js';
 
 const friendFavorites = {
     addFriendToLocalFavorites(userId, groupName) {
-        adapter.insert('favorite_friend', 'replace', {
+        adapter.insert('favorite_friend', {
             user_id: userId,
             group_name: groupName,
             created_at: new Date().toJSON()
-        });
+        }, 'replace');
     },
 
     removeFriendFromLocalFavorites(userId, groupName) {

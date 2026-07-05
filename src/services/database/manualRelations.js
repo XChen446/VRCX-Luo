@@ -11,12 +11,12 @@ const manualRelations = {
     async addManualRelation(userIdA, userIdB, relationType = 'friend') {
         if (!dbVars.userPrefix || !userIdA || !userIdB) return;
         const [id1, id2] = [userIdA, userIdB].sort();
-        await adapter.insert(`${dbVars.userPrefix}_manual_relations_MANUEL`, 'ignore', {
+        await adapter.insert(`${dbVars.userPrefix}_manual_relations_MANUEL`, {
             user_id_a: id1,
             user_id_b: id2,
             relation_type: relationType,
             added_at: new Date().toISOString()
-        });
+        }, 'ignore');
     },
 
     /**

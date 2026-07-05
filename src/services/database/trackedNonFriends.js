@@ -5,11 +5,11 @@ import { adapter } from './adapter/index.js';
 const trackedNonFriends = {
     async addTrackedNonFriend(userId, displayName) {
         if (!dbVars.userPrefix || !userId) return;
-        await adapter.insert(`${dbVars.userPrefix}_tracked_nonfriends`, 'ignore', {
+        await adapter.insert(`${dbVars.userPrefix}_tracked_nonfriends`, {
             user_id: userId,
             display_name: displayName || '',
             added_at: new Date().toISOString()
-        });
+        }, 'ignore');
     },
 
     async removeTrackedNonFriend(userId) {

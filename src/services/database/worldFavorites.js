@@ -2,7 +2,7 @@ import { adapter } from './adapter/index.js';
 
 const worldFavorites = {
     addWorldToCache(entry) {
-        adapter.insert('cache_world', 'replace', {
+        adapter.insert('cache_world', {
             id: entry.id,
             added_at: new Date().toJSON(),
             author_id: entry.authorId,
@@ -15,15 +15,15 @@ const worldFavorites = {
             thumbnail_image_url: entry.thumbnailImageUrl,
             updated_at: entry.updated_at,
             version: entry.version
-        });
+        }, 'replace');
     },
 
     addWorldToFavorites(worldId, groupName) {
-        adapter.insert('favorite_world', 'replace', {
+        adapter.insert('favorite_world', {
             world_id: worldId,
             group_name: groupName,
             created_at: new Date().toJSON()
-        });
+        }, 'replace');
     },
 
     renameWorldFavoriteGroup(newGroupName, groupName) {

@@ -109,7 +109,7 @@ const notifications = {
             console.error('Notification is missing required field', entry);
             throw new Error('Notification is missing required field');
         }
-        adapter.insert(`${dbVars.userPrefix}_notifications`, 'ignore', {
+        adapter.insert(`${dbVars.userPrefix}_notifications`, {
             id: entry.id,
             created_at: entry.created_at,
             type: entry.type,
@@ -124,7 +124,7 @@ const notifications = {
             request_message: entry.details.requestMessage,
             response_message: entry.details.responseMessage,
             expired: expired
-        });
+        }, 'ignore');
     },
 
     deleteNotification(rowId) {
@@ -173,7 +173,7 @@ const notifications = {
     },
 
     addNotificationV2ToDatabase(entry) {
-        adapter.insert(`${dbVars.userPrefix}_notifications_v2`, 'replace', {
+        adapter.insert(`${dbVars.userPrefix}_notifications_v2`, {
             id: entry.id,
             created_at: entry.createdAt,
             updated_at: entry.updatedAt,
@@ -190,7 +190,7 @@ const notifications = {
             data: JSON.stringify(entry.data || {}),
             responses: JSON.stringify(entry.responses || []),
             details: JSON.stringify(entry.details || {})
-        });
+        }, 'replace');
     },
 
     expireNotificationV2(id) {

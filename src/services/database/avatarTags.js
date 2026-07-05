@@ -38,11 +38,11 @@ const avatarTags = {
     },
 
     async addAvatarTag(avatarId, tag, color = null) {
-        await adapter.insert('avatar_tags', 'ignore', {
+        await adapter.insert('avatar_tags', {
             avatar_id: avatarId,
             tag: tag,
             color: color
-        });
+        }, 'ignore');
     },
 
     async updateAvatarTagColor(avatarId, tag, color) {

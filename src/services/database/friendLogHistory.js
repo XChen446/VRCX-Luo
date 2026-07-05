@@ -26,7 +26,7 @@ const friendLogHistory = {
     },
 
     addFriendLogHistory(entry) {
-        adapter.insert(`${dbVars.userPrefix}_friend_log_history`, 'ignore', {
+        adapter.insert(`${dbVars.userPrefix}_friend_log_history`, {
             created_at: entry.created_at,
             type: entry.type,
             user_id: entry.userId,
@@ -35,7 +35,7 @@ const friendLogHistory = {
             trust_level: entry.trustLevel,
             previous_trust_level: entry.previousTrustLevel,
             friend_number: entry.friendNumber
-        });
+        }, 'ignore');
     },
 
     addFriendLogHistoryArray(inputData) {

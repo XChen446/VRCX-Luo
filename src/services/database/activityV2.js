@@ -222,14 +222,14 @@ const activityV2 = {
     },
 
     async upsertActivitySyncStateV2(entry) {
-        await adapter.insert(syncStateTable(), 'replace', {
+        await adapter.insert(syncStateTable(), {
             user_id: entry.userId,
             updated_at: entry.updatedAt || '',
             is_self: entry.isSelf ? 1 : 0,
             source_last_created_at: entry.sourceLastCreatedAt || '',
             pending_session_start_at: entry.pendingSessionStartAt,
             cached_range_days: entry.cachedRangeDays || 0
-        });
+        }, 'replace');
     },
 
     async getActivitySessionsV2(userId) {
@@ -328,7 +328,7 @@ const activityV2 = {
     },
 
     async upsertActivityBucketCacheV2(entry) {
-        await adapter.insert(bucketCacheTable(), 'replace', {
+        await adapter.insert(bucketCacheTable(), {
             user_id: entry.ownerUserId,
             target_user_id: entry.targetUserId || '',
             range_days: entry.rangeDays,
@@ -342,7 +342,7 @@ const activityV2 = {
             ),
             summary_json: JSON.stringify(entry.summary || {}),
             built_at: entry.builtAt || ''
-        });
+        }, 'replace');
     }
 };
 

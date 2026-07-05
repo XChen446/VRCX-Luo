@@ -100,7 +100,7 @@ const mutualGraph = {
         }
         const friendTable = `${dbVars.userPrefix}_mutual_graph_friends`;
         const linkTable = `${dbVars.userPrefix}_mutual_graph_links`;
-        await adapter.insert(friendTable, 'replace', { friend_id: friendId });
+        await adapter.insert(friendTable, { friend_id: friendId }, 'replace');
         await adapter.delete(linkTable, { friend_id: friendId });
         const edgeRows = [];
         for (const mutual of mutualIds) {
@@ -216,10 +216,10 @@ const mutualGraph = {
             return;
         }
         const friendsOldTable = `${dbVars.userPrefix}_mutual_graph_friends_old`;
-        await adapter.insert(friendsOldTable, 'replace', {
+        await adapter.insert(friendsOldTable, {
             friend_id: friendId,
             last_updated: new Date().toISOString()
-        });
+        }, 'replace');
     },
 
     async bulkUpdateFriendFetchTimesInOld(friendIds) {
@@ -255,11 +255,11 @@ const mutualGraph = {
         if (!dbVars.userPrefix || !friendId) {
             return;
         }
-        await adapter.insert(`${dbVars.userPrefix}_mutual_graph_meta`, 'replace', {
+        await adapter.insert(`${dbVars.userPrefix}_mutual_graph_meta`, {
             friend_id: friendId,
             last_fetched_at: lastFetchedAt || new Date().toISOString(),
             opted_out: optedOut ? 1 : 0
-        });
+        }, 'replace');
     },
 
     async bulkUpsertMutualGraphMeta(entries) {
@@ -275,7 +275,7 @@ const mutualGraph = {
                 friend_id: friendId,
                 last_fetched_at: now,
                 opted_out: optedOut ? 1 : 0
-            });
+            }, 'replace');
         });
         if (rows.length === 0) return;
         await adapter.bulkInsert(metaTable, rows, 'replace');

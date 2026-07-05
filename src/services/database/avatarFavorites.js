@@ -4,7 +4,7 @@ import { adapter } from './adapter/index.js';
 
 const avatarFavorites = {
     addAvatarToCache(entry) {
-        adapter.insert('cache_avatar', 'replace', {
+        adapter.insert('cache_avatar', {
             id: entry.id,
             added_at: new Date().toJSON(),
             author_id: entry.authorId,
@@ -17,7 +17,7 @@ const avatarFavorites = {
             thumbnail_image_url: entry.thumbnailImageUrl,
             updated_at: entry.updated_at,
             version: entry.version
-        });
+        }, 'replace');
     },
 
     addAvatarToHistory(avatarId) {
@@ -122,11 +122,11 @@ const avatarFavorites = {
     },
 
     addAvatarToFavorites(avatarId, groupName) {
-        adapter.insert('favorite_avatar', 'replace', {
+        adapter.insert('favorite_avatar', {
             avatar_id: avatarId,
             group_name: groupName,
             created_at: new Date().toJSON()
-        });
+        }, 'replace');
     },
 
     renameAvatarFavoriteGroup(newGroupName, groupName) {
