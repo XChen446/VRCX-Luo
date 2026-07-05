@@ -15,7 +15,7 @@
 import { reactive } from 'vue';
 import { parseLocation } from '../shared/utils';
 import { AppDebug } from './appConfig';
-import sqliteService from './sqlite.js';
+import { adapter } from './database/adapter/index.js';
 import webApiService from './webapi.js';
 import * as workerTimers from 'worker-timers';
 import { useModalStore } from '../stores/modal';
@@ -260,64 +260,58 @@ export class AccountSession {
 
     async _initTables() {
         const p = this.userPrefix;
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_feed_status (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_feed_bio (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_feed_avatar (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
         );
-        await sqliteService.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS ${p}_feed_online_offline_user_created_idx ON ${p}_feed_online_offline (user_id, created_at)`
+        await adapter.createIndex(
+            `${p}_feed_online_offline_user_created_idx`, `${p}_feed_online_offline`, ['user_id', 'created_at']
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_friend_log_current (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
         );
-        await sqliteService.executeNonQuery(
+        await adapter.createTableRaw(
             `CREATE TABLE IF NOT EXISTS ${p}_notifications (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
         );
     }
 
     _writeGPS(userId, displayName, location, worldName, previousLocation, groupName) {
         const p = this.userPrefix;
-        sqliteService.executeNonQuery(
-            `INSERT OR IGNORE INTO ${p}_feed_gps (created_at, user_id, display_name, location, world_name, previous_location, time, group_name) VALUES (@ca, @uid, @dn, @loc, @wn, @pl, @t, @gn)`,
-            {
-                '@ca': nowIso(),
-                '@uid': userId,
-                '@dn': displayName,
-                '@loc': location || '',
-                '@wn': worldName || '',
-                '@pl': previousLocation || '',
-                '@t': 0,
-                '@gn': groupName || ''
-            }
-        );
+        adapter.insert(`${p}_feed_gps`, {
+            created_at: nowIso(),
+            user_id: userId,
+            display_name: displayName,
+            location: location || '',
+            world_name: worldName || '',
+            previous_location: previousLocation || '',
+            time: 0,
+            group_name: groupName || ''
+        }, 'ignore');
     }
 
     _writeOnlineOffline(userId, displayName, type, location, worldName, groupName) {
         const p = this.userPrefix;
-        sqliteService.executeNonQuery(
-            `INSERT OR IGNORE INTO ${p}_feed_online_offline (created_at, user_id, display_name, type, location, world_name, time, group_name) VALUES (@ca, @uid, @dn, @t, @loc, @wn, @tm, @gn)`,
-            {
-                '@ca': nowIso(),
-                '@uid': userId,
-                '@dn': displayName,
-                '@t': type,
-                '@loc': location || '',
-                '@wn': worldName || '',
-                '@tm': 0,
-                '@gn': groupName || ''
-            }
-        );
+        adapter.insert(`${p}_feed_online_offline`, {
+            created_at: nowIso(),
+            user_id: userId,
+            display_name: displayName,
+            type: type,
+            location: location || '',
+            world_name: worldName || '',
+            time: 0,
+            group_name: groupName || ''
+        }, 'ignore');
     }
 
     // ── Friends loading ────────────────────────────────────────────────────────

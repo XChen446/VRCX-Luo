@@ -457,8 +457,12 @@ const feed = {
     async lookupFeedDatabase(
         filters,
         vipList,
-        maxEntries = dbVars.maxTableSize
+        maxEntries = dbVars.maxTableSize,
+        prefixOverride
     ) {
+        const prevPrefix = prefixOverride ? dbVars.userPrefix : null;
+        if (prefixOverride) dbVars.userPrefix = prefixOverride;
+        try {
         let vipQuery = '';
         const vipArgs = {};
         if (vipList.length > 0) {
@@ -623,6 +627,9 @@ const feed = {
             args
         );
         return feedDatabase;
+        } finally {
+            if (prevPrefix !== null) dbVars.userPrefix = prevPrefix;
+        }
     },
 
     async getFeedByInstanceId(instanceId, filters, vipList) {
