@@ -54,6 +54,18 @@
 //       "operation": "rename_table",         // ALTER TABLE ... RENAME TO
 //       "newName": "new_table_name"         // New table name / 新表名
 //      // Idempotent / 幂等: no such table → skip, already exists → skip ✓
+//     },
+//     {
+//       "table": "gamelog_location",          // Table context (for documentation) / 表上下文（供文档）
+//       "operation": "execute_sql",           // Execute raw SQL / 执行原始 SQL
+//       "sql": "UPDATE gamelog_location SET group_name = groupName WHERE groupName IS NOT NULL AND groupName != ''"
+//      // Used for data migration between DDL steps (e.g. copy old column to new column before DROP).
+//      // 用于 DDL 步骤之间的数据迁移（如新增列后、删除旧列前，将旧列数据搬运到新列）。
+//      // Caution: "table" is NOT wildcard-expanded — only used for self-documentation.
+//      // 注意: table 字段不会展开通配符，仅用于自述文档。
+//      // Idempotent / 幂等: depends on the SQL itself / 由 SQL 自身保证。
+//      //    e.g. `UPDATE ... WHERE groupName IS NOT NULL` → harmless on re-run
+//      //    例如 `UPDATE ... WHERE groupName IS NOT NULL` → 重复执行无害
 //     }
 //   ]
 // }
@@ -185,6 +197,12 @@
 //                    Requires SQLite ≥ 3.35.0 / 需要 SQLite 3.35.0+
 //   - rename_table:  ALTER TABLE {table} RENAME TO {newName}
 //                    Idempotent / 幂等: catches "no such table" → skip, "already exists" → skip
+//   - execute_sql:   Execute raw arbitrary SQL / 执行原始自定义 SQL
+//                    Used for DDL-adjacent data migration (e.g. copy column data before DROP)
+//                    用于 DDL 间的数据搬运（如删除列前复制数据）
+//                    Does NOT expand wildcard table names / 不展开通配符表名
+//                    Idempotent / 幂等: depends on the SQL itself (designer's responsibility)
+//                    幂等性由 SQL 自身保证（由设计者负责）
 //
 // Data operations / Data 操作:
 //   - delete:  DELETE FROM {table} WHERE {where}
