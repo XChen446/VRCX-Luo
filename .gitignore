@@ -10,9 +10,10 @@ obj1/
 .vs/
 Installer/version_define.nsh
 bun.lock
-
 .env.sentry-build-plugin
+# AI agent context documents
 AGENTS.md
 AI_GUIDE.md
 CLAUDE.md
 coverage/
+.agent/
