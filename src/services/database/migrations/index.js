@@ -13,7 +13,7 @@
  * - 拓扑依赖排序
  */
 
-import sqliteService from '../../sqlite.js';
+import { adapter } from '../adapter/index.js';
 import configRepository from '../../config.js';
 
 
@@ -63,8 +63,8 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 
     // 迁移完成后执行维护命令
     try {
-        await sqliteService.executeNonQuery('VACUUM');
-        await sqliteService.executeNonQuery('PRAGMA optimize');
+        await adapter.vacuum();
+        await adapter.optimize();
     } catch (err) {
         console.warn('[迁移] 迁移后维护命令执行失败（非关键）:', err.message);
     }
@@ -350,7 +350,7 @@ async function executeMigration(migration, options, engine) {
     // 如果 data fix 失败而 schema change 成功，未更新的版本号会阻止下次重试（checkpoint 在 COMMIT 前）
     // 但由于所有操作设计为幂等，重试迁移即可安全恢复
     try {
-        await sqliteService.executeNonQuery('BEGIN');
+        await adapter.begin();
 
         if (type === 'schema') {
             await executeSchemaMigration(data, version);
@@ -360,12 +360,12 @@ async function executeMigration(migration, options, engine) {
 
         // 执行成功后记录检查点
         await recordCheckpoint(version);
-        await sqliteService.executeNonQuery('COMMIT');
+        await adapter.commit();
 
         console.log(`[迁移] v${version} ${type} 完成`);
     } catch (err) {
         try {
-            await sqliteService.executeNonQuery('ROLLBACK');
+            await adapter.rollback();
         } catch (rollbackErr) {
             console.error(`[迁移] v${version} ${type} 回滚失败:`, rollbackErr);
         }
@@ -421,7 +421,7 @@ async function executeRawSql(tablePattern, op) {
         return;
     }
     try {
-        await sqliteService.executeNonQuery(sql);
+        await adapter.executeNonQuery(sql);
         console.log(`[迁移] 已执行 SQL: ${sql.substring(0, 80)}...`);
     } catch (e) {
         console.error(`[迁移] 执行 SQL 失败:`, e);
@@ -441,7 +441,7 @@ async function executeAddColumn(tablePattern, op) {
     for (const table of tables) {
         try {
             const sql = `ALTER TABLE ${table} ADD COLUMN ${column} ${type} DEFAULT ${defaultValue}`;
-            await sqliteService.executeNonQuery(sql);
+            await adapter.executeNonQuery(sql);
             console.log(`[迁移] 已添加列 ${column} 到 ${table}`);
         } catch (e) {
             const errStr = e.toString();
@@ -472,7 +472,7 @@ async function executeCreateIndex(tablePattern, op) {
 
         try {
             const sql = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${columnsStr})`;
-            await sqliteService.executeNonQuery(sql);
+            await adapter.executeNonQuery(sql);
             console.log(`[迁移] 已在 ${table} 上创建索引 ${indexName}`);
         } catch (e) {
             console.error(`[迁移] 创建索引 ${indexName} 失败:`, e);
@@ -493,7 +493,7 @@ async function executeDropColumn(tablePattern, op) {
     for (const table of tables) {
         try {
             const sql = `ALTER TABLE ${table} DROP COLUMN ${column}`;
-            await sqliteService.executeNonQuery(sql);
+            await adapter.executeNonQuery(sql);
             console.log(`[迁移] 已删除 ${table} 的列 ${column}`);
         } catch (e) {
             const errStr = e.toString();
@@ -519,7 +519,7 @@ async function executeRenameTable(tablePattern, op) {
     for (const table of tables) {
         try {
             const sql = `ALTER TABLE ${table} RENAME TO ${newName}`;
-            await sqliteService.executeNonQuery(sql);
+            await adapter.executeNonQuery(sql);
             console.log(`[迁移] 已重命名 ${table} 为 ${newName}`);
         } catch (e) {
             const errStr = e.toString();
@@ -583,7 +583,7 @@ async function executeDelete(tablePattern, op) {
     for (const table of tables) {
         try {
             const sql = `DELETE FROM ${table} WHERE ${where}`;
-            const result = await sqliteService.executeNonQuery(sql);
+            const result = await adapter.executeNonQuery(sql);
             if (Number(result) > 0) {
                 console.log(`[迁移] 从 ${table} 删除了 ${Number(result)} 行`);
             }
@@ -611,7 +611,7 @@ async function executeUpdate(tablePattern, op, params, options) {
 
         try {
             const sql = `UPDATE ${table} SET ${setClause} WHERE ${where}`;
-            const result = await sqliteService.executeNonQuery(sql, flattenArgs(resolvedSet));
+            const result = await adapter.executeNonQuery(sql, flattenArgs(resolvedSet));
             if (Number(result) > 0) {
                 console.log(`[迁移] 更新了 ${table} 的 ${Number(result)} 行`);
             }
@@ -641,7 +641,7 @@ async function executeInsert(tablePattern, op) {
                 args[`@p${i}`] = values[i];
             });
 
-            const result = await sqliteService.executeNonQuery(sql, args);
+            const result = await adapter.executeNonQuery(sql, args);
             if (Number(result) > 0) {
                 console.log(`[迁移] 插入到 ${table} ${Number(result)} 行`);
             }
@@ -667,7 +667,7 @@ async function expandWildcard(tablePattern) {
     const suffix = tablePattern.substring(1); // 移除开头的 %
 
     const tables = [];
-    await sqliteService.execute((row) => {
+    await adapter.execute((row) => {
         tables.push(row[0]);
     },
         `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern ESCAPE '\\'`,
@@ -766,7 +766,7 @@ async function resolveParam(paramName, params, options) {
             return null;
         }
 
-        const rows = await sqliteService.executeReadOnly(options.oldDbPath, sql, {});
+        const rows = await adapter.executeReadOnly(options.oldDbPath, sql, {});
         return rows && rows.length > 0 ? rows[0][0] : null;
     }
 
@@ -782,7 +782,7 @@ async function resolveParam(paramName, params, options) {
 async function executeWithParams(sql, args) {
     const results = [];
     try {
-        await sqliteService.execute((row) => {
+        await adapter.execute((row) => {
             results.push(Array.from(row));
         }, sql, args);
         return results;

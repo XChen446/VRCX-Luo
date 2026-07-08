@@ -43,7 +43,7 @@ import { clearVRCXCache } from '../coordinators/vrcxCoordinator';
 import { resetSearchIndexOnLogin } from '../coordinators/searchIndexCoordinator';
 import { watchState } from '../services/watchState';
 
-import sqliteService from '../services/sqlite';
+import { adapter } from '../services/database/adapter/index.js';
 import configRepository from '../services/config';
 
 // 迁移系统开关: true=使用新的 .map 迁移系统, false=使用旧的 runFixes() 方式
@@ -419,7 +419,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
         try {
             // 1) 读出旧库版本号
-            const versionRows = await sqliteService.executeReadOnly(
+            const versionRows = await adapter.executeReadOnly(
                 oldPath,
                 "SELECT value FROM configs WHERE key = @key",
                 { '@key': 'config:VRCX_databaseversion' }
@@ -441,7 +441,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             await database.initTables();
 
             // 3) 枚举旧库所有表，搬运数据
-            const tableRows = await sqliteService.executeReadOnly(
+            const tableRows = await adapter.executeReadOnly(
                 oldPath,
                 "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             );
@@ -485,7 +485,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      */
     async function copyTableData(oldPath, tableName) {
         // 读列信息（构造占位符用）
-        const colRows = await sqliteService.executeReadOnly(
+        const colRows = await adapter.executeReadOnly(
             oldPath,
             `PRAGMA table_xinfo(\"${tableName}\")`
         );
@@ -500,7 +500,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         const colList = columns.join(', ');
 
         // 读数据
-        const dataRows = await sqliteService.executeReadOnly(
+        const dataRows = await adapter.executeReadOnly(
             oldPath,
             `SELECT ${colList} FROM \"${tableName}\"`
         );
@@ -531,7 +531,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
                 );
             }
 
-            await sqliteService.executeNonQuery(
+            await adapter.executeNonQuery(
                 `INSERT OR IGNORE INTO \"${tableName}\" (${colList}) VALUES ${valueGroups.join(', ')}`,
                 args
             );
