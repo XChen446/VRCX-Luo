@@ -50,7 +50,6 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
             isStartAtWindowsStartupConfig,
             isStartAsMinimizedStateConfig,
             isCloseToTrayConfig,
-            isCloseToTrayConfigBoolConfig,
             disableGpuAccelerationStrConfig,
             disableVrOverlayGpuAccelerationStrConfig,
             localFavoriteFriendsGroupsStrConfig,
@@ -77,7 +76,6 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
             configRepository.getBool('VRCX_StartAtWindowsStartup', false),
             VRCXStorage.Get('VRCX_StartAsMinimizedState'),
             VRCXStorage.Get('VRCX_CloseToTray'),
-            configRepository.getBool('VRCX_CloseToTray'),
             VRCXStorage.Get('VRCX_DisableGpuAcceleration'),
             VRCXStorage.Get('VRCX_DisableVrOverlayGpuAcceleration'),
             configRepository.getString('VRCX_localFavoriteFriendsGroups', '[]'),
@@ -121,17 +119,7 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
         isStartAsMinimizedState.value =
             isStartAsMinimizedStateConfig === 'true';
 
-        if (isCloseToTrayConfigBoolConfig) {
-            isCloseToTray.value = isCloseToTrayConfigBoolConfig;
-
-            await VRCXStorage.Set(
-                'VRCX_CloseToTray',
-                isCloseToTray.value.toString()
-            );
-            await configRepository.remove('VRCX_CloseToTray');
-        } else {
-            isCloseToTray.value = isCloseToTrayConfig === 'true';
-        }
+        isCloseToTray.value = isCloseToTrayConfig === 'true';
 
         disableGpuAcceleration.value =
             disableGpuAccelerationStrConfig === 'true';
