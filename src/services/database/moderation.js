@@ -23,7 +23,7 @@ const moderation = {
                     mute
                 };
             },
-            `SELECT * FROM ${dbVars.userPrefix}_moderation WHERE user_id = @userId`,
+            `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'moderation')} WHERE user_id = @userId`,
             {
                 '@userId': userId
             }
@@ -40,7 +40,7 @@ const moderation = {
         if (entry.mute) {
             mute = 1;
         }
-        adapter.insert(`${dbVars.userPrefix}_moderation`, {
+        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'moderation')}`, {
             user_id: entry.userId,
             updated_at: entry.updatedAt,
             display_name: entry.displayName,
@@ -50,7 +50,7 @@ const moderation = {
     },
 
     deleteModeration(userId) {
-        adapter.delete(`${dbVars.userPrefix}_moderation`, { user_id: userId });
+        adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'moderation')}`, { user_id: userId });
     }
 };
 

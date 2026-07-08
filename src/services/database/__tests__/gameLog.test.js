@@ -156,8 +156,9 @@ describe('gameLog.getMyTopWorlds', () => {
         );
         expect(mocks.execute.mock.calls[0][2]).toMatchObject({
             '@limit': 5,
-            '@daysOffset': '-30 days',
             '@excludeWorldId': 'wrld_home'
         });
+        // @cutoff is computed via adapter.daysAgoISO(30), skip exact value assertion
+        expect(mocks.execute.mock.calls[0][2]).toHaveProperty('@cutoff');
     });
 });

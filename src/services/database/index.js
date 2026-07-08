@@ -63,25 +63,25 @@ const database = {
             dbVars.userPrefix = '_' + dbVars.userPrefix;
         }
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_gps')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_feed_status (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_status')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_feed_bio (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_bio')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_feed_avatar (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_avatar')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS ${dbVars.userPrefix}_feed_online_offline_user_created_idx ON ${dbVars.userPrefix}_feed_online_offline (user_id, created_at)`
+            `CREATE INDEX IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}_user_created_idx ON ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')} (user_id, created_at)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_activity_sync_state_v2 (
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'activity_sync_state_v2')} (
                 user_id TEXT PRIMARY KEY,
                 updated_at TEXT NOT NULL DEFAULT '',
                 is_self INTEGER NOT NULL DEFAULT 0,
@@ -91,7 +91,7 @@ const database = {
             )`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_activity_sessions_v2 (
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')} (
                 session_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 start_at INTEGER NOT NULL,
@@ -101,13 +101,13 @@ const database = {
             )`
         );
         await adapter.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS ${dbVars.userPrefix}_activity_sessions_v2_user_start_idx ON ${dbVars.userPrefix}_activity_sessions_v2 (user_id, start_at)`
+            `CREATE INDEX IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')}_user_start_idx ON ${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')} (user_id, start_at)`
         );
         await adapter.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS ${dbVars.userPrefix}_activity_sessions_v2_user_end_idx ON ${dbVars.userPrefix}_activity_sessions_v2 (user_id, end_at)`
+            `CREATE INDEX IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')}_user_end_idx ON ${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')} (user_id, end_at)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_activity_bucket_cache_v2 (
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'activity_bucket_cache_v2')} (
                 user_id TEXT NOT NULL,
                 target_user_id TEXT NOT NULL DEFAULT '',
                 range_days INTEGER NOT NULL,
@@ -123,49 +123,49 @@ const database = {
             )`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_friend_log_current (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'friend_log_current')} (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_friend_log_history (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'friend_log_history')} (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`
         );
         await adapter.executeNonQuery(
-            `CREATE INDEX IF NOT EXISTS ${dbVars.userPrefix}_friend_log_history_user_id_idx ON ${dbVars.userPrefix}_friend_log_history (user_id)`
+            `CREATE INDEX IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}_user_id_idx ON ${adapter.userTable(dbVars.userPrefix, 'friend_log_history')} (user_id)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_notifications (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'notifications')} (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_notifications_v2 (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'notifications_v2')} (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_moderation (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'moderation')} (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_avatar_history (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'avatar_history')} (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_notes (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'notes')} (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_mutual_graph_friends (friend_id TEXT PRIMARY KEY)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends')} (friend_id TEXT PRIMARY KEY)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_mutual_graph_links (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_mutual_graph_links_old (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links_old')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_mutual_graph_friends_old (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends_old')} (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_mutual_graph_meta (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_meta')} (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_tracked_nonfriends (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'tracked_nonfriends')} (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`
         );
         await adapter.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${dbVars.userPrefix}_manual_relations_MANUEL (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`
+            `CREATE TABLE IF NOT EXISTS ${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')} (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`
         );
     },
 

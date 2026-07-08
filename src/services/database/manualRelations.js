@@ -11,7 +11,7 @@ const manualRelations = {
     async addManualRelation(userIdA, userIdB, relationType = 'friend') {
         if (!dbVars.userPrefix || !userIdA || !userIdB) return;
         const [id1, id2] = [userIdA, userIdB].sort();
-        await adapter.insert(`${dbVars.userPrefix}_manual_relations_MANUEL`, {
+        await adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')}`, {
             user_id_a: id1,
             user_id_b: id2,
             relation_type: relationType,
@@ -27,7 +27,7 @@ const manualRelations = {
     async removeManualRelation(userIdA, userIdB) {
         if (!dbVars.userPrefix || !userIdA || !userIdB) return;
         const [id1, id2] = [userIdA, userIdB].sort();
-        await adapter.delete(`${dbVars.userPrefix}_manual_relations_MANUEL`, {
+        await adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')}`, {
             user_id_a: id1,
             user_id_b: id2
         });
@@ -40,7 +40,7 @@ const manualRelations = {
         const results = [];
         if (!dbVars.userPrefix) return results;
         const rows = await adapter.selectWhere(
-            `${dbVars.userPrefix}_manual_relations_MANUEL`,
+            `${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')}`,
             ['user_id_a', 'user_id_b', 'relation_type', 'added_at'],
             null, null,
             { order: 'added_at DESC' }
@@ -65,7 +65,7 @@ const manualRelations = {
         if (!dbVars.userPrefix || !userIdA || !userIdB) return false;
         const [id1, id2] = [userIdA, userIdB].sort();
         const rows = await adapter.selectWhere(
-            `${dbVars.userPrefix}_manual_relations_MANUEL`,
+            `${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')}`,
             ['1'],
             'user_id_a = @idA AND user_id_b = @idB',
             { '@idA': id1, '@idB': id2 },
@@ -90,7 +90,7 @@ const manualRelations = {
                     addedAt: row[3]
                 });
             },
-            `SELECT user_id_a, user_id_b, relation_type, added_at FROM ${dbVars.userPrefix}_manual_relations_MANUEL WHERE user_id_a = @userId OR user_id_b = @userId ORDER BY added_at DESC`,
+            `SELECT user_id_a, user_id_b, relation_type, added_at FROM ${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')} WHERE user_id_a = @userId OR user_id_b = @userId ORDER BY added_at DESC`,
             { '@userId': userId }
         );
         return results;
@@ -115,11 +115,11 @@ const manualRelations = {
             WHERE type = 'OnPlayerLeft' AND user_id != @myId AND user_id != '' AND time > 0 AND location NOT IN ('', 'offline', 'traveling', 'private', 'private:private')
             UNION ALL
             SELECT previous_location AS location, user_id, created_at, time 
-            FROM ${dbVars.userPrefix}_feed_gps 
+            FROM ${adapter.userTable(dbVars.userPrefix, 'feed_gps')} 
             WHERE previous_location NOT IN ('', 'offline', 'traveling', 'private', 'private:private') AND time > 0
             UNION ALL
             SELECT location, user_id, created_at, time 
-            FROM ${dbVars.userPrefix}_feed_online_offline 
+            FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')} 
             WHERE type = 'Offline' AND location NOT IN ('', 'offline', 'traveling', 'private', 'private:private') AND time > 0
         `;
 
@@ -146,9 +146,9 @@ const manualRelations = {
             FROM (
                 SELECT user_id, created_at, 1 AS src FROM gamelog_join_leave
                 UNION ALL
-                SELECT user_id, created_at, 2 AS src FROM ${dbVars.userPrefix}_feed_gps
+                SELECT user_id, created_at, 2 AS src FROM ${adapter.userTable(dbVars.userPrefix, 'feed_gps')}
                 UNION ALL
-                SELECT user_id, created_at, 3 AS src FROM ${dbVars.userPrefix}_feed_online_offline
+                SELECT user_id, created_at, 3 AS src FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
             )
             WHERE user_id != ''
             GROUP BY user_id
@@ -161,7 +161,7 @@ const manualRelations = {
             const mutualId = row[1];
             if (!oldMutualSnapshot.has(friendId)) oldMutualSnapshot.set(friendId, new Set());
             oldMutualSnapshot.get(friendId).add(mutualId);
-        }, `SELECT friend_id, mutual_id FROM ${dbVars.userPrefix}_mutual_graph_links_old`);
+        }, `SELECT friend_id, mutual_id FROM ${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links_old')}`);
 
         return { eventsByLocation, mySessions, firstSeen, lastSeen, oldMutualSnapshot };
     }

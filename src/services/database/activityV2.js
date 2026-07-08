@@ -8,15 +8,15 @@ const ACTIVITY_VIEW_KIND = {
 };
 
 function syncStateTable() {
-    return `${dbVars.userPrefix}_activity_sync_state_v2`;
+    return `${adapter.userTable(dbVars.userPrefix, 'activity_sync_state_v2')}`;
 }
 
 function sessionsTable() {
-    return `${dbVars.userPrefix}_activity_sessions_v2`;
+    return `${adapter.userTable(dbVars.userPrefix, 'activity_sessions_v2')}`;
 }
 
 function bucketCacheTable() {
-    return `${dbVars.userPrefix}_activity_bucket_cache_v2`;
+    return `${adapter.userTable(dbVars.userPrefix, 'activity_bucket_cache_v2')}`;
 }
 
 function parseJson(value, fallback) {
@@ -69,7 +69,7 @@ const activityV2 = {
                     SELECT created_at, type, 0 AS sort_group
                     FROM (
                         SELECT created_at, type
-                        FROM ${dbVars.userPrefix}_feed_online_offline
+                        FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
                         WHERE user_id = @userId
                           AND (type = 'Online' OR type = 'Offline')
                           AND created_at < @fromDateIso
@@ -78,7 +78,7 @@ const activityV2 = {
                     )
                     UNION ALL
                     SELECT created_at, type, 1 AS sort_group
-                    FROM ${dbVars.userPrefix}_feed_online_offline
+                    FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
                     WHERE user_id = @userId
                       AND (type = 'Online' OR type = 'Offline')
                       AND created_at >= @fromDateIso
@@ -99,7 +99,7 @@ const activityV2 = {
                     rows.push({ created_at: dbRow[0], type: dbRow[1] });
                 },
                 `SELECT created_at, type
-                 FROM ${dbVars.userPrefix}_feed_online_offline
+                 FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
                  WHERE user_id = @userId
                    AND (type = 'Online' OR type = 'Offline')
                    AND created_at >= @toDateIso
@@ -124,7 +124,7 @@ const activityV2 = {
                 rows.push({ created_at: dbRow[0], type: dbRow[1] });
             },
             `SELECT created_at, type
-             FROM ${dbVars.userPrefix}_feed_online_offline
+             FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
              WHERE user_id = @userId
                AND (type = 'Online' OR type = 'Offline')
                AND created_at > @afterCreatedAt
@@ -358,23 +358,14 @@ async function insertSessions(userId, sessions = []) {
         chunkStart += chunkSize
     ) {
         const chunk = sessions.slice(chunkStart, chunkStart + chunkSize);
-        const args = {};
-        const values = chunk.map((session, index) => {
-            const suffix = `${chunkStart + index}`;
-            args[`@userId_${suffix}`] = userId;
-            args[`@startAt_${suffix}`] = session.start;
-            args[`@endAt_${suffix}`] = session.end;
-            args[`@isOpenTail_${suffix}`] = session.isOpenTail ? 1 : 0;
-            args[`@sourceRevision_${suffix}`] = session.sourceRevision || '';
-            return `(@userId_${suffix}, @startAt_${suffix}, @endAt_${suffix}, @isOpenTail_${suffix}, @sourceRevision_${suffix})`;
-        });
-
-        await adapter.executeNonQuery(
-            `INSERT OR REPLACE INTO ${sessionsTable()}
-             (user_id, start_at, end_at, is_open_tail, source_revision)
-             VALUES ${values.join(', ')}`,
-            args
-        );
+        const rows = chunk.map((session) => ({
+            user_id: userId,
+            start_at: session.start,
+            end_at: session.end,
+            is_open_tail: session.isOpenTail ? 1 : 0,
+            source_revision: session.sourceRevision || ''
+        }));
+        await adapter.bulkInsert(sessionsTable(), rows, 'replace');
     }
 }
 

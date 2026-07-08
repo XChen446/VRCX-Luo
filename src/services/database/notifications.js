@@ -25,7 +25,8 @@ const notifications = {
                 $isExpired: dbRow[13] === 1
             };
             notifications.unshift(row);
-        }, `SELECT * FROM ${dbVars.userPrefix}_notifications ORDER BY created_at DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications')} ORDER BY created_at DESC LIMIT @limit`,
+        { '@limit': dbVars.maxTableSize });
         return notifications;
     },
 
@@ -74,7 +75,7 @@ const notifications = {
                 $isExpired: dbRow[13] === 1
             };
             notifications.unshift(row);
-        }, `SELECT * FROM ${dbVars.userPrefix}_notifications WHERE (sender_username LIKE '%${search}%' OR message LIKE '%${search}%' OR world_name LIKE '%${search}%') ${vipQuery} ${filterQuery} ORDER BY created_at DESC LIMIT ${maxEntries}`);
+        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications')} WHERE (sender_username LIKE '%${search}%' OR message LIKE '%${search}%' OR world_name LIKE '%${search}%') ${vipQuery} ${filterQuery} ORDER BY created_at DESC LIMIT ${maxEntries}`);
         return notifications;
     },
 
@@ -109,7 +110,7 @@ const notifications = {
             console.error('Notification is missing required field', entry);
             throw new Error('Notification is missing required field');
         }
-        adapter.insert(`${dbVars.userPrefix}_notifications`, {
+        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'notifications')}`, {
             id: entry.id,
             created_at: entry.created_at,
             type: entry.type,
@@ -128,7 +129,7 @@ const notifications = {
     },
 
     deleteNotification(rowId) {
-        adapter.delete(`${dbVars.userPrefix}_notifications`, { id: rowId });
+        adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'notifications')}`, { id: rowId });
     },
 
     updateNotificationExpired(entry) {
@@ -136,7 +137,7 @@ const notifications = {
         if (entry.$isExpired) {
             expired = 1;
         }
-        adapter.update(`${dbVars.userPrefix}_notifications`,
+        adapter.update(`${adapter.userTable(dbVars.userPrefix, 'notifications')}`,
             { expired: expired },
             { id: entry.id }
         );
@@ -168,12 +169,13 @@ const notifications = {
             row.created_at = row.createdAt;
             row.version = 2;
             notifications.unshift(row);
-        }, `SELECT * FROM ${dbVars.userPrefix}_notifications_v2 ORDER BY created_at DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications_v2')} ORDER BY created_at DESC LIMIT @limit`,
+        { '@limit': dbVars.maxTableSize });
         return notifications;
     },
 
     addNotificationV2ToDatabase(entry) {
-        adapter.insert(`${dbVars.userPrefix}_notifications_v2`, {
+        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'notifications_v2')}`, {
             id: entry.id,
             created_at: entry.createdAt,
             updated_at: entry.updatedAt,
@@ -194,24 +196,21 @@ const notifications = {
     },
 
     expireNotificationV2(id) {
-        adapter.executeNonQuery(
-            `UPDATE ${dbVars.userPrefix}_notifications_v2 SET expires_at = @expires_at, seen = 1 WHERE id = @id`,
-            {
-                '@id': id,
-                '@expires_at': new Date().toJSON()
-            }
-        );
+        adapter.update(`${adapter.userTable(dbVars.userPrefix, 'notifications_v2')}`, {
+            expires_at: new Date().toJSON(),
+            seen: 1
+        }, { id: id });
     },
 
     seenNotificationV2(id) {
-        adapter.update(`${dbVars.userPrefix}_notifications_v2`,
+        adapter.update(`${adapter.userTable(dbVars.userPrefix, 'notifications_v2')}`,
             { seen: 1 },
             { id: id }
         );
     },
 
     deleteNotificationV2(id) {
-        adapter.delete(`${dbVars.userPrefix}_notifications_v2`, { id: id });
+        adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'notifications_v2')}`, { id: id });
     }
 };
 

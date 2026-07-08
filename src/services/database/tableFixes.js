@@ -149,13 +149,7 @@ const tableFixes = {
         var badEntries = await this.getBrokenGameLogDisplayNames();
         badEntries.forEach((entry) => {
             var newDisplayName = entry.displayName.split(' (')[0];
-            adapter.executeNonQuery(
-                `UPDATE gamelog_join_leave SET display_name = @new_display_name WHERE id = @id`,
-                {
-                    '@new_display_name': newDisplayName,
-                    '@id': entry.id
-                }
-            );
+            adapter.update('gamelog_join_leave', { display_name: newDisplayName }, { id: entry.id });
         });
     }
 };

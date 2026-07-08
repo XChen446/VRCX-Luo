@@ -297,6 +297,149 @@ class SQLiteAdapter {
         );
     }
 
+    /**
+     * Compute ISO date string for N days ago.
+     * Replaces SQLite datetime('now', '-N days') in SQL with a pre-computed JS value.
+     * @param {number} days - number of days to go back
+     * @returns {string} ISO date string
+     */
+    daysAgoISO(days) {
+        return new Date(Date.now() - days * 86400000).toISOString();
+    }
+
+    /**
+     * SQL expression: convert ISO datetime column to Unix milliseconds.
+     * SQLite: (strftime('%s', column) * 1000)
+     * @param {string} column - column name containing ISO datetime
+     * @returns {string} SQL expression
+     */
+    sqlToUnixMs(column) {
+        return `(strftime('%s', ${column}) * 1000)`;
+    }
+
+    /**
+     * SQL expression: extract world ID from a location string (e.g. "wrld_xxx:12345" → "wrld_xxx").
+     * SQLite: SUBSTR(location, 1, INSTR(location, ':') - 1)
+     * @param {string} column - column name containing full location string
+     * @returns {string} SQL expression
+     */
+    sqlExtractWorldId(column) {
+        return `SUBSTR(${column}, 1, INSTR(${column}, ':') - 1)`;
+    }
+
+    /**
+     * SQL expression: check if a location string has an instance ID (contains ':').
+     * SQLite: INSTR(column, ':') > 0
+     * PostgreSQL: POSITION(':' IN column) > 0 or strpos(column, ':') > 0
+     * @param {string} column - column name containing location
+     * @returns {string} SQL expression
+     */
+    sqlHasInstanceId(column) {
+        return `INSTR(${column}, ':') > 0`;
+    }
+
+    /**
+     * SQL expression: extract date part from an ISO datetime column.
+     * SQLite/PostgreSQL: date(column)
+     * @param {string} column - column name containing ISO datetime
+     * @returns {string} SQL expression
+     */
+    sqlDate(column) {
+        return `date(${column})`;
+    }
+
+    /**
+     * SQL expression: compute the "enter time" from a leave event record.
+     *
+     * ── 2026-07-08 后代开发者吐槽 ──
+     * 这个方法的出现是因为 gamelog_join_leave 表只记录了"离开事件"（created_at）
+     * 和"停留时长"（time, 毫秒），没有记录"进入时间"。
+     * 为了做两人是否同时在线的时间重叠检测，不得不用离开时间减去时长来推算进入时间。
+     *
+     * 如果当年设计表的时候就加一列 entered_at，这整个方法都不需要存在。
+     * 现在加列需要改表结构 + migration + 数据回填，成本远大于保留这个函数。
+     * 所以它就在这里了——一个推算函数，不是翻译器。
+     *
+     * 协议：input 是 ISO 时间戳列名 + 毫秒数列名，
+     *       output 是和 ISO 时间戳字符串可比较的表达式。
+     * ──────────────────────────────────
+     *
+     * gamelog_join_leave stores OnPlayerLeft events with:
+     *   created_at — ISO timestamp when the player left
+     *   time       — duration spent in the instance (milliseconds)
+     *
+     * The actual enter time is: created_at - time (in ms).
+     *
+     * @param {string} tsColumn  - column name of the ISO leave timestamp
+     * @param {string} msColumn  - column name of the duration in milliseconds
+     * @returns {string} SQL expression that evaluates to the enter timestamp
+     */
+    sqlEnterTime(tsColumn, msColumn) {
+        return `strftime('%Y-%m-%dT%H:%M:%SZ', ${tsColumn}, '-' || (${msColumn} * 1.0 / 1000) || ' seconds')`;
+    }
+
+    /**
+     * UPDATE with arithmetic expression: SET col = col + @amount WHERE conditions.
+     * @param {string} table - target table name
+     * @param {string} column - column to increment
+     * @param {number} amount - value to add
+     * @param {object} where - equality conditions (AND-ed)
+     */
+    increment(table, column, amount, where) {
+        const params = { '@amount': amount };
+        const whereClauses = Object.keys(where).map((col) => {
+            params[`@where_${col}`] = where[col];
+            return `${col} = @where_${col}`;
+        });
+        return sqliteService.executeNonQuery(
+            `UPDATE ${table} SET ${column} = ${column} + @amount WHERE ${whereClauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    /**
+     * Resolve user-specific table name for the current engine.
+     *
+     * SQLite/MySQL:  prefix_name
+     * PostgreSQL:    account_prefix.name
+     *
+     * @param {string} prefix - user prefix (e.g. "usr123")
+     * @param {string} name   - table base name (e.g. "feed_gps")
+     * @returns {string} engine-specific full table name
+     */
+    userTable(prefix, name) {
+        return `${prefix}_${name}`;
+    }
+
+    /**
+     * INSERT with partial ON CONFLICT UPDATE.
+     *
+     * Writes insertData on fresh row; on conflict only updates the columns
+     * listed in updateData (leaving other existing columns unchanged).
+     *
+     * SQLite/PgSQL:  INSERT ... ON CONFLICT(col) DO UPDATE SET ...
+     * MySQL:         INSERT ... ON DUPLICATE KEY UPDATE ...
+     *
+     * @param {string} table          - target table name
+     * @param {object} insertData     - all columns for INSERT
+     * @param {object} updateData     - subset of columns for UPDATE on conflict
+     * @param {string} conflictColumn - column to detect conflict on
+     */
+    upsertPartial(table, insertData, updateData, conflictColumn) {
+        const columns = Object.keys(insertData);
+        const params = {};
+        const values = columns.map((col) => {
+            params[`@${col}`] = insertData[col];
+            return `@${col}`;
+        });
+        const updateClauses = Object.keys(updateData).map((col) => {
+            params[`@up_${col}`] = updateData[col];
+            return `${col} = @up_${col}`;
+        });
+        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON CONFLICT(${conflictColumn}) DO UPDATE SET ${updateClauses.join(', ')}`;
+        return sqliteService.executeNonQuery(sql, params);
+    }
+
     /** BEGIN transaction. */
     begin() {
         return sqliteService.executeNonQuery('BEGIN');

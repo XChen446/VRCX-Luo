@@ -1021,7 +1021,7 @@ export const useFriendStore = defineStore('Friend', () => {
                 sqlValues.unshift(row);
             }
         });
-        database.setFriendLogCurrentArray(sqlValues);
+        await database.setFriendLogCurrentArray(sqlValues);
         await configRepository.setBool(`friendLogInit_${currentUser.id}`, true);
         watchState.isFriendsLoaded = true;
     }

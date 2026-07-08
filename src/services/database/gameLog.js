@@ -6,8 +6,9 @@ const gameLog = {
     async getGamelogDatabase() {
         var gamelogDatabase = [];
         var date = new Date();
-        date.setDate(date.getDate() - 1); // 24 hour limit
-        var dateOffset = date.toJSON();
+        date.setDate(date.getDate() - 1);
+        var cutoff = date.toISOString().split('T')[0];
+        var limit = dbVars.maxTableSize;
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -20,7 +21,7 @@ const gameLog = {
                 groupName: dbRow[6]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_location WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_location WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -32,7 +33,7 @@ const gameLog = {
                 time: dbRow[6]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_join_leave WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_join_leave WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -45,7 +46,7 @@ const gameLog = {
                 worldName: dbRow[6]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_portal_spawn WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_portal_spawn WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -59,7 +60,7 @@ const gameLog = {
                 userId: dbRow[7]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_video_play WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_video_play WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -69,7 +70,7 @@ const gameLog = {
                 location: dbRow[4]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_resource_load WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_resource_load WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -78,7 +79,7 @@ const gameLog = {
                 data: dbRow[2]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_event WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_event WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         await adapter.execute((dbRow) => {
             var row = {
                 rowId: dbRow[0],
@@ -90,7 +91,7 @@ const gameLog = {
                 location: dbRow[5]
             };
             gamelogDatabase.push(row);
-        }, `SELECT * FROM gamelog_external WHERE created_at >= date('${dateOffset}') ORDER BY id DESC LIMIT ${dbVars.maxTableSize}`);
+        }, `SELECT * FROM gamelog_external WHERE created_at >= @cutoff ORDER BY id DESC LIMIT @limit`, { '@cutoff': cutoff, '@limit': limit });
         var compareByCreatedAt = function (a, b) {
             var A = a.created_at;
             var B = b.created_at;
@@ -113,137 +114,94 @@ const gameLog = {
     },
 
     addGamelogLocationToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_location (created_at, location, world_id, world_name, time, group_name) VALUES (@created_at, @location, @world_id, @world_name, @time, @group_name)`,
-            {
-                '@created_at': entry.created_at,
-                '@location': entry.location,
-                '@world_id': entry.worldId,
-                '@world_name': entry.worldName,
-                '@time': entry.time,
-                '@group_name': entry.groupName
-            }
-        );
+        adapter.insert('gamelog_location', {
+            created_at: entry.created_at,
+            location: entry.location,
+            world_id: entry.worldId,
+            world_name: entry.worldName,
+            time: entry.time,
+            group_name: entry.groupName
+        }, 'ignore');
     },
 
     updateGamelogLocationTimeToDatabase(entry) {
-        adapter.executeNonQuery(
-            `UPDATE gamelog_location SET time = @time WHERE created_at = @created_at`,
-            {
-                '@created_at': entry.created_at,
-                '@time': entry.time
-            }
-        );
+        adapter.update('gamelog_location', { time: entry.time }, { created_at: entry.created_at });
     },
 
     addGamelogJoinLeaveToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES (@created_at, @type, @display_name, @location, @user_id, @time)`,
-            {
-                '@created_at': entry.created_at,
-                '@type': entry.type,
-                '@display_name': entry.displayName,
-                '@location': entry.location,
-                '@user_id': entry.userId,
-                '@time': entry.time
-            }
-        );
+        adapter.insert('gamelog_join_leave', {
+            created_at: entry.created_at,
+            type: entry.type,
+            display_name: entry.displayName,
+            location: entry.location,
+            user_id: entry.userId,
+            time: entry.time
+        }, 'ignore');
     },
 
     addGamelogJoinLeaveBulk(inputData) {
         if (inputData.length === 0) {
             return;
         }
-        var sqlValues = '';
-        var items = [
-            'created_at',
-            'type',
-            'displayName',
-            'location',
-            'userId',
-            'time'
-        ];
-        for (var line of inputData) {
-            var field = {};
-            for (var item of items) {
-                if (typeof line[item] === 'string') {
-                    field[item] = line[item].replace(/'/g, "''");
-                } else if (typeof line[item] === 'number') {
-                    field[item] = line[item];
-                } else {
-                    field[item] = '';
-                }
-            }
-            sqlValues += `('${field.created_at}', '${field.type}', '${field.displayName}', '${field.location}', '${field.userId}', '${field.time}'), `;
-        }
-        sqlValues = sqlValues.slice(0, -2);
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES ${sqlValues}`
-        );
+        const rows = inputData.map((line) => ({
+            created_at: typeof line.created_at === 'string' ? line.created_at : '',
+            type: typeof line.type === 'string' ? line.type : '',
+            display_name: typeof line.displayName === 'string' ? line.displayName : '',
+            location: typeof line.location === 'string' ? line.location : '',
+            user_id: typeof line.userId === 'string' ? line.userId : '',
+            time: typeof line.time === 'number' ? line.time : 0
+        }));
+        adapter.bulkInsert('gamelog_join_leave', rows, 'ignore')
+            .catch((err) => console.error('gamelog_join_leave bulk insert failed:', err));
     },
 
     addGamelogPortalSpawnToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_portal_spawn (created_at, display_name, location, user_id, instance_id, world_name) VALUES (@created_at, @display_name, @location, @user_id, @instance_id, @world_name)`,
-            {
-                '@created_at': entry.created_at,
-                '@display_name': entry.displayName,
-                '@location': entry.location,
-                '@user_id': entry.userId,
-                '@instance_id': entry.instanceId,
-                '@world_name': entry.worldName
-            }
-        );
+        adapter.insert('gamelog_portal_spawn', {
+            created_at: entry.created_at,
+            display_name: entry.displayName,
+            location: entry.location,
+            user_id: entry.userId,
+            instance_id: entry.instanceId,
+            world_name: entry.worldName
+        }, 'ignore');
     },
 
     addGamelogVideoPlayToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_video_play (created_at, video_url, video_name, video_id, location, display_name, user_id) VALUES (@created_at, @video_url, @video_name, @video_id, @location, @display_name, @user_id)`,
-            {
-                '@created_at': entry.created_at,
-                '@video_url': entry.videoUrl,
-                '@video_name': entry.videoName,
-                '@video_id': entry.videoId,
-                '@location': entry.location,
-                '@display_name': entry.displayName,
-                '@user_id': entry.userId
-            }
-        );
+        adapter.insert('gamelog_video_play', {
+            created_at: entry.created_at,
+            video_url: entry.videoUrl,
+            video_name: entry.videoName,
+            video_id: entry.videoId,
+            location: entry.location,
+            display_name: entry.displayName,
+            user_id: entry.userId
+        }, 'ignore');
     },
 
     addGamelogResourceLoadToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_resource_load (created_at, resource_url, resource_type, location) VALUES (@created_at, @resource_url, @resource_type, @location)`,
-            {
-                '@created_at': entry.created_at,
-                '@resource_url': entry.resourceUrl,
-                '@resource_type': entry.type,
-                '@location': entry.location
-            }
-        );
+        adapter.insert('gamelog_resource_load', {
+            created_at: entry.created_at,
+            resource_url: entry.resourceUrl,
+            resource_type: entry.type,
+            location: entry.location
+        }, 'ignore');
     },
 
     addGamelogEventToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_event (created_at, data) VALUES (@created_at, @data)`,
-            {
-                '@created_at': entry.created_at,
-                '@data': entry.data
-            }
-        );
+        adapter.insert('gamelog_event', {
+            created_at: entry.created_at,
+            data: entry.data
+        }, 'ignore');
     },
 
     addGamelogExternalToDatabase(entry) {
-        adapter.executeNonQuery(
-            `INSERT OR IGNORE INTO gamelog_external (created_at, message, display_name, user_id, location) VALUES (@created_at, @message, @display_name, @user_id, @location)`,
-            {
-                '@created_at': entry.created_at,
-                '@message': entry.message,
-                '@display_name': entry.displayName,
-                '@user_id': entry.userId,
-                '@location': entry.location
-            }
-        );
+        adapter.insert('gamelog_external', {
+            created_at: entry.created_at,
+            message: entry.message,
+            display_name: entry.displayName,
+            user_id: entry.userId,
+            location: entry.location
+        }, 'ignore');
     },
 
     async getLastVisit(worldId, currentWorldMatch) {
@@ -543,23 +501,23 @@ const gameLog = {
             return [];
         }
         var data = [];
-        // this makes me most sad
-        var userIdsString = '';
-        for (var userId of userIds) {
-            userIdsString += `'${userId}', `;
-        }
-        userIdsString = userIdsString.slice(0, -2);
-        var displayNamesString = '';
-        for (var displayName of displayNames) {
-            displayNamesString += `'${displayName.replaceAll("'", "''")}', `;
-        }
-        displayNamesString = displayNamesString.slice(0, -2);
+        const args = {};
+        const uidPlaceholders = [];
+        userIds.forEach((userId, i) => {
+            uidPlaceholders.push(`@uid_${i}`);
+            args[`@uid_${i}`] = userId;
+        });
+        const dnPlaceholders = [];
+        displayNames.forEach((dn, i) => {
+            dnPlaceholders.push(`@dn_${i}`);
+            args[`@dn_${i}`] = dn;
+        });
         var whereClauses = [];
-        if (userIdsString) {
-            whereClauses.push(`g.user_id IN (${userIdsString})`);
+        if (uidPlaceholders.length) {
+            whereClauses.push(`g.user_id IN (${uidPlaceholders.join(', ')})`);
         }
-        if (displayNamesString) {
-            whereClauses.push(`g.display_name IN (${displayNamesString})`);
+        if (dnPlaceholders.length) {
+            whereClauses.push(`g.display_name IN (${dnPlaceholders.join(', ')})`);
         }
 
         await adapter.execute(
@@ -589,7 +547,8 @@ const gameLog = {
                 g.display_name
             ORDER BY
                 g.user_id DESC
-            `
+            `,
+            args
         );
         return data;
     },
@@ -799,15 +758,15 @@ const gameLog = {
             'message'
         ].join(', ');
         let vipQuery = '';
+        const vipArgs = {};
         if (vipList.length > 0) {
-            vipQuery = 'AND user_id IN (';
-            for (var i = 0; i < vipList.length; i++) {
-                vipQuery += `'${vipList[i].replaceAll("'", "''")}'`;
-                if (i < vipList.length - 1) {
-                    vipQuery += ', ';
-                }
-            }
-            vipQuery += ')';
+            const vipPlaceholders = [];
+            vipList.forEach((vip, i) => {
+                const key = `@vip_${i}`;
+                vipArgs[key] = vip;
+                vipPlaceholders.push(key);
+            });
+            vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
         let location = true;
         let onplayerjoined = true;
@@ -918,7 +877,8 @@ const gameLog = {
         const gamelogDatabase = [];
         const args = {
             '@limit': maxEntries,
-            '@perTable': maxEntries
+            '@perTable': maxEntries,
+            ...vipArgs
         };
         await adapter.execute(
             (dbRow) => {
@@ -1302,7 +1262,7 @@ const gameLog = {
                 SELECT DISTINCT location, world_name, group_name
                 FROM gamelog_location
             )
-            SELECT gamelog_join_leave.created_at, strftime('%s', gamelog_join_leave.created_at) * 1000 created_at_ts, gamelog_join_leave.location, gamelog_join_leave.time, grouped_locations.world_name, grouped_locations.group_name, gamelog_join_leave.id, gamelog_join_leave.type
+            SELECT gamelog_join_leave.created_at, ${adapter.sqlToUnixMs('gamelog_join_leave.created_at')} created_at_ts, gamelog_join_leave.location, gamelog_join_leave.time, grouped_locations.world_name, grouped_locations.group_name, gamelog_join_leave.id, gamelog_join_leave.type
             FROM gamelog_join_leave
             INNER JOIN grouped_locations ON gamelog_join_leave.location = grouped_locations.location
             WHERE user_id = @userId OR display_name = @displayName
@@ -1535,7 +1495,7 @@ const gameLog = {
     ) {
         const results = [];
         const whereClause =
-            days > 0 ? `AND created_at >= datetime('now', @daysOffset)` : '';
+            days > 0 ? 'AND created_at >= @cutoff' : '';
         const excludeClause = excludeWorldId
             ? 'AND world_id != @excludeWorldId'
             : '';
@@ -1543,7 +1503,7 @@ const gameLog = {
             sortBy === 'count' ? 'visit_count DESC' : 'total_time DESC';
         const params = { '@limit': limit };
         if (days > 0) {
-            params['@daysOffset'] = `-${days} days`;
+            params['@cutoff'] = adapter.daysAgoISO(days);
         }
         if (excludeWorldId) {
             params['@excludeWorldId'] = excludeWorldId;
@@ -1632,9 +1592,9 @@ const gameLog = {
                      *
                 FROM
                     gamelog_join_leave
-                WHERE type = 'OnPlayerLeft'
+                    WHERE type = 'OnPlayerLeft'
                     AND (
-                        strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '-' || (time * 1.0 / 1000) || ' seconds') BETWEEN @utc_start_date AND @utc_end_date
+                        ${adapter.sqlEnterTime('created_at', 'time')} BETWEEN @utc_start_date AND @utc_end_date
                         OR created_at BETWEEN @utc_start_date AND @utc_end_date
                     );`,
             {
@@ -1710,8 +1670,8 @@ const gameLog = {
                 AND b.location NOT IN ('', 'traveling', 'private', 'private:private')
                 AND a.time > 0
                 AND b.time > 0
-                AND strftime('%Y-%m-%dT%H:%M:%SZ', a.created_at, '-' || (a.time * 1.0 / 1000) || ' seconds') < b.created_at
-                AND strftime('%Y-%m-%dT%H:%M:%SZ', b.created_at, '-' || (b.time * 1.0 / 1000) || ' seconds') < a.created_at
+                AND ${adapter.sqlEnterTime('a.created_at', 'a.time')} < b.created_at
+                AND ${adapter.sqlEnterTime('b.created_at', 'b.time')} < a.created_at
             ORDER BY a.created_at DESC`,
             {
                 '@friendAUserId': friendAUserId,
@@ -1735,13 +1695,13 @@ const gameLog = {
                 `SELECT location, created_at, time
                  FROM (
                      SELECT previous_location AS location, created_at, time
-                     FROM ${dbVars.userPrefix}_feed_gps
+                     FROM ${adapter.userTable(dbVars.userPrefix, 'feed_gps')}
                      WHERE user_id = @userId
                        AND previous_location NOT IN ('', 'offline', 'traveling', 'private', 'private:private')
                        AND time > 0
                      UNION ALL
                      SELECT location, created_at, time
-                     FROM ${dbVars.userPrefix}_feed_online_offline
+                     FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
                      WHERE user_id = @userId
                        AND type = 'Offline'
                        AND location NOT IN ('', 'offline', 'traveling', 'private', 'private:private')
@@ -1949,46 +1909,33 @@ const gameLog = {
     },
 
     deleteGameLogVideoPlay(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_video_play WHERE created_at = @created_at AND video_url = @video_url AND location = @location`,
-            {
-                '@created_at': input.created_at,
-                '@video_url': input.videoUrl,
-                '@location': input.location
-            }
-        );
+        adapter.delete('gamelog_video_play', {
+            created_at: input.created_at,
+            video_url: input.videoUrl,
+            location: input.location
+        });
     },
 
     deleteGameLogEvent(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_event WHERE created_at = @created_at AND data = @data`,
-            {
-                '@created_at': input.created_at,
-                '@data': input.data
-            }
-        );
+        adapter.delete('gamelog_event', {
+            created_at: input.created_at,
+            data: input.data
+        });
     },
 
     deleteGameLogExternal(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_external WHERE created_at = @created_at AND message = @message`,
-            {
-                '@created_at': input.created_at,
-                '@message': input.message
-            }
-        );
+        adapter.delete('gamelog_external', {
+            created_at: input.created_at,
+            message: input.message
+        });
     },
 
     deleteGameLogResourceLoad(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_resource_load WHERE created_at = @created_at AND resource_url = @resource_url AND location = @location`,
-            {
-                '@created_at': input.created_at,
-                '@resource_url': input.resourceUrl,
-                '@type': input.type,
-                '@location': input.location
-            }
-        );
+        adapter.delete('gamelog_resource_load', {
+            created_at: input.created_at,
+            resource_url: input.resourceUrl,
+            location: input.location
+        });
     },
 
 
@@ -2013,7 +1960,7 @@ const gameLog = {
             `SELECT
                 user_id,
                 display_name,
-                date(created_at) AS day,
+                ${adapter.sqlDate('created_at')} AS day,
                 SUM(time) AS total_time,
                 COUNT(DISTINCT location) AS joinCount
             FROM gamelog_join_leave

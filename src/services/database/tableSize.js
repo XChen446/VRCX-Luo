@@ -7,36 +7,36 @@ const tableSize = {
         var friendNumber = 0;
         await adapter.execute((dbRow) => {
             friendNumber = dbRow[0];
-        }, `SELECT MAX(friend_number) FROM ${dbVars.userPrefix}_friend_log_current`);
+        }, `SELECT MAX(friend_number) FROM ${adapter.userTable(dbVars.userPrefix, 'friend_log_current')}`);
         return friendNumber;
     },
 
     async getGpsTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_feed_gps`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'feed_gps')}`);
     },
 
     async getStatusTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_feed_status`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'feed_status')}`);
     },
 
     async getBioTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_feed_bio`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'feed_bio')}`);
     },
 
     async getAvatarTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_feed_avatar`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'feed_avatar')}`);
     },
 
     async getOnlineOfflineTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_feed_online_offline`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}`);
     },
 
     async getFriendLogHistoryTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_friend_log_history`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`);
     },
 
     async getNotificationTableSize() {
-        return adapter.countWhere(`${dbVars.userPrefix}_notifications`);
+        return adapter.countWhere(`${adapter.userTable(dbVars.userPrefix, 'notifications')}`);
     },
 
     async getLocationTableSize() {

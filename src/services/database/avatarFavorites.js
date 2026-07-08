@@ -21,14 +21,12 @@ const avatarFavorites = {
     },
 
     addAvatarToHistory(avatarId) {
-        adapter.executeNonQuery(
-            `INSERT INTO ${dbVars.userPrefix}_avatar_history (avatar_id, created_at, time)
-            VALUES (@avatar_id, @created_at, 0)
-            ON CONFLICT(avatar_id) DO UPDATE SET created_at = @created_at`,
-            {
-                '@avatar_id': avatarId,
-                '@created_at': new Date().toJSON()
-            }
+        const createdAt = new Date().toJSON();
+        adapter.upsertPartial(
+            `${adapter.userTable(dbVars.userPrefix, 'avatar_history')}`,
+            { avatar_id: avatarId, created_at: createdAt, time: 0 },
+            { created_at: createdAt },
+            'avatar_id'
         );
     },
 
@@ -41,7 +39,7 @@ const avatarFavorites = {
             (row) => {
                 ref.timeSpent = row[0];
             },
-            `SELECT time FROM ${dbVars.userPrefix}_avatar_history WHERE avatar_id = @avatarId`,
+            `SELECT time FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')} WHERE avatar_id = @avatarId`,
             {
                 '@avatarId': avatarId
             }
@@ -54,19 +52,13 @@ const avatarFavorites = {
         const map = new Map();
         await adapter.execute((row) => {
             map.set(row[0], row[1] || 0);
-        }, `SELECT avatar_id, time FROM ${dbVars.userPrefix}_avatar_history`);
+        }, `SELECT avatar_id, time FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}`);
 
         return map;
     },
 
     addAvatarTimeSpent(avatarId, timeSpent) {
-        adapter.executeNonQuery(
-            `UPDATE ${dbVars.userPrefix}_avatar_history SET time = time + @timeSpent WHERE avatar_id = @avatarId`,
-            {
-                '@avatarId': avatarId,
-                '@timeSpent': timeSpent
-            }
-        );
+        adapter.increment(`${adapter.userTable(dbVars.userPrefix, 'avatar_history')}`, 'time', timeSpent, { avatar_id: avatarId });
     },
 
     async getAvatarHistory(currentUserId, limit = 100) {
@@ -86,7 +78,12 @@ const avatarFavorites = {
                 version: dbRow[14]
             };
             data.push(row);
-        }, `SELECT * FROM ${dbVars.userPrefix}_avatar_history INNER JOIN cache_avatar ON cache_avatar.id = ${dbVars.userPrefix}_avatar_history.avatar_id WHERE author_id != '${currentUserId}' ORDER BY ${dbVars.userPrefix}_avatar_history.created_at DESC LIMIT ${limit}`);
+        },             `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')} INNER JOIN cache_avatar ON cache_avatar.id = ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}.avatar_id WHERE author_id != @currentUserId ORDER BY ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}.created_at DESC LIMIT @limit`,
+            {
+                '@currentUserId': currentUserId,
+                '@limit': limit
+            }
+        );
         return data;
     },
 
@@ -117,7 +114,7 @@ const avatarFavorites = {
     },
 
     clearAvatarHistory() {
-        adapter.executeNonQuery(`DELETE FROM ${dbVars.userPrefix}_avatar_history`);
+        adapter.executeNonQuery(`DELETE FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}`);
         adapter.executeNonQuery('DELETE FROM cache_avatar');
     },
 

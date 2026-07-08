@@ -21,12 +21,12 @@ const friendLogHistory = {
                 row.previousTrustLevel = dbRow[7];
             }
             friendLogHistory.unshift(row);
-        }, `SELECT * FROM ${dbVars.userPrefix}_friend_log_history`);
+        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`);
         return friendLogHistory;
     },
 
     addFriendLogHistory(entry) {
-        adapter.insert(`${dbVars.userPrefix}_friend_log_history`, {
+        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`, {
             created_at: entry.created_at,
             type: entry.type,
             user_id: entry.userId,
@@ -38,7 +38,8 @@ const friendLogHistory = {
         }, 'ignore');
     },
 
-    addFriendLogHistoryArray(inputData) {
+    // @deprecated Currently unused — kept for future batch-insert callers
+    async addFriendLogHistoryArray(inputData) {
         if (inputData.length === 0) {
             return;
         }
@@ -52,15 +53,17 @@ const friendLogHistory = {
             previous_trust_level: typeof line.previousTrustLevel === 'string' ? line.previousTrustLevel : null,
             friend_number: typeof line.friendNumber === 'string' ? line.friendNumber : null
         }));
-        adapter.bulkInsert(`${dbVars.userPrefix}_friend_log_history`, rows, 'ignore');
+        await adapter.bulkInsert(`${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`, rows, 'ignore');
     },
 
     async getFriendLogHistoryForUserId(userId, types) {
         let friendLogHistory = [];
         let typeFilter = '';
+        const typeParams = {};
         if (types && types.length > 0) {
-            const escapedTypes = types.map((t) => `'${t.replace(/'/g, "''")}'`);
-            typeFilter = ` AND type IN (${escapedTypes.join(', ')})`;
+            const placeholders = types.map((_, i) => `@type_${i}`);
+            types.forEach((t, i) => { typeParams[`@type_${i}`] = t; });
+            typeFilter = ` AND type IN (${placeholders.join(', ')})`;
         }
         await adapter.execute(
             (dbRow) => {
@@ -80,9 +83,10 @@ const friendLogHistory = {
                 }
                 friendLogHistory.push(row);
             },
-            `SELECT * FROM ${dbVars.userPrefix}_friend_log_history WHERE user_id = @user_id${typeFilter}`,
+            `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'friend_log_history')} WHERE user_id = @user_id${typeFilter}`,
             {
-                '@user_id': userId
+                '@user_id': userId,
+                ...typeParams
             }
         );
         return friendLogHistory;
@@ -90,9 +94,9 @@ const friendLogHistory = {
 
     deleteFriendLogHistory(entry) {
         if (entry.rowId != null) {
-            adapter.delete(`${dbVars.userPrefix}_friend_log_history`, { id: entry.rowId });
+            adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`, { id: entry.rowId });
         } else {
-            adapter.delete(`${dbVars.userPrefix}_friend_log_history`, {
+            adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`, {
                 created_at: entry.created_at,
                 type: entry.type,
                 user_id: entry.userId

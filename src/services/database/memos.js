@@ -114,7 +114,7 @@ const memos = {
     // user notes
 
     async addUserNote(note) {
-        adapter.insert(`${dbVars.userPrefix}_notes`, {
+        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'notes')}`, {
             user_id: note.userId,
             display_name: note.displayName,
             note: note.note,
@@ -132,12 +132,12 @@ const memos = {
                 createdAt: dbRow[3]
             };
             data.push(row);
-        }, `SELECT user_id, display_name, note, created_at FROM ${dbVars.userPrefix}_notes`);
+        }, `SELECT user_id, display_name, note, created_at FROM ${adapter.userTable(dbVars.userPrefix, 'notes')}`);
         return data;
     },
 
     async deleteUserNote(userId) {
-        adapter.delete(`${dbVars.userPrefix}_notes`, { user_id: userId });
+        adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'notes')}`, { user_id: userId });
     }
 };
 
