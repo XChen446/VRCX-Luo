@@ -2,23 +2,6 @@ import { useFriendStore, useUserStore } from '../stores';
 import { database } from '../services/database';
 
 /**
- * @returns {Promise<void>}
- */
-async function migrateMemos() {
-    const json = JSON.parse(await VRCXStorage.GetAll());
-    for (const line in json) {
-        if (line.substring(0, 8) === 'memo_usr') {
-            const userId = line.substring(5);
-            const memo = json[line];
-            if (memo) {
-                await saveUserMemo(userId, memo);
-                VRCXStorage.Remove(`memo_${userId}`);
-            }
-        }
-    }
-}
-
-/**
  *
  * @param {string} userId
  * @returns
@@ -117,7 +100,6 @@ async function getWorldMemo(worldId) {
 // }
 
 export {
-    migrateMemos,
     getUserMemo,
     saveUserMemo,
     getAllUserMemos,

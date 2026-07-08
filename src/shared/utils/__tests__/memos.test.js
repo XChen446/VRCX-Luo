@@ -33,7 +33,6 @@ import {
     getAllUserMemos,
     getUserMemo,
     getWorldMemo,
-    migrateMemos,
     saveUserMemo
 } from '../../../coordinators/memoCoordinator.js';
 
@@ -126,37 +125,5 @@ describe('memos utils', () => {
         expect(friend1.$nickName).toBe('Alpha');
         expect(friend2.memo).toBe('');
         expect(friend2.$nickName).toBe('');
-    });
-
-    test('migrateMemos moves memo_usr entries to database and storage cleanup', async () => {
-        const friend = { memo: '', $nickName: '' };
-        mocks.friends.set('usr_1', friend);
-        mocks.storage.GetAll.mockResolvedValue(
-            JSON.stringify({
-                memo_usr_1: 'hello',
-                other_key: 'x',
-                memo_usr_2: ''
-            })
-        );
-
-        await migrateMemos();
-
-        expect(mocks.database.setUserMemo).toHaveBeenCalledTimes(1);
-        expect(mocks.database.setUserMemo).toHaveBeenCalledWith(
-            expect.objectContaining({
-                userId: 'usr_1',
-                memo: 'hello'
-            })
-        );
-        expect(mocks.storage.Remove).toHaveBeenCalledWith('memo_usr_1');
-        expect(mocks.storage.Remove).not.toHaveBeenCalledWith('memo_usr_2');
-    });
-
-    test('migrateMemos rejects for invalid JSON payload', async () => {
-        mocks.storage.GetAll.mockResolvedValue('{bad json');
-
-        await expect(migrateMemos()).rejects.toThrow();
-        expect(mocks.database.setUserMemo).not.toHaveBeenCalled();
-        expect(mocks.storage.Remove).not.toHaveBeenCalled();
     });
 });

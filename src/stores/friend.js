@@ -1028,22 +1028,6 @@ export const useFriendStore = defineStore('Friend', () => {
 
     /**
      *
-     * @param {string} userId
-     * @returns {Promise<void>}
-     */
-    async function migrateFriendLog(userId) {
-        VRCXStorage.Remove(`${userId}_friendLogUpdatedAt`);
-        VRCXStorage.Remove(`${userId}_friendLog`);
-        friendLogTable.value.data = await VRCXStorage.GetArray(
-            `${userId}_friendLogTable`
-        );
-        database.addFriendLogHistoryArray(friendLogTable.value.data);
-        VRCXStorage.Remove(`${userId}_friendLogTable`);
-        await configRepository.setBool(`friendLogInit_${userId}`, true);
-    }
-
-    /**
-     *
      * @param {object} currentUser
      * @returns {Promise<void>}
      */
@@ -1467,7 +1451,6 @@ export const useFriendStore = defineStore('Friend', () => {
         pendingOfflineDelay,
 
         updateLocalFavoriteFriends,
-        updateSidebarFavorites,
         deleteFriend,
         refreshFriendsStatus,
         addFriend,
@@ -1477,7 +1460,6 @@ export const useFriendStore = defineStore('Friend', () => {
         getAllUserMutualCount,
         getAllUserMutualOptedOut,
         initFriendLog,
-        migrateFriendLog,
         getFriendLog,
         tryApplyFriendOrder,
         parseFriendOrderBackup,
