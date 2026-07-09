@@ -36,23 +36,27 @@ const notifications = {
         vipList,
         maxEntries = dbVars.maxTableSize
     ) {
-        search = search.replaceAll("'", "''");
+        const searchLike = `%${search}%`;
         let notifications = [];
 
         let vipQuery = '';
+        const vipArgs = {};
         if (vipList.length > 0) {
-            const vipIds = vipList.map(
-                (userId) => `'${userId.replaceAll("'", "''")}'`
-            );
-            vipQuery = `AND sender_user_id IN (${vipIds.join(',')})`;
+            const placeholders = vipList.map((id, i) => {
+                vipArgs[`@vip_${i}`] = id;
+                return `@vip_${i}`;
+            });
+            vipQuery = `AND sender_user_id IN (${placeholders.join(', ')})`;
         }
 
         let filterQuery = '';
+        const filterArgs = {};
         if (filters.length > 0) {
-            const filterTypes = filters.map(
-                (type) => `'${type.replaceAll("'", "''")}'`
-            );
-            filterQuery = `AND type IN (${filterTypes.join(',')})`;
+            const placeholders = filters.map((type, i) => {
+                filterArgs[`@filter_${i}`] = type;
+                return `@filter_${i}`;
+            });
+            filterQuery = `AND type IN (${placeholders.join(', ')})`;
         }
 
         await adapter.execute((dbRow) => {
@@ -75,7 +79,13 @@ const notifications = {
                 $isExpired: dbRow[13] === 1
             };
             notifications.unshift(row);
-        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications')} WHERE (sender_username LIKE '%${search}%' OR message LIKE '%${search}%' OR world_name LIKE '%${search}%') ${vipQuery} ${filterQuery} ORDER BY created_at DESC LIMIT ${maxEntries}`);
+        }, `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications')} WHERE (sender_username LIKE @searchLike OR message LIKE @searchLike OR world_name LIKE @searchLike) ${vipQuery} ${filterQuery} ORDER BY created_at DESC LIMIT @limit`,
+        {
+            '@searchLike': searchLike,
+            '@limit': maxEntries,
+            ...vipArgs,
+            ...filterArgs
+        });
         return notifications;
     },
 
