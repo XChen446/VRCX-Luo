@@ -1,0 +1,120 @@
+name: "Gito: AI Code Review"
+
+on:
+    push:
+        tags: ['*']
+    pull_request:
+        types: [opened, synchronize, reopened]
+    workflow_dispatch:
+        inputs:
+            pr_number:
+                description: "Pull Request number (optional, leave empty for commit-only review)"
+                required: false
+                default: ""
+
+jobs:
+    review:
+        runs-on: ubuntu-latest
+        permissions: { contents: read, pull-requests: write }
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-tags: true
+                  fetch-depth: 0
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with: { python-version: "3.14" }
+
+            - name: Install AI Code Review tool
+              run: pip install gito.bot~=4.1
+
+            - name: Determine review target
+              id: target
+              run: |
+                  EVENT="${{ github.event_name }}"
+                  PR_INPUT="${{ github.event.inputs.pr_number }}"
+
+                  if [ "$EVENT" = "pull_request" ]; then
+                    # PR 场景：Gito 自动从环境变量检测
+                    echo "what=" >> $GITHUB_OUTPUT
+                    echo "against=" >> $GITHUB_OUTPUT
+                    echo "pr=${{ github.event.number }}" >> $GITHUB_OUTPUT
+                    echo "post_comment=true" >> $GITHUB_OUTPUT
+                    echo "mode=PR #${{ github.event.number }}" >> $GITHUB_OUTPUT
+
+                  elif [ "$EVENT" = "workflow_dispatch" ]; then
+                    if [ -n "$PR_INPUT" ]; then
+                      # 手动触发 + 指定了 PR 号 → 审查该 PR
+                      echo "what=" >> $GITHUB_OUTPUT
+                      echo "against=" >> $GITHUB_OUTPUT
+                      echo "pr=${PR_INPUT}" >> $GITHUB_OUTPUT
+                      echo "post_comment=true" >> $GITHUB_OUTPUT
+                      echo "mode=手动审查 PR #${PR_INPUT}" >> $GITHUB_OUTPUT
+                    else
+                      # 手动触发 + 未指定 PR 号 → HEAD vs HEAD~1
+                      echo "what=HEAD" >> $GITHUB_OUTPUT
+                      echo "against=HEAD~1" >> $GITHUB_OUTPUT
+                      echo "pr=" >> $GITHUB_OUTPUT
+                      echo "post_comment=false" >> $GITHUB_OUTPUT
+                      echo "mode=手动审查：HEAD vs HEAD~1" >> $GITHUB_OUTPUT
+                    fi
+
+                  elif [ "$EVENT" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+                    # Tag 推送：当前 Tag vs 上一个 Tag
+                    CURRENT_TAG="${{ github.ref_name }}"
+                    PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || echo "")
+
+                    if [ -n "$PREV_TAG" ]; then
+                      echo "what=${CURRENT_TAG}" >> $GITHUB_OUTPUT
+                      echo "against=${PREV_TAG}" >> $GITHUB_OUTPUT
+                    else
+                      echo "what=${CURRENT_TAG}" >> $GITHUB_OUTPUT
+                      echo "against=HEAD~1" >> $GITHUB_OUTPUT
+                    fi
+                    echo "pr=" >> $GITHUB_OUTPUT
+                    echo "post_comment=false" >> $GITHUB_OUTPUT
+                    echo "mode=Tag ${CURRENT_TAG} 审查" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Run AI code analysis
+              env:
+                  LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+                  LLM_API_TYPE: openai
+                  LLM_API_BASE: "${{ vars.LLM_API_BASE }}"
+                  MODEL: "${{ vars.MODEL }}"
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  PR_NUMBER_FROM_WORKFLOW_DISPATCH: ${{ steps.target.outputs.pr }}
+              run: |
+                  echo "▸ 模式: ${{ steps.target.outputs.mode }}"
+
+                  # 构建 gito review 命令
+                  CMD="gito --verbose review"
+
+                  if [ -n "${{ steps.target.outputs.what }}" ]; then
+                    CMD="$CMD --what ${{ steps.target.outputs.what }}"
+                  fi
+                  if [ -n "${{ steps.target.outputs.against }}" ]; then
+                    CMD="$CMD --against ${{ steps.target.outputs.against }}"
+                  fi
+
+                  $CMD
+
+            - name: Post review comment (PR only)
+              if: steps.target.outputs.post_comment == 'true'
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  gito github-comment --token ${{ secrets.GITHUB_TOKEN }}
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: ai-code-review-results
+                  path: |
+                      code-review-report.md
+                      code-review-report.json
+
+            - name: Display AI Code Review report
+              run: |
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  cat code-review-report.md >> $GITHUB_STEP_SUMMARY

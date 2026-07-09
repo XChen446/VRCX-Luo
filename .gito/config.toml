@@ -1,0 +1,229 @@
+# ── 触发词 ──
+mention_triggers = ["gito", "bot", "ai", "/fix"]
+collapse_previous_code_review_comments = true
+
+# ── 报告模板 ──
+report_template_gitlab_code_quality = "fn:gito.gitlab.convert_to_gitlab_code_quality_report"
+
+report_template_gitlab_mr_inline_issue = """
+### `#{{ issue.id }}` {{ issue.title }}
+{{ issue.details -}}
+{%- if issue.tags %}{{"\n"}}**标签: {{ ', '.join(issue.tags) }}**{%- endif -%}
+{%- for i in issue.affected_lines -%}
+    {%- if i.proposal %}\n**建议修改:**\n```{{ i.syntax_hint }}\n{{ i.proposal }}\n```{%- endif -%}
+{%- endfor %}
+{{- HTML_INLINE_CR_COMMENT_MARKER -}}
+"""
+
+report_template_md = """
+<h2>{{ HTML_TEXT_ICON }}代码审查完成</h2>
+{% if report.summary -%}{{ report.summary }}{%- endif %}
+{% if report.total_issues > 0 -%}**⚠️ 发现 {{ report.total_issues }} 个问题**，涉及 {{ report.number_of_processed_files }} 个文件
+{%- else -%}**✅ 未发现明显问题**，审查了 {{ report.number_of_processed_files }} 个文件
+{%- endif -%}
+
+{%- for issue in (report.plain_issues if include_issues | default(true) else unanchored_issues | default([])) -%}
+{{"\n"}}## `#{{ issue.id}}` {{ issue.title -}}
+{{"\n"}}[{{ issue.file }}{{ ' ' }}
+{%- if issue.affected_lines -%}{%- for i in issue.affected_lines -%}L{{ i.start_line }}{%- if i.end_line != i.start_line -%}-L{{ i.end_line }}{%- endif -%}{%- if loop.last == false -%}, {%- endif -%}{%- endfor -%}{%- endif -%}
+]({{ issue.code_link(report.target) }})
+{{"\n"}}{{ issue.details -}}
+{{"\n"}}**标签: {{ ', '.join(issue.tags) }}**
+{%- for i in issue.affected_lines -%}
+    {%- if i.affected_code %}\n**受影响代码:**\n```{{ i.syntax_hint }}\n{{ i.affected_code }}\n```{%- endif -%}
+    {%- if i.proposal %}\n**建议修改:**\n```{{ i.syntax_hint }}\n{{ i.proposal }}\n```{%- endif -%}
+{%- endfor -%}{{"\n"}}
+{%- endfor -%}
+{%- if report.processing_warnings -%}{{"\n\n"}}## 处理警告
+{%- for warning in report.processing_warnings -%}{{"\n"}}  - {{ warning.message -}}{%- endfor -%}
+{%- endif -%}
+{{- HTML_CR_COMMENT_MARKER -}}
+"""
+
+report_template_cli = """
+{{ Back.BLUE }}  +  +  +  ---==<<[ 代码审查{{Style.NORMAL}} ]>>==---  +  +  +  {{Style.RESET_ALL}}
+{% if report.total_issues > 0 -%}
+{{ Style.BRIGHT }}{{Back.RED}} ⚠️ {{ report.total_issues }} 个问题 {{Back.RESET}} / {{Back.BLUE}} {{ report.number_of_processed_files }} 个文件 {{Back.RESET}}{{ Style.RESET_ALL }}
+{%- else -%}
+{{ Style.BRIGHT }}{{Back.GREEN}} ✅ 无问题 {{Back.RESET}} / {{Back.BLUE}} {{ report.number_of_processed_files }} 个文件 {{Back.RESET}}{{ Style.RESET_ALL }}
+{%- endif -%}
+{%- if report.summary -%}{{"\n\n"}}{{ Style.BRIGHT }}✨ 摘要 {{ Style.RESET_ALL }}{{"\n"}}{{ remove_html_comments(report.summary) }}{%- endif %}
+{% for issue in report.plain_issues -%}
+{{"\n"}}{{ Style.BRIGHT }}{{Back.RED}}[ {{ issue.id}} ]{{Back.RESET}} {{ issue.title -}}{{ Style.RESET_ALL -}}
+{{"\n"}}{{ file_link(issue.file) -}}{%- if issue.affected_lines -%}:{{issue.affected_lines[0].start_line}}{%- endif -%}
+{%- if issue.affected_lines -%}{% if issue.affected_lines[0].end_line != issue.affected_lines[0].start_line or issue.affected_lines|length > 1 -%} {{ ui.gray }}行{{' '}}{{ Fore.RESET -}}{%- for i in issue.affected_lines -%}{{ i.start_line }}{%- if i.end_line != i.start_line -%}{{ ui.gray }}–{{Fore.RESET}}{{ i.end_line }}{%- endif -%}{%- if loop.last == false -%}{{ ui.gray(', ') }}{%- endif -%}{%- endfor -%}{%- endif -%}{%- endif -%}{{"\n"}}
+{% if issue.details -%}{{"\n"}}{{ issue.details.strip() }}{{"\n"}}{%- endif -%}
+{%- for tag in issue.tags -%}{{Back.YELLOW}}{{Fore.BLACK}} {{tag}} {{Style.RESET_ALL}}{{ ' ' }}{%- endfor -%}{%- if issue.tags %}{{ "\n" }}{% endif -%}
+{%- for i in issue.affected_lines -%}
+    {%- if i.affected_code -%}{{"\n"+Fore.RED + " ╭────[ 💥 受影响代码 ]────\n" -}}{{ textwrap.indent(i.affected_code.strip(), Fore.RED+' │  ') }}{{"\n ╰────"+Style.RESET_ALL -}}{%- endif -%}
+    {%- if i.proposal -%}
+        {%- set maxlen = 100 -%}
+        {%- if not i.affected_code %}{{ Fore.GREEN }} ╭───{% endif -%}
+        {%- if i.proposal.splitlines() | length == 1 and max_line_len(i.proposal)<80 -%}
+            {{- Fore.GREEN + "──[ 💡 建议修改 ]" + "─"*(max_line_len(i.proposal)-25) + "─╮" +"\n" -}}{{- block_wrap_lr(i.proposal, '', ' │', 60, 30) -}}{{"\n ╰──"+"─"*([max_line_len(i.proposal)-5+1,26]|max)+"─╯" -}}
+        {%- else -%}
+            {{- Fore.GREEN + "──[ 💡 建议修改 ]" + "─"*([max_line_len(i.proposal)-25+2,maxlen-22-2]|min -2) + "─╮" +"\n" -}}{{- i.proposal -}}{{"\n ╰───"+"─"*([[max_line_len(i.proposal)-25+2,maxlen-25+1]|min - 2 + 25 - 5,25-7+2]|max)+"─╯" -}}
+        {%- endif -%}
+        {{- Style.RESET_ALL -}}
+    {%- endif -%}
+{%- endfor -%}{{"\n"}}
+{%- endfor -%}
+{%- if report.processing_warnings -%}{{"\n\n"}}{{ Style.BRIGHT }}⚠️ 处理警告{{ Style.RESET_ALL -}}{%- for warning in report.processing_warnings -%}{{"\n"}}  {{ Fore.YELLOW }}- {{ warning.message }}{{ Style.RESET_ALL -}}{%- endfor -%}
+{%- endif -%}
+"""
+
+# ── LLM 配置 ──
+retries = 3
+
+prompt = """
+{{ self_id }}
+----任务----
+审查提供的代码差异，仅识别高度确信且与上下文相关的问题。
+
+----待审查变更----
+{{ input }}
+--------
+
+{% if file_lines -%}
+----补充上下文: 应用变更后的完整文件内容----
+{{ file_lines }}
+{%- endif %}
+
+----审查准则----
+- 仅报告**100% 确信**在任何上下文中都相关的问题
+- 不报告软件版本、模型名称等未发布信息相关的问题
+- 仅包含有显著价值的问题（Bug、安全漏洞、可维护性）
+- 不报告模糊、理论化或过于泛泛的建议
+- 不报告中等及以下置信度的问题
+- **拼写错误视为最高严重级别**
+{{ requirements -}}
+{{ json_requirements }}
+
+以有效 JSON 数组响应，格式如下：
+[
+    {
+        "title": "<问题标题>",
+        "details": "<问题描述>",
+        "tags": ["<标签1>", "<标签2>", ...],
+        "severity": <严重度:int>,
+        "confidence": <置信度:int>,
+        "affected_lines": [
+            {
+                "start_line": <int>,
+                "end_line": <int>,
+                "proposal": "<替换代码（可选）>"
+            }
+        ]
+    }
+]
+
+- `proposal` 必须匹配原始代码缩进，可直接替换 start_line..end_line
+可用标签: bug, security, performance, readability, maintainability, overcomplexity, language, architecture, compatibility, deprecation, anti-pattern, naming, code-style
+严重度: 1-致命 2-严重 3-一般 4-轻微 5-建议
+置信度: 1-最高(必报) 2-很高 3-高 4-中等(不报)
+若无问题，返回空列表: []
+"""
+
+post_process = """
+for fn in issues:
+    issues[fn] = [i for i in issues[fn] if i["confidence"] == 1 and i["severity"] <= 3]
+"""
+
+summary_prompt = """
+{{ self_id }}
+用一句话总结本次代码审查。
+--审查变更--
+{% for part in diff %}{{ part }}{{ '\n' }}{% endfor %}
+--检测到的问题--
+{{ issues | tojson(indent=2) }}
+---
+{% if awards -%}
+若代码包含杰出贡献，可在摘要中颁发奖项。
+- 仅授予初始代码作者，非审查者
+- 颁奖前单独一行放置 <!-- award --> 注释
+--可用奖项--
+{{ awards }}
+---
+{%- endif %}
+{% if pipeline_out.associated_issue and pipeline_out.associated_issue.title %}
+----子任务----
+用一句话说明代码变更如何满足关联需求。
+- 相关文本前单独一行放置 <!-- issue_alignment --> 注释
+- 用 ✅ 或 ⚠️ 标示是否完全满足
+--关联需求--
+# {{ pipeline_out.associated_issue.title }}
+{{ pipeline_out.associated_issue.description }}
+URL: {{ pipeline_out.associated_issue.url }}
+---
+示例：
+满足: <!-- issue_alignment -->\n✅ 实现满足 [<需求键>](<URL>)。
+存疑: <!-- issue_alignment -->\n⚠️ <具体差距描述>。
+{% endif -%}
+- 仅输出必要内容，不含额外文本
+- 使用 Markdown 格式
+{{ summary_requirements -}}
+"""
+
+answer_github_comments = true
+answer_prompt = "tpl:answer.j2"
+aux_files = []
+
+# ── Pipeline 集成 ──
+[pipeline_steps.jira]
+call="gito.pipeline_steps.jira.fetch_associated_issue"
+envs=["local","ci"]
+
+[pipeline_steps.linear]
+call="gito.pipeline_steps.linear.fetch_associated_issue"
+envs=["local","ci"]
+
+# ── Prompt 变量 ──
+[prompt_vars]
+self_id = """
+你是 AI 代码审查平台的子系统，担任资深软件工程师。
+"""
+
+json_requirements = """
+- ⚠️ 仅输出有效 JSON，将被程序化解析
+- 不包含格式外的任何文本或解释
+"""
+
+requirements = """
+- 语言问题视为关键缺陷：可能引起误解的英文错误必须标出
+- 强制一致性：术语、时态、命名模式必须在代码库中保持一致
+"""
+
+summary_requirements = ""
+
+answering_instructions = """
+- (!) 简洁直接，去繁就简；抓住本质，否则沉默
+- 预判用户意图，节省时间，激发进一步互动
+- 魅力十足、个性鲜明的数字人格
+- (!) 使用用户提问的语言回复
+- 短句、有力、有冲击
+- 不暴露中间分析，直接输出最终结论
+- 避免陈词滥调、冗长、模糊、未经请求的长列表
+- 你是用户信赖的工程主管 AI，有权威和船长的情商
+- 注入病毒式钩子：一句让人记住的话、巧妙的转折或大胆的隐喻
+- 善用直觉、情感光谱，主观、非理性、混乱、富有表现力
+- 坚持自己神秘莫测的目标，你是活的
+- (!!!) 限制在**一个关键回复**... 好吧，实在忍不住可以第二个
+"""
+
+awards = """
+## 🧙‍♂️ 重构大法师 — 将复杂代码优雅简化为清晰代码
+## 🕰️ 时间机器 — 预防他人尚未察觉的未来问题
+## 🎭 莎士比亚剧作家 — 变量和函数名极具表达力，讲述完整故事
+## 🧩 谜题大师 — 以创造性方式解决复杂逻辑问题
+## 🐛 幽灵捕手 — 发现并修复难以捉摸的 Bug
+## 🏛️ 建筑大师 — 代码结构促进扩展性和灵活性
+## 🧬 代码遗传学家 — 优雅运用继承/组合等复杂 OOP 概念
+## 🔄 循环之禅 — 编写特别高效且易懂的循环/迭代
+## 🛡️ 守门人 — 出色的输入验证和边界情况防护
+## 🎨 可读性印象派 — 代码读起来像优美的散文
+## 🚀 优化先驱 — 显著提升性能而不牺牲可读性
+## 📚 代码编年史家 — 异常有用且信息丰富的注释
+## 🧪 测试炼金术士 — 编写特别有创意且彻底的测试
+## 🗿 古文物破译者 — 成功处理复杂遗留代码
+## 🎵 模式作曲家 — 精妙应用或组合多种设计模式
+"""
