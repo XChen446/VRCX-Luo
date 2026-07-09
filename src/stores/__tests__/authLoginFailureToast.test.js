@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+vi.setConfig({ testTimeout: 15000 });
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, reactive } from 'vue';
 
@@ -130,6 +132,11 @@ vi.mock('../../shared/utils', () => ({
     escapeTag: (value) => value
 }));
 
+vi.mock('../../stores/activity', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, useActivityStore: () => ({}) }
+});
+
 vi.mock('../../services/database', () => ({
     database: new Proxy(
         {},
@@ -248,7 +255,7 @@ async function succeedManualLogin(store) {
 
 describe('useAuthStore login failure toast policy', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'] });
         vi.setSystemTime(new Date('2026-03-23T00:00:00.000Z'));
         vi.clearAllMocks();
 

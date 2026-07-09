@@ -196,7 +196,10 @@ const i18n = createI18n({
     messages: { en }
 });
 
-vi.mock('lucide-vue-next', () => new Proxy({}, { get: () => ({ template: '<span />' }) }));
+vi.mock('lucide-vue-next', () => {
+    const icon = { template: '<span />' };
+    return { Pencil: icon, User: icon, Clock: icon, ExternalLink: icon, LogIn: icon, Mail: icon, MessageSquare: icon, MousePointer: icon };
+});
 
 // Stub all complex UI components — render slots transparently
 const stubs = {

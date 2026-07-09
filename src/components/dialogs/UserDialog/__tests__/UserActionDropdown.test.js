@@ -26,7 +26,7 @@ vi.mock('../../../../stores', () => ({
     useTrackedNonFriendsStore: () => ({})
 }));
 vi.mock('../../../../stores/trackedNonFriends', () => ({
-    useTrackedNonFriendsStore: () => ({})
+    useTrackedNonFriendsStore: () => ({ isTracked: vi.fn().mockReturnValue(false) })
 }));
 
 vi.mock('../../../../composables/useInviteChecks', () => ({
@@ -60,7 +60,7 @@ vi.mock('../../../ui/tooltip', () => ({
 vi.mock('lucide-vue-next', () => {
     const iconMock = { template: '<i />' };
     const iconMap = {};
-    ['Check', 'CheckCircle', 'Clock', 'ExternalLink', 'Flag', 'LineChart', 'Mail', 'MessageCircle', 'MessageSquare', 'Mic', 'MoreHorizontal', 'MousePointer', 'Pencil', 'Plus', 'RefreshCw', 'Settings', 'Share2', 'Star', 'Trash2', 'User', 'VolumeX', 'X', 'XCircle'].forEach((name) => { iconMap[name] = iconMock; });
+    ['Check', 'CheckCircle', 'Clock', 'ExternalLink', 'Flag', 'LineChart', 'Mail', 'MessageCircle', 'MessageSquare', 'Mic', 'MoreHorizontal', 'MousePointer', 'Pencil', 'Plus', 'RefreshCw', 'Settings', 'Share2', 'Star', 'Trash2', 'User', 'UserPlus', 'VolumeX', 'X', 'XCircle'].forEach((name) => { iconMap[name] = iconMock; });
     return iconMap;
 });
 
