@@ -6,9 +6,10 @@ function transformKey(key) {
 
 class ConfigRepository {
     async init() {
-        await adapter.createTableRaw(
-            'CREATE TABLE IF NOT EXISTS configs (`key` TEXT PRIMARY KEY, `value` TEXT)'
-        );
+        await adapter.createTable('configs', [
+            { name: 'key', type: 'TEXT', constraints: 'PRIMARY KEY' },
+            { name: 'value', type: 'TEXT' }
+        ]);
     }
 
     async remove(key) {

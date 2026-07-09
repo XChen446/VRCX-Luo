@@ -485,10 +485,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      */
     async function copyTableData(oldPath, tableName) {
         // 读列信息（构造占位符用）
-        const colRows = await adapter.executeReadOnly(
-            oldPath,
-            `PRAGMA table_xinfo(\"${tableName}\")`
-        );
+        const colRows = await adapter.getTableColumns(tableName, oldPath);
         if (!colRows || colRows.length === 0) return;
 
         // 过滤掉隐藏列 (colRows[i][5] = hidden flag)
