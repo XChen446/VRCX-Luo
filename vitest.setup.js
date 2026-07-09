@@ -84,3 +84,8 @@ vi.mock('worker-timers', () => ({
 }));
 
 i18n.global.setLocaleMessage('en', en);
+
+// Mock sendInviteColumns to break circular dep: sendInviteColumns → @/plugins → components → DisplayName → ...
+vi.mock('@/components/dialogs/InviteDialog/sendInviteColumns.jsx', () => ({
+    createColumns: () => []
+}));

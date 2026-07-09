@@ -25,7 +25,7 @@ import {
     formatDateFilter,
     openExternalLink
 } from '../../shared/utils';
-import { i18n } from '../../plugins';
+import { i18n } from '../../plugins/i18n';
 import { useFriendStore, useInstanceStore, useUiStore, useUserStore } from '../../stores';
 import { lookupUser } from '../../coordinators/userCoordinator';
 import { showWorldDialog } from '../../coordinators/worldCoordinator';

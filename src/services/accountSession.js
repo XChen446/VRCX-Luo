@@ -13,7 +13,7 @@
  */
 
 import { reactive } from 'vue';
-import { parseLocation } from '../shared/utils';
+import { parseLocation } from '../shared/utils/location.js';
 import { AppDebug } from './appConfig';
 import { adapter } from './database/adapter/index.js';
 import webApiService from './webapi.js';

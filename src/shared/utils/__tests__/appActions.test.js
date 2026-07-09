@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     },
     i18n: {
         global: {
-            t: vi.fn(() => 'copy failed')
+            t: vi.fn((key) => key)
         }
     }
 }));
@@ -100,7 +100,7 @@ describe('appActions utils', () => {
         copyToClipboard('hello');
         await flushPromises();
         await flushPromises();
-        expect(mocks.toast.error).toHaveBeenCalledWith('copy failed');
+        expect(mocks.toast.error).toHaveBeenCalledWith('message.copy_failed');
     });
 
     test('openExternalLink returns early when direct access parse succeeds', async () => {
@@ -134,7 +134,7 @@ describe('appActions utils', () => {
     test('openDiscordProfile validates empty discord id', () => {
         openDiscordProfile('');
         expect(mocks.toast.error).toHaveBeenCalledWith(
-            'No Discord ID provided!'
+            'message.discord_profile.no_id'
         );
     });
 
@@ -143,7 +143,7 @@ describe('appActions utils', () => {
         openDiscordProfile('123');
         await flushPromises();
         expect(mocks.toast.error).toHaveBeenCalledWith(
-            'Failed to open Discord profile!'
+            'message.discord_profile.open_failed'
         );
     });
 

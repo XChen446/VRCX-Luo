@@ -2,7 +2,7 @@ import { ArrowUpDown } from 'lucide-vue-next';
 
 import { Button } from '../../ui/button';
 import UserIdentityInline from '../../UserIdentityInline.vue';
-import { i18n } from '../../../plugins';
+import { i18n } from '../../../plugins/i18n';
 import { formatDateFilter } from '../../../shared/utils';
 
 const { t } = i18n.global;

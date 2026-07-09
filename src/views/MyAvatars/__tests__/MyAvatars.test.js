@@ -107,6 +107,7 @@ vi.mock('../../../api', () => ({
 vi.mock('../../../services/database', () => ({
     database: {
         getAllAvatarTags: (...args) => mocks.getAllAvatarTags(...args),
+        getAllAvatarTimeSpent: vi.fn().mockResolvedValue(new Map()),
         getAvatarTimeSpent: (...args) => mocks.getAvatarTimeSpent(...args),
         addAvatarTag: vi.fn(),
         removeAvatarTag: vi.fn(),

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     friendsListSearch: null,
     getAllUserStats: vi.fn(),
     getAllUserMutualCount: vi.fn(),
+    getAllUserMutualOptedOut: vi.fn(),
     confirmDeleteFriend: vi.fn(),
     handleFriendDelete: vi.fn(),
     showUserDialog: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     setPageIndex: vi.fn(),
     setSorting: vi.fn(),
     toggleBulkColumnVisibility: vi.fn(),
+    fetchMutualGraph: vi.fn(),
     pagination: null,
     sorting: null
 }));
@@ -70,7 +72,8 @@ vi.mock('../../../stores', () => ({
         friends: mocks.friends,
         allFavoriteFriendIds: mocks.allFavoriteFriendIds,
         getAllUserStats: mocks.getAllUserStats,
-        getAllUserMutualCount: mocks.getAllUserMutualCount
+        getAllUserMutualCount: mocks.getAllUserMutualCount,
+        getAllUserMutualOptedOut: mocks.getAllUserMutualOptedOut
     }),
     useModalStore: () => ({
         confirm: (...args) => mocks.modalConfirm(...args),
@@ -88,6 +91,11 @@ vi.mock('../../../stores', () => ({
     }),
     useVrcxStore: () => ({
         maxTableSize: 100
+    }),
+    useChartsStore: () => ({
+        mutualGraphStatus: { value: 'idle' },
+        isMutualGraphOutdated: true,
+        fetchMutualGraph: (...args) => mocks.fetchMutualGraph(...args)
     })
 }));
 
@@ -235,9 +243,13 @@ vi.mock('@/components/ui/tooltip', () => ({
     TooltipWrapper: { template: '<div><slot /></div>' }
 }));
 
-vi.mock('lucide-vue-next', () => ({
-    Star: { template: '<span />' }
-}));
+vi.mock('lucide-vue-next', () => {
+    const template = '<span />';
+    return {
+        Loader2: { template },
+        Star: { template }
+    };
+});
 
 import FriendList from '../FriendList.vue';
 
@@ -406,7 +418,7 @@ describe('FriendList.vue', () => {
             'view.friend_list.load_mutual_friends'
         );
 
-        expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'charts' });
+        expect(mocks.fetchMutualGraph).toHaveBeenCalled();
     });
 
     test('loads missing user profiles and shows completion toast', async () => {

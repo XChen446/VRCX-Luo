@@ -107,12 +107,11 @@ vi.mock('@/components/ui/checkbox', () => ({
     }
 }));
 
-vi.mock('lucide-vue-next', () => ({
-    AlertTriangle: { template: '<i />' },
-    Image: { template: '<i />' },
-    Lock: { template: '<i />' },
-    MoreHorizontal: { template: '<i />' }
-}));
+vi.mock('lucide-vue-next', () => {
+    const iconMap = {};
+    ['AlertTriangle', 'ExternalLink', 'Flag', 'Image', 'Lock', 'MoreHorizontal', 'Pencil', 'User'].forEach((name) => { iconMap[name] = { template: '<i />' }; });
+    return iconMap;
+});
 
 vi.mock('../../../../stores', () => ({
     useFavoriteStore: () => ({
@@ -123,6 +122,9 @@ vi.mock('../../../../stores', () => ({
     }),
     useInstanceStore: () => ({
         createNewInstance: (...args) => mocks.createNewInstance(...args)
+    }),
+    useLocationStore: () => ({
+        lastLocation: 'wrld_00000000-0000-0000-0000-000000000000::~region(us)'
     })
 }));
 

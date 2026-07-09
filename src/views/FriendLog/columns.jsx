@@ -10,7 +10,7 @@ import { ArrowRight, ArrowUpDown, Trash2, X } from 'lucide-vue-next';
 import { storeToRefs } from 'pinia';
 
 import { formatDateFilter } from '../../shared/utils';
-import { i18n } from '../../plugins';
+import { i18n } from '../../plugins/i18n';
 import { useFriendStore, useUiStore, useUserStore } from '../../stores';
 import { showUserDialog } from '../../coordinators/userCoordinator';
 
