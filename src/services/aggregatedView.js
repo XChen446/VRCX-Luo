@@ -2,8 +2,8 @@
  * aggregatedView – utilities for building the merged cross-account view.
  *
  * Provides:
- *  - mergeFriends(sessions, primaryFriends)  →  Map of merged friend ctx objects
- *  - lookupAggregatedFeed(prefixes, filters, vipList, limit)  →  merged feed rows
+ *  - mergeFriends(primarySortedFriends)  →  Map of merged friend ctx objects
+ *  - lookupAggregatedFeed(prefixes, filters, limit)  →  merged feed rows
  */
 
 import { accountHub } from './accountHub.js';
@@ -130,7 +130,7 @@ function parseDbRow(dbRow, prefix) {
 
 /**
  * Query the merged feed from all active account prefixes.
- * Uses database.lookupFeedDatabase per prefix — no duplicated UNION ALL SQL.
+ * Uses database.lookupFeedDatabase per prefix — no duplicate UNION ALL SQL.
  * @param {string[]} prefixes  DB table prefixes for all accounts
  * @param {string[]} filters   Feed type filters ([], ['GPS'], ['Online','Offline'], ...)
  * @param {number}   [limit=500]
