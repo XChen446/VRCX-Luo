@@ -17,6 +17,7 @@ report_template_gitlab_mr_inline_issue = """
 
 report_template_md = """
 <h2>{{ HTML_TEXT_ICON }}代码审查完成</h2>
+
 {% if report.summary -%}{{ report.summary }}{%- endif %}
 {% if report.total_issues > 0 -%}**⚠️ 发现 {{ report.total_issues }} 个问题**，涉及 {{ report.number_of_processed_files }} 个文件
 {%- else -%}**✅ 未发现明显问题**，审查了 {{ report.number_of_processed_files }} 个文件
