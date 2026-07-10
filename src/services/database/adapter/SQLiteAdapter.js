@@ -1,4 +1,5 @@
 import sqliteService from '../../sqlite.js';
+import { EngineAdapter } from './EngineAdapter.js';
 
 /**
  * SQLite dialect adapter.
@@ -11,7 +12,7 @@ import sqliteService from '../../sqlite.js';
  * Business logic modules (feed.js, gameLog.js, etc.) call these methods with
  * structured parameters and never construct SQL strings directly.
  */
-class SQLiteAdapter {
+class SQLiteAdapter extends EngineAdapter {
     /** Execute raw SQL with row callback. For complex queries (UNION ALL, subqueries). */
     execute(callback, sql, args) {
         return sqliteService.execute(callback, sql, args);
@@ -29,7 +30,11 @@ class SQLiteAdapter {
 
     /** @private Map 'ignore'|'replace' to OR IGNORE|OR REPLACE clause. */
     _insertClause(conflict) {
-        return conflict === 'ignore' ? 'OR IGNORE' : conflict === 'replace' ? 'OR REPLACE' : '';
+        return conflict === 'ignore'
+            ? 'OR IGNORE'
+            : conflict === 'replace'
+              ? 'OR REPLACE'
+              : '';
     }
 
     /**
@@ -64,10 +69,16 @@ class SQLiteAdapter {
         const columns = Object.keys(rows[0]);
         const params = {};
         const values = rows.map((row, i) => {
-            return '(' + columns.map((col) => {
-                params[`@${col}_${i}`] = row[col];
-                return `@${col}_${i}`;
-            }).join(', ') + ')';
+            return (
+                '(' +
+                columns
+                    .map((col) => {
+                        params[`@${col}_${i}`] = row[col];
+                        return `@${col}_${i}`;
+                    })
+                    .join(', ') +
+                ')'
+            );
         });
         return sqliteService.executeNonQuery(
             `INSERT ${clause} INTO ${table} (${columns.join(', ')}) VALUES ${values.join(', ')}`,
@@ -127,7 +138,9 @@ class SQLiteAdapter {
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         let result = null;
         await sqliteService.execute(
-            (row) => { result = row; },
+            (row) => {
+                result = row;
+            },
             `SELECT ${colStr} FROM ${table} WHERE ${clauses.join(' AND ')} LIMIT 1`,
             params
         );
@@ -186,7 +199,15 @@ class SQLiteAdapter {
      * @param {object} [options] - { order, limit }
      * @returns {Array<Array>} array of row arrays
      */
-    async selectWhereIn(table, columns, inColumn, inValues, extraWhere, extraParams, options = {}) {
+    async selectWhereIn(
+        table,
+        columns,
+        inColumn,
+        inValues,
+        extraWhere,
+        extraParams,
+        options = {}
+    ) {
         if (!inValues || inValues.length === 0) return [];
         const { order, limit } = options;
         const params = { ...(extraParams || {}) };
@@ -250,7 +271,9 @@ class SQLiteAdapter {
         });
         let result = 0;
         await sqliteService.execute(
-            (row) => { result = row[0]; },
+            (row) => {
+                result = row[0];
+            },
             `SELECT COUNT(*) FROM ${table} WHERE ${clauses.join(' AND ')}`,
             params
         );
@@ -261,7 +284,9 @@ class SQLiteAdapter {
     async countWhere(table, whereClause, params) {
         let result = 0;
         await sqliteService.execute(
-            (row) => { result = row[0]; },
+            (row) => {
+                result = row[0];
+            },
             `SELECT COUNT(*) FROM ${table}${whereClause ? ` WHERE ${whereClause}` : ''}`,
             params
         );
@@ -470,32 +495,84 @@ class SQLiteAdapter {
      * @param {string} prefix - user table prefix
      */
     async initUserSchema(prefix) {
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_status')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')}_user_created_idx ON ${this.userTable(prefix, 'feed_online_offline')} (user_id, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT '', is_self INTEGER NOT NULL DEFAULT 0, source_last_created_at TEXT NOT NULL DEFAULT '', pending_session_start_at INTEGER, cached_range_days INTEGER NOT NULL DEFAULT 0)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL, is_open_tail INTEGER NOT NULL DEFAULT 0, source_revision TEXT NOT NULL DEFAULT '')`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, start_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, end_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id TEXT NOT NULL, target_user_id TEXT NOT NULL DEFAULT '', range_days INTEGER NOT NULL, view_kind TEXT NOT NULL, exclude_key TEXT NOT NULL DEFAULT '', bucket_version INTEGER NOT NULL DEFAULT 1, raw_buckets_json TEXT NOT NULL DEFAULT '[]', normalized_buckets_json TEXT NOT NULL DEFAULT '[]', built_from_cursor TEXT NOT NULL DEFAULT '', summary_json TEXT NOT NULL DEFAULT '{}', built_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')}_user_id_idx ON ${this.userTable(prefix, 'friend_log_history')} (user_id)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications')} (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications_v2')} (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'moderation')} (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'avatar_history')} (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notes')} (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends')} (friend_id TEXT PRIMARY KEY)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links_old')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends_old')} (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_meta')} (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'tracked_nonfriends')} (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`);
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_status')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')}_user_created_idx ON ${this.userTable(prefix, 'feed_online_offline')} (user_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT '', is_self INTEGER NOT NULL DEFAULT 0, source_last_created_at TEXT NOT NULL DEFAULT '', pending_session_start_at INTEGER, cached_range_days INTEGER NOT NULL DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL, is_open_tail INTEGER NOT NULL DEFAULT 0, source_revision TEXT NOT NULL DEFAULT '')`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, start_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, end_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id TEXT NOT NULL, target_user_id TEXT NOT NULL DEFAULT '', range_days INTEGER NOT NULL, view_kind TEXT NOT NULL, exclude_key TEXT NOT NULL DEFAULT '', bucket_version INTEGER NOT NULL DEFAULT 1, raw_buckets_json TEXT NOT NULL DEFAULT '[]', normalized_buckets_json TEXT NOT NULL DEFAULT '[]', built_from_cursor TEXT NOT NULL DEFAULT '', summary_json TEXT NOT NULL DEFAULT '{}', built_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')}_user_id_idx ON ${this.userTable(prefix, 'friend_log_history')} (user_id)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications')} (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications_v2')} (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'moderation')} (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'avatar_history')} (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notes')} (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends')} (friend_id TEXT PRIMARY KEY)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links_old')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends_old')} (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_meta')} (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'tracked_nonfriends')} (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`
+        );
     }
 
     /**
@@ -503,27 +580,69 @@ class SQLiteAdapter {
      * Called once during app startup (initTables).
      */
     async initGlobalSchema() {
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT, UNIQUE(created_at, location))`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS gamelog_location_created_at_idx ON gamelog_location (created_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_location_world_created ON gamelog_location (world_id, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER, UNIQUE(created_at, type, display_name))`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_location ON gamelog_join_leave (location)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_user_created ON gamelog_join_leave (user_id, created_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_display_created ON gamelog_join_leave (display_name, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_portal_spawn (id INTEGER PRIMARY KEY, created_at TEXT, display_name TEXT, location TEXT, user_id TEXT, instance_id TEXT, world_name TEXT, UNIQUE(created_at, display_name))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_video_play (id INTEGER PRIMARY KEY, created_at TEXT, video_url TEXT, video_name TEXT, video_id TEXT, location TEXT, display_name TEXT, user_id TEXT, UNIQUE(created_at, video_url))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_resource_load (id INTEGER PRIMARY KEY, created_at TEXT, resource_url TEXT, resource_type TEXT, location TEXT, UNIQUE(created_at, resource_url))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_event (id INTEGER PRIMARY KEY, created_at TEXT, data TEXT, UNIQUE(created_at, data))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_external (id INTEGER PRIMARY KEY, created_at TEXT, message TEXT, display_name TEXT, user_id TEXT, location TEXT, UNIQUE(created_at, message))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS cache_avatar (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS cache_world (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_avatar (id INTEGER PRIMARY KEY, created_at TEXT, avatar_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_friend (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS world_memos (world_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS avatar_memos (avatar_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`);
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT, UNIQUE(created_at, location))`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS gamelog_location_created_at_idx ON gamelog_location (created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_location_world_created ON gamelog_location (world_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER, UNIQUE(created_at, type, display_name))`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_location ON gamelog_join_leave (location)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_user_created ON gamelog_join_leave (user_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_display_created ON gamelog_join_leave (display_name, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_portal_spawn (id INTEGER PRIMARY KEY, created_at TEXT, display_name TEXT, location TEXT, user_id TEXT, instance_id TEXT, world_name TEXT, UNIQUE(created_at, display_name))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_video_play (id INTEGER PRIMARY KEY, created_at TEXT, video_url TEXT, video_name TEXT, video_id TEXT, location TEXT, display_name TEXT, user_id TEXT, UNIQUE(created_at, video_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_resource_load (id INTEGER PRIMARY KEY, created_at TEXT, resource_url TEXT, resource_type TEXT, location TEXT, UNIQUE(created_at, resource_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_event (id INTEGER PRIMARY KEY, created_at TEXT, data TEXT, UNIQUE(created_at, data))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_external (id INTEGER PRIMARY KEY, created_at TEXT, message TEXT, display_name TEXT, user_id TEXT, location TEXT, UNIQUE(created_at, message))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_avatar (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_world (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_avatar (id INTEGER PRIMARY KEY, created_at TEXT, avatar_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_friend (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS world_memos (world_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_memos (avatar_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`
+        );
     }
 
     /** BEGIN transaction. */
