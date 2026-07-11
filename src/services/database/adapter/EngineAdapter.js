@@ -6,11 +6,32 @@
  * `daysAgoISO()` has a default JS-based implementation and may be overridden.
  */
 class EngineAdapter {
+    /** @type {string|null} */
+    _prefixOverride = null;
+
     constructor() {
         if (new.target === EngineAdapter) {
             throw new TypeError(
                 'EngineAdapter is abstract — instantiate a subclass'
             );
+        }
+    }
+
+    /**
+     * Execute an async function with a temporary prefix override
+     * for userTable(). Nested calls are supported.
+     * @param {string} prefix
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     * @template T
+     */
+    async withPrefix(prefix, fn) {
+        const prev = this._prefixOverride;
+        this._prefixOverride = prefix;
+        try {
+            return await fn();
+        } finally {
+            this._prefixOverride = prev;
         }
     }
 

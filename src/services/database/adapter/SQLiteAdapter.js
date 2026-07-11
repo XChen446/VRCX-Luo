@@ -444,20 +444,6 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
-     * Resolve user-specific table name for the current engine.
-     *
-     * SQLite/MySQL:  prefix_name
-     * PostgreSQL:    account_prefix.name
-     *
-     * @param {string} prefix - user prefix (e.g. "usr123")
-     * @param {string} name   - table base name (e.g. "feed_gps")
-     * @returns {string} engine-specific full table name
-     */
-    userTable(prefix, name) {
-        return `${prefix}_${name}`;
-    }
-
-    /**
      * INSERT with partial ON CONFLICT UPDATE.
      *
      * Writes insertData on fresh row; on conflict only updates the columns
@@ -484,6 +470,20 @@ class SQLiteAdapter extends EngineAdapter {
         });
         const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON CONFLICT(${conflictColumn}) DO UPDATE SET ${updateClauses.join(', ')}`;
         return sqliteService.executeNonQuery(sql, params);
+    }
+
+    /**
+     * Resolve user-specific table name.
+     * SQLite/MySQL:  prefix_name
+     * PgSQL:         account_prefix.name
+     * Respects _prefixOverride (set by withPrefix) for cross-account queries.
+     * @param {string} prefix
+     * @param {string} name
+     * @returns {string}
+     */
+    userTable(prefix, name) {
+        const p = this._prefixOverride ?? prefix;
+        return `${p}_${name}`;
     }
 
     /**
