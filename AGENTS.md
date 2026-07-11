@@ -13,7 +13,7 @@
 ## Dev Commands (run in order)
 
 - `npm run dev` — dev server at **localhost:9000**
-- `npm run format` — auto-fix formatting via oxfmt
+- `npm run format` — auto-fix formatting via oxfmt (⚠️ WARNING: only run when you intend to format the ENTIRE codebase. It touches all 1000+ files. Prefer editing with correct formatting manually, or target specific files only.)
 - `npm run format:check && npm run lint && npm run typecheck:js && npm test` — full check pipeline
 - `npm run prod` — build frontend (output: `build/html/`)
 - `npm run build-electron` — package Electron (needs .NET 9 runtime)
