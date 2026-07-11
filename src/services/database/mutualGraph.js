@@ -10,17 +10,22 @@ const mutualGraph = {
         }
         const friendTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends')}`;
         const linkTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links')}`;
-        await adapter.execute((dbRow) => {
+        const friendRows = await adapter.select(friendTable, ['friend_id']);
+        for (const dbRow of friendRows) {
             const friendId = dbRow[0];
             if (friendId && !snapshot.has(friendId)) {
                 snapshot.set(friendId, []);
             }
-        }, `SELECT friend_id FROM ${friendTable}`);
-        await adapter.execute((dbRow) => {
+        }
+        const linkRows = await adapter.select(linkTable, [
+            'friend_id',
+            'mutual_id'
+        ]);
+        for (const dbRow of linkRows) {
             const friendId = dbRow[0];
             const mutualId = dbRow[1];
             if (!friendId || !mutualId) {
-                return;
+                continue;
             }
             let list = snapshot.get(friendId);
             if (!list) {
@@ -28,7 +33,7 @@ const mutualGraph = {
                 snapshot.set(friendId, list);
             }
             list.push(mutualId);
-        }, `SELECT friend_id, mutual_id FROM ${linkTable}`);
+        }
         return snapshot;
     },
 
@@ -118,13 +123,18 @@ const mutualGraph = {
             return mutualCountMap;
         }
         const linkTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links')}`;
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.selectGroupBy(linkTable, {
+            columns: ['mutual_id'],
+            aggregates: [{ expr: 'COUNT(*)', alias: 'cnt' }],
+            groupBy: ['mutual_id']
+        });
+        for (const dbRow of rows) {
             const mutualId = dbRow[0];
             const count = dbRow[1];
             if (mutualId) {
                 mutualCountMap.set(mutualId, count);
             }
-        }, `SELECT mutual_id, COUNT(*) FROM ${linkTable} GROUP BY mutual_id`);
+        }
         return mutualCountMap;
     },
 
@@ -134,11 +144,12 @@ const mutualGraph = {
             return snapshot;
         }
         const oldTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links_old')}`;
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.select(oldTable, ['friend_id', 'mutual_id']);
+        for (const dbRow of rows) {
             const friendId = dbRow[0];
             const mutualId = dbRow[1];
             if (!friendId || !mutualId) {
-                return;
+                continue;
             }
             let list = snapshot.get(friendId);
             if (!list) {
@@ -146,7 +157,7 @@ const mutualGraph = {
                 snapshot.set(friendId, list);
             }
             list.push(mutualId);
-        }, `SELECT friend_id, mutual_id FROM ${oldTable}`);
+        }
         return snapshot;
     },
 
@@ -156,15 +167,16 @@ const mutualGraph = {
             return results;
         }
         const oldTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links_old')}`;
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.select(oldTable, ['mutual_id', 'date'], {
+            friend_id: friendId
+        });
+        for (const dbRow of rows) {
             const mutualId = dbRow[0];
             const date = dbRow[1];
             if (mutualId) {
                 results.push({ id: mutualId, date: date || null });
             }
-        }, `SELECT mutual_id, date FROM ${oldTable} WHERE friend_id = @friendId`,
-            { '@friendId': friendId }
-        );
+        }
         return results;
     },
 
@@ -189,7 +201,11 @@ const mutualGraph = {
             }
             for (const mutual of collection) {
                 if (!mutual) continue;
-                rows.push({ friend_id: friendId, mutual_id: mutual, date: now });
+                rows.push({
+                    friend_id: friendId,
+                    mutual_id: mutual,
+                    date: now
+                });
             }
         });
         if (rows.length === 0) return;
@@ -216,10 +232,14 @@ const mutualGraph = {
             return;
         }
         const friendsOldTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends_old')}`;
-        await adapter.insert(friendsOldTable, {
-            friend_id: friendId,
-            last_updated: new Date().toISOString()
-        }, 'replace');
+        await adapter.insert(
+            friendsOldTable,
+            {
+                friend_id: friendId,
+                last_updated: new Date().toISOString()
+            },
+            'replace'
+        );
     },
 
     async bulkUpdateFriendFetchTimesInOld(friendIds) {
@@ -242,24 +262,27 @@ const mutualGraph = {
             return null;
         }
         const friendsOldTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends_old')}`;
-        let result = null;
-        await adapter.execute((dbRow) => {
-            result = dbRow[0] || null;
-        }, `SELECT last_updated FROM ${friendsOldTable} WHERE friend_id = @friendId`,
-            { '@friendId': friendId }
+        const dbRow = await adapter.selectOne(
+            friendsOldTable,
+            ['last_updated'],
+            { friend_id: friendId }
         );
-        return result;
+        return dbRow ? dbRow[0] || null : null;
     },
 
     async upsertMutualGraphMeta(friendId, { lastFetchedAt, optedOut }) {
         if (!dbVars.userPrefix || !friendId) {
             return;
         }
-        await adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'mutual_graph_meta')}`, {
-            friend_id: friendId,
-            last_fetched_at: lastFetchedAt || new Date().toISOString(),
-            opted_out: optedOut ? 1 : 0
-        }, 'replace');
+        await adapter.insert(
+            `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_meta')}`,
+            {
+                friend_id: friendId,
+                last_fetched_at: lastFetchedAt || new Date().toISOString(),
+                opted_out: optedOut ? 1 : 0
+            },
+            'replace'
+        );
     },
 
     async bulkUpsertMutualGraphMeta(entries) {
@@ -287,7 +310,12 @@ const mutualGraph = {
             return metaMap;
         }
         const metaTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_meta')}`;
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.select(metaTable, [
+            'friend_id',
+            'last_fetched_at',
+            'opted_out'
+        ]);
+        for (const dbRow of rows) {
             const friendId = dbRow[0];
             if (friendId) {
                 metaMap.set(friendId, {
@@ -295,7 +323,7 @@ const mutualGraph = {
                     optedOut: dbRow[2] === 1
                 });
             }
-        }, `SELECT friend_id, last_fetched_at, opted_out FROM ${metaTable}`);
+        }
         return metaMap;
     }
 };

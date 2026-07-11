@@ -114,6 +114,30 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * UNION ALL across multiple sources with optional outer ORDER BY + LIMIT.
+     * Each source: { table, columns, nulls?, where?, params?, order?, limit? }
+     * @param {object[]} sources
+     * @param {object}   [options] - { schema?, order?, limit? }
+     * @returns {Promise<Array<Array>>}
+     * @abstract
+     */
+    selectUnion(_sources, _options) {
+        throw new Error('abstract');
+    }
+
+    /**
+     * SELECT with GROUP BY and aggregate expressions.
+     * @param {string} table
+     * @param {object} spec - { columns?, aggregates?, groupBy?, where?, params?, order?, limit?, having? }
+     *   aggregates: [{ expr: 'COUNT(*)', alias: 'cnt' }]
+     * @returns {Promise<Array<Array>>}
+     * @abstract
+     */
+    selectGroupBy(_table, _spec) {
+        throw new Error('abstract');
+    }
+
     // ── COUNT ────────────────────────────────────────────────────────
 
     /** @abstract */

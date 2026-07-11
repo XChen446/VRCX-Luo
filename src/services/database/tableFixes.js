@@ -16,8 +16,13 @@ const tableFixes = {
 
     async fixGameLogTraveling() {
         var travelingList = [];
-        await adapter.execute((dbRow) => {
-            var row = {
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            '*',
+            "type = 'OnPlayerLeft' AND location = 'traveling'"
+        );
+        for (const dbRow of rows) {
+            travelingList.unshift({
                 rowId: dbRow[0],
                 created_at: dbRow[1],
                 type: dbRow[2],
@@ -25,9 +30,8 @@ const tableFixes = {
                 location: dbRow[4],
                 userId: dbRow[5],
                 time: dbRow[6]
-            };
-            travelingList.unshift(row);
-        }, "SELECT * FROM gamelog_join_leave WHERE type = 'OnPlayerLeft' AND location = 'traveling'");
+            });
+        }
         travelingList.forEach(async (travelingEntry) => {
             await adapter.execute(
                 (dbRow) => {
@@ -69,14 +73,19 @@ const tableFixes = {
     async getBrokenLeaveEntries() {
         var instances = await this.getGameLogInstancesTime();
         var badEntries = [];
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['location', 'time', 'id'],
+            "type = 'OnPlayerLeft' AND time > 0"
+        );
+        for (const dbRow of rows) {
             if (typeof dbRow[1] === 'number') {
                 var ref = instances.get(dbRow[0]);
                 if (typeof ref !== 'undefined' && dbRow[1] > ref) {
                     badEntries.push(dbRow[2]);
                 }
             }
-        }, `SELECT location, time, id FROM gamelog_join_leave WHERE type = 'OnPlayerLeft' AND time > 0`);
+        }
         return badEntries;
     },
 
@@ -135,21 +144,26 @@ const tableFixes = {
     },
 
     async getBrokenGameLogDisplayNames() {
-        var badEntries = [];
-        await adapter.execute((dbRow) => {
-            badEntries.push({
-                id: dbRow[0],
-                displayName: dbRow[1]
-            });
-        }, "SELECT id, display_name FROM gamelog_join_leave WHERE display_name LIKE '% (%'");
-        return badEntries;
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['id', 'display_name'],
+            "display_name LIKE '% (%'"
+        );
+        return rows.map((dbRow) => ({
+            id: dbRow[0],
+            displayName: dbRow[1]
+        }));
     },
 
     async fixBrokenGameLogDisplayNames() {
         var badEntries = await this.getBrokenGameLogDisplayNames();
         badEntries.forEach((entry) => {
             var newDisplayName = entry.displayName.split(' (')[0];
-            adapter.update('gamelog_join_leave', { display_name: newDisplayName }, { id: entry.id });
+            adapter.update(
+                'gamelog_join_leave',
+                { display_name: newDisplayName },
+                { id: entry.id }
+            );
         });
     }
 };

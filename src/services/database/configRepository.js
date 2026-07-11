@@ -19,12 +19,10 @@ class ConfigRepository {
 
     async getString(key, defaultValue = null) {
         const _key = transformKey(key);
-        let value = undefined;
-        await adapter.execute(
-            (row) => { value = row[0]; },
-            'SELECT value FROM configs WHERE key = @key',
-            { '@key': _key }
-        );
+        const row = await adapter.selectOne('configs', ['value'], {
+            key: _key
+        });
+        const value = row ? row[0] : undefined;
         if (value === null || value === undefined || value === 'undefined') {
             return defaultValue;
         }
@@ -34,7 +32,11 @@ class ConfigRepository {
     async setString(key, value) {
         const _key = transformKey(key);
         const _value = String(value);
-        await adapter.insert('configs', { key: _key, value: _value }, 'replace');
+        await adapter.insert(
+            'configs',
+            { key: _key, value: _value },
+            'replace'
+        );
     }
 
     async getBool(key, defaultValue = null) {

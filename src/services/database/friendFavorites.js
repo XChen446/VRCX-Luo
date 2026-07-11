@@ -2,11 +2,15 @@ import { adapter } from './adapter/index.js';
 
 const friendFavorites = {
     addFriendToLocalFavorites(userId, groupName) {
-        adapter.insert('favorite_friend', {
-            user_id: userId,
-            group_name: groupName,
-            created_at: new Date().toJSON()
-        }, 'replace');
+        adapter.insert(
+            'favorite_friend',
+            {
+                user_id: userId,
+                group_name: groupName,
+                created_at: new Date().toJSON()
+            },
+            'replace'
+        );
     },
 
     removeFriendFromLocalFavorites(userId, groupName) {
@@ -17,7 +21,8 @@ const friendFavorites = {
     },
 
     renameFriendFavoriteGroup(newGroupName, groupName) {
-        adapter.update('favorite_friend',
+        adapter.update(
+            'favorite_friend',
             { group_name: newGroupName },
             { group_name: groupName }
         );
@@ -28,16 +33,12 @@ const friendFavorites = {
     },
 
     async getFriendFavorites() {
-        const data = [];
-        await adapter.execute((dbRow) => {
-            const row = {
-                created_at: dbRow[1],
-                userId: dbRow[2],
-                groupName: dbRow[3]
-            };
-            data.push(row);
-        }, 'SELECT * FROM favorite_friend');
-        return data;
+        const rows = await adapter.select('favorite_friend', '*');
+        return rows.map((dbRow) => ({
+            created_at: dbRow[1],
+            userId: dbRow[2],
+            groupName: dbRow[3]
+        }));
     }
 };
 

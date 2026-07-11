@@ -226,6 +226,85 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
+     * UNION ALL across multiple sources with optional outer ORDER BY + LIMIT.
+     *
+     * Each source defines a sub-SELECT. `columns` are real columns for that table;
+     * `nulls` are columns that should appear as NULL in this branch (for column alignment).
+     * All sources' params are merged together (they should use distinct or shared keys).
+     *
+     * @param {object[]} sources - Array of { table, columns, nulls?, where?, params?, order?, limit? }
+     * @param {object}   [options] - { schema?, order?, limit? }
+     *   schema: outer column list (default '*'), order: outer ORDER BY, limit: outer LIMIT
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectUnion(sources, options = {}) {
+        if (!sources || sources.length === 0) return [];
+        const { schema, order, limit } = options;
+        const allParams = {};
+        const parts = sources.map((source) => {
+            const { table, columns, nulls, where, params, order: srcOrder, limit: srcLimit } = source;
+            if (params) Object.assign(allParams, params);
+            let colStr = Array.isArray(columns) ? columns.join(', ') : columns || '*';
+            if (nulls && nulls.length > 0) {
+                colStr += ', ' + nulls.map((col) => `NULL AS ${col}`).join(', ');
+            }
+            let sql = `SELECT ${colStr} FROM ${table}`;
+            if (where) sql += ` WHERE ${where}`;
+            if (srcOrder) sql += ` ORDER BY ${srcOrder}`;
+            if (srcLimit) sql += ` LIMIT ${srcLimit}`;
+            return sql;
+        });
+        const outerSchema = schema ? (Array.isArray(schema) ? schema.join(', ') : schema) : '*';
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        if (order) finalSql += ` ORDER BY ${order}`;
+        if (limit) finalSql += ` LIMIT ${limit}`;
+        const rows = [];
+        await sqliteService.execute((row) => rows.push(row), finalSql, allParams);
+        return rows;
+    }
+
+    /**
+     * SELECT with GROUP BY and aggregate expressions.
+     *
+     * @param {string} table
+     * @param {object} spec
+     * @param {string[]|string} [spec.columns] - non-aggregate SELECT columns (GROUP BY columns)
+     * @param {Array<{expr:string, alias:string}>} [spec.aggregates] - aggregate expressions
+     * @param {string[]|string} [spec.groupBy] - GROUP BY columns
+     * @param {string} [spec.where] - raw WHERE clause
+     * @param {object} [spec.params] - named params for WHERE
+     * @param {string} [spec.order] - ORDER BY clause
+     * @param {number} [spec.limit] - LIMIT
+     * @param {string} [spec.having] - HAVING clause
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectGroupBy(table, spec) {
+        // 这一坨参数叠叠乐是 GROUP BY 查询本身所需的复杂度，不是设计失误。
+        // 总比让调用方手写 SELECT COUNT(*) FROM ... GROUP BY ... 然后每个引擎重写一遍好。
+        const { columns, aggregates, groupBy, where, params, order, limit, having } = spec;
+        const colParts = [];
+        if (columns) {
+            colParts.push(Array.isArray(columns) ? columns.join(', ') : columns);
+        }
+        if (aggregates) {
+            for (const agg of aggregates) {
+                colParts.push(`${agg.expr} AS ${agg.alias}`);
+            }
+        }
+        let sql = `SELECT ${colParts.join(', ')} FROM ${table}`;
+        if (where) sql += ` WHERE ${where}`;
+        if (groupBy) {
+            sql += ` GROUP BY ${Array.isArray(groupBy) ? groupBy.join(', ') : groupBy}`;
+        }
+        if (having) sql += ` HAVING ${having}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await sqliteService.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /**
      * Enumerate table names matching a LIKE pattern.
      * Wraps sqlite_schema query — dialect-specific, engine-dependent.
      * @param {string} likePattern - e.g. '%_feed_gps'

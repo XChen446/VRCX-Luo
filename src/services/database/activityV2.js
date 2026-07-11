@@ -58,198 +58,156 @@ const activityV2 = {
     },
 
     async getFriendPresenceSliceV2(userId, fromDateIso, toDateIso = '') {
-        const rows = [];
-        await adapter.execute(
-            (dbRow) => {
-                rows.push({ created_at: dbRow[0], type: dbRow[1] });
-            },
-            `
-                SELECT created_at, type
-                FROM (
-                    SELECT created_at, type, 0 AS sort_group
-                    FROM (
-                        SELECT created_at, type
-                        FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
-                        WHERE user_id = @userId
-                          AND (type = 'Online' OR type = 'Offline')
-                          AND created_at < @fromDateIso
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    )
-                    UNION ALL
-                    SELECT created_at, type, 1 AS sort_group
-                    FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
-                    WHERE user_id = @userId
-                      AND (type = 'Online' OR type = 'Offline')
-                      AND created_at >= @fromDateIso
-                      ${toDateIso ? 'AND created_at < @toDateIso' : ''}
-                )
-                ORDER BY created_at ASC, sort_group ASC
-            `,
-            {
-                '@userId': userId,
-                '@fromDateIso': fromDateIso,
-                '@toDateIso': toDateIso
-            }
+        const table = adapter.userTable(
+            dbVars.userPrefix,
+            'feed_online_offline'
         );
+        const cols = ['created_at', 'type'];
+        const typeClause = "(type = 'Online' OR type = 'Offline')";
 
-        if (toDateIso) {
-            await adapter.execute(
-                (dbRow) => {
-                    rows.push({ created_at: dbRow[0], type: dbRow[1] });
-                },
-                `SELECT created_at, type
-                 FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
-                 WHERE user_id = @userId
-                   AND (type = 'Online' OR type = 'Offline')
-                   AND created_at >= @toDateIso
-                 ORDER BY created_at ASC
-                 LIMIT 1`,
-                {
-                    '@userId': userId,
-                    '@toDateIso': toDateIso
-                }
-            );
-        }
-
-        return rows.sort((left, right) =>
-            left.created_at.localeCompare(right.created_at)
+        const before = await adapter.selectWhere(
+            table,
+            cols,
+            `user_id = @userId AND ${typeClause} AND created_at < @from`,
+            { '@userId': userId, '@from': fromDateIso },
+            { order: 'created_at DESC', limit: 1 }
         );
+        const during = await adapter.selectWhere(
+            table,
+            cols,
+            `user_id = @userId AND ${typeClause} AND created_at >= @from${toDateIso ? ' AND created_at < @to' : ''}`,
+            { '@userId': userId, '@from': fromDateIso, '@to': toDateIso },
+            { order: 'created_at ASC' }
+        );
+        const after = toDateIso
+            ? await adapter.selectWhere(
+                  table,
+                  cols,
+                  `user_id = @userId AND ${typeClause} AND created_at >= @to`,
+                  { '@userId': userId, '@to': toDateIso },
+                  { order: 'created_at ASC', limit: 1 }
+              )
+            : [];
+
+        return [...before, ...during, ...after].map((r) => ({
+            created_at: r[0],
+            type: r[1]
+        }));
     },
 
     async getFriendPresenceAfterV2(userId, afterCreatedAt) {
-        const rows = [];
-        await adapter.execute(
-            (dbRow) => {
-                rows.push({ created_at: dbRow[0], type: dbRow[1] });
-            },
-            `SELECT created_at, type
-             FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
-             WHERE user_id = @userId
-               AND (type = 'Online' OR type = 'Offline')
-               AND created_at > @afterCreatedAt
-             ORDER BY created_at`,
-            {
-                '@userId': userId,
-                '@afterCreatedAt': afterCreatedAt
-            }
+        const rows = await adapter.selectWhere(
+            adapter.userTable(dbVars.userPrefix, 'feed_online_offline'),
+            ['created_at', 'type'],
+            "user_id = @userId AND (type = 'Online' OR type = 'Offline') AND created_at > @afterCreatedAt",
+            { '@userId': userId, '@afterCreatedAt': afterCreatedAt },
+            { order: 'created_at' }
         );
-        return rows;
+        return rows.map((dbRow) => ({ created_at: dbRow[0], type: dbRow[1] }));
     },
 
     async getCurrentUserLocationSliceV2(fromDateIso, toDateIso = '') {
-        const rows = [];
-        await adapter.execute(
-            (dbRow) => {
-                rows.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
-            },
-            `
-                SELECT created_at, time
-                FROM (
-                    SELECT created_at, time, 0 AS sort_group
-                    FROM (
-                        SELECT created_at, time
-                        FROM gamelog_location
-                        WHERE created_at < @fromDateIso
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    )
-                    UNION ALL
-                    SELECT created_at, time, 1 AS sort_group
-                    FROM gamelog_location
-                    WHERE created_at >= @fromDateIso
-                      ${toDateIso ? 'AND created_at < @toDateIso' : ''}
-                    ${
-                        toDateIso
-                            ? `UNION ALL
-                    SELECT created_at, time, 2 AS sort_group
-                    FROM (
-                        SELECT created_at, time
-                        FROM gamelog_location
-                        WHERE created_at >= @toDateIso
-                        ORDER BY created_at
-                        LIMIT 1
-                    )`
-                            : ''
-                    }
-                )
-                ORDER BY created_at ASC, sort_group ASC
-            `,
-            {
-                '@fromDateIso': fromDateIso,
-                '@toDateIso': toDateIso
-            }
+        const cols = ['created_at', 'time'];
+
+        const before = await adapter.selectWhere(
+            'gamelog_location',
+            cols,
+            'created_at < @from',
+            { '@from': fromDateIso },
+            { order: 'created_at DESC', limit: 1 }
         );
-        return rows;
+        const during = await adapter.selectWhere(
+            'gamelog_location',
+            cols,
+            `created_at >= @from${toDateIso ? ' AND created_at < @to' : ''}`,
+            { '@from': fromDateIso, '@to': toDateIso },
+            { order: 'created_at ASC' }
+        );
+        const after = toDateIso
+            ? await adapter.selectWhere(
+                  'gamelog_location',
+                  cols,
+                  'created_at >= @to',
+                  { '@to': toDateIso },
+                  { order: 'created_at ASC', limit: 1 }
+              )
+            : [];
+
+        return [...before, ...during, ...after].map((r) => ({
+            created_at: r[0],
+            time: r[1] || 0
+        }));
     },
 
     async getCurrentUserLocationAfterV2(afterCreatedAt, inclusive = false) {
-        const rows = [];
         const operator = inclusive ? '>=' : '>';
-        await adapter.execute(
-            (dbRow) => {
-                rows.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
-            },
-            `SELECT created_at, time
-             FROM gamelog_location
-             WHERE created_at ${operator} @afterCreatedAt
-             ORDER BY created_at`,
-            { '@afterCreatedAt': afterCreatedAt }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'time'],
+            `created_at ${operator} @afterCreatedAt`,
+            { '@afterCreatedAt': afterCreatedAt },
+            { order: 'created_at' }
         );
-        return rows;
+        return rows.map((dbRow) => ({
+            created_at: dbRow[0],
+            time: dbRow[1] || 0
+        }));
     },
 
     async getActivitySyncStateV2(userId) {
-        let row = null;
-        await adapter.execute(
-            (dbRow) => {
-                row = {
-                    userId: dbRow[0],
-                    updatedAt: dbRow[1] || '',
-                    isSelf: Boolean(dbRow[2]),
-                    sourceLastCreatedAt: dbRow[3] || '',
-                    pendingSessionStartAt:
-                        typeof dbRow[4] === 'number' ? dbRow[4] : null,
-                    cachedRangeDays: dbRow[5] || 0
-                };
-            },
-            `SELECT user_id, updated_at, is_self, source_last_created_at, pending_session_start_at, cached_range_days
-             FROM ${syncStateTable()}
-             WHERE user_id = @userId`,
-            { '@userId': userId }
+        const dbRow = await adapter.selectOne(
+            syncStateTable(),
+            [
+                'user_id',
+                'updated_at',
+                'is_self',
+                'source_last_created_at',
+                'pending_session_start_at',
+                'cached_range_days'
+            ],
+            { user_id: userId }
         );
-        return row;
+        if (!dbRow) return null;
+        return {
+            userId: dbRow[0],
+            updatedAt: dbRow[1] || '',
+            isSelf: Boolean(dbRow[2]),
+            sourceLastCreatedAt: dbRow[3] || '',
+            pendingSessionStartAt:
+                typeof dbRow[4] === 'number' ? dbRow[4] : null,
+            cachedRangeDays: dbRow[5] || 0
+        };
     },
 
     async upsertActivitySyncStateV2(entry) {
-        await adapter.insert(syncStateTable(), {
-            user_id: entry.userId,
-            updated_at: entry.updatedAt || '',
-            is_self: entry.isSelf ? 1 : 0,
-            source_last_created_at: entry.sourceLastCreatedAt || '',
-            pending_session_start_at: entry.pendingSessionStartAt,
-            cached_range_days: entry.cachedRangeDays || 0
-        }, 'replace');
+        await adapter.insert(
+            syncStateTable(),
+            {
+                user_id: entry.userId,
+                updated_at: entry.updatedAt || '',
+                is_self: entry.isSelf ? 1 : 0,
+                source_last_created_at: entry.sourceLastCreatedAt || '',
+                pending_session_start_at: entry.pendingSessionStartAt,
+                cached_range_days: entry.cachedRangeDays || 0
+            },
+            'replace'
+        );
     },
 
     async getActivitySessionsV2(userId) {
-        const sessions = [];
-        await adapter.execute(
-            (dbRow) => {
-                sessions.push({
-                    start: dbRow[0],
-                    end: dbRow[1],
-                    isOpenTail: Boolean(dbRow[2]),
-                    sourceRevision: dbRow[3] || ''
-                });
-            },
-            `SELECT start_at, end_at, is_open_tail, source_revision
-             FROM ${sessionsTable()}
-             WHERE user_id = @userId
-             ORDER BY start_at`,
-            { '@userId': userId }
+        const rows = await adapter.selectWhere(
+            sessionsTable(),
+            ['start_at', 'end_at', 'is_open_tail', 'source_revision'],
+            'user_id = @userId',
+            { '@userId': userId },
+            { order: 'start_at' }
         );
-        return sessions;
+        return rows.map((dbRow) => ({
+            start: dbRow[0],
+            end: dbRow[1],
+            isOpenTail: Boolean(dbRow[2]),
+            sourceRevision: dbRow[3] || ''
+        }));
     },
 
     async replaceActivitySessionsV2(userId, sessions = []) {
@@ -296,53 +254,65 @@ const activityV2 = {
         viewKind,
         excludeKey = ''
     }) {
-        let row = null;
-        await adapter.execute(
-            (dbRow) => {
-                row = {
-                    ownerUserId: dbRow[0],
-                    targetUserId: dbRow[1],
-                    rangeDays: dbRow[2],
-                    viewKind: dbRow[3],
-                    excludeKey: dbRow[4] || '',
-                    bucketVersion: dbRow[5] || 1,
-                    builtFromCursor: dbRow[6] || '',
-                    rawBuckets: parseJson(dbRow[7], []),
-                    normalizedBuckets: parseJson(dbRow[8], []),
-                    summary: parseJson(dbRow[9], {}),
-                    builtAt: dbRow[10] || ''
-                };
-            },
-            `SELECT user_id, target_user_id, range_days, view_kind, exclude_key, bucket_version, built_from_cursor, raw_buckets_json, normalized_buckets_json, summary_json, built_at
-             FROM ${bucketCacheTable()}
-             WHERE user_id = @ownerUserId AND target_user_id = @targetUserId AND range_days = @rangeDays AND view_kind = @viewKind AND exclude_key = @excludeKey`,
+        const dbRow = await adapter.selectOne(
+            bucketCacheTable(),
+            [
+                'user_id',
+                'target_user_id',
+                'range_days',
+                'view_kind',
+                'exclude_key',
+                'bucket_version',
+                'built_from_cursor',
+                'raw_buckets_json',
+                'normalized_buckets_json',
+                'summary_json',
+                'built_at'
+            ],
             {
-                '@ownerUserId': ownerUserId,
-                '@targetUserId': targetUserId,
-                '@rangeDays': rangeDays,
-                '@viewKind': viewKind,
-                '@excludeKey': excludeKey
+                user_id: ownerUserId,
+                target_user_id: targetUserId,
+                range_days: rangeDays,
+                view_kind: viewKind,
+                exclude_key: excludeKey
             }
         );
-        return row;
+        if (!dbRow) return null;
+        return {
+            ownerUserId: dbRow[0],
+            targetUserId: dbRow[1],
+            rangeDays: dbRow[2],
+            viewKind: dbRow[3],
+            excludeKey: dbRow[4] || '',
+            bucketVersion: dbRow[5] || 1,
+            builtFromCursor: dbRow[6] || '',
+            rawBuckets: parseJson(dbRow[7], []),
+            normalizedBuckets: parseJson(dbRow[8], []),
+            summary: parseJson(dbRow[9], {}),
+            builtAt: dbRow[10] || ''
+        };
     },
 
     async upsertActivityBucketCacheV2(entry) {
-        await adapter.insert(bucketCacheTable(), {
-            user_id: entry.ownerUserId,
-            target_user_id: entry.targetUserId || '',
-            range_days: entry.rangeDays,
-            view_kind: entry.viewKind,
-            exclude_key: entry.excludeKey || '',
-            bucket_version: entry.bucketVersion || 1,
-            built_from_cursor: entry.builtFromCursor || '',
-            raw_buckets_json: JSON.stringify(entry.rawBuckets || []),
-            normalized_buckets_json: JSON.stringify(
-                entry.normalizedBuckets || []
-            ),
-            summary_json: JSON.stringify(entry.summary || {}),
-            built_at: entry.builtAt || ''
-        }, 'replace');
+        await adapter.insert(
+            bucketCacheTable(),
+            {
+                user_id: entry.ownerUserId,
+                target_user_id: entry.targetUserId || '',
+                range_days: entry.rangeDays,
+                view_kind: entry.viewKind,
+                exclude_key: entry.excludeKey || '',
+                bucket_version: entry.bucketVersion || 1,
+                built_from_cursor: entry.builtFromCursor || '',
+                raw_buckets_json: JSON.stringify(entry.rawBuckets || []),
+                normalized_buckets_json: JSON.stringify(
+                    entry.normalizedBuckets || []
+                ),
+                summary_json: JSON.stringify(entry.summary || {}),
+                built_at: entry.builtAt || ''
+            },
+            'replace'
+        );
     }
 };
 
