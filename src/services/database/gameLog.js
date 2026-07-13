@@ -288,260 +288,170 @@ const gameLog = {
     },
 
     async getLastVisit(worldId, currentWorldMatch) {
-        var count = currentWorldMatch ? 2 : 1;
-        var ref = {
-            created_at: '',
-            worldId: ''
-        };
-        await adapter.execute(
-            (row) => {
-                ref = {
-                    created_at: row[0],
-                    worldId: row[1]
-                };
-            },
-            `SELECT created_at, world_id FROM gamelog_location WHERE world_id = @worldId ORDER BY id DESC LIMIT @count`,
-            {
-                '@worldId': worldId,
-                '@count': count
-            }
+        const count = currentWorldMatch ? 2 : 1;
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'world_id'],
+            'world_id = @worldId',
+            { '@worldId': worldId },
+            { order: 'id DESC', limit: count }
         );
-        return ref;
+        if (rows.length === 0) return { created_at: '', worldId: '' };
+        return { created_at: rows[0][0], worldId: rows[0][1] };
     },
 
     async getVisitCount(worldId) {
-        var ref = {
-            visitCount: 0,
-            worldId: ''
-        };
-        await adapter.execute(
-            (row) => {
-                ref = {
-                    visitCount: row[0],
-                    worldId
-                };
-            },
-            `SELECT COUNT(DISTINCT location) FROM gamelog_location WHERE world_id = @worldId`,
-            {
-                '@worldId': worldId
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['COUNT(DISTINCT location)'],
+            'world_id = @worldId',
+            { '@worldId': worldId }
         );
-        return ref;
+        return { visitCount: rows.length > 0 ? rows[0][0] : 0, worldId };
     },
 
     async getTimeSpentInWorld(worldId) {
-        var ref = {
-            timeSpent: 0,
-            worldId
-        };
-        await adapter.execute(
-            (row) => {
-                if (typeof row[0] === 'number') {
-                    ref.timeSpent += row[0];
-                }
-            },
-            `SELECT time FROM gamelog_location WHERE world_id = @worldId`,
-            {
-                '@worldId': worldId
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['time'],
+            'world_id = @worldId',
+            { '@worldId': worldId }
         );
-        return ref;
+        let timeSpent = 0;
+        for (const row of rows) {
+            if (typeof row[0] === 'number') timeSpent += row[0];
+        }
+        return { timeSpent, worldId };
     },
 
     async getLastGroupVisit(groupId) {
-        var ref = {
-            created_at: ''
-        };
-        await adapter.execute(
-            (row) => {
-                ref = {
-                    created_at: row[0]
-                };
-            },
-            `SELECT created_at FROM gamelog_location WHERE location LIKE @groupId ORDER BY id DESC LIMIT 1`,
-            {
-                '@groupId': `%${groupId}%`
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at'],
+            'location LIKE @groupId',
+            { '@groupId': `%${groupId}%` },
+            { order: 'id DESC', limit: 1 }
         );
-        return ref;
+        return { created_at: rows.length > 0 ? rows[0][0] : '' };
     },
 
     async getPreviousInstancesByGroupId(groupId) {
-        const data = new Map();
-        await adapter.execute(
-            (dbRow) => {
-                let time = 0;
-                if (dbRow[2]) {
-                    time = dbRow[2];
-                }
-                var ref = data.get(dbRow[1]);
-                if (typeof ref !== 'undefined') {
-                    time += ref.time;
-                }
-                var row = {
-                    created_at: dbRow[0],
-                    location: dbRow[1],
-                    time,
-                    worldName: dbRow[3],
-                    groupName: dbRow[4]
-                };
-                data.set(row.location, row);
-            },
-            `SELECT created_at, location, time, world_name, group_name
-             FROM gamelog_location
-             WHERE location LIKE @groupId
-             ORDER BY id DESC`,
-            {
-                '@groupId': `%${groupId}%`
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'location', 'time', 'world_name', 'group_name'],
+            'location LIKE @groupId',
+            { '@groupId': `%${groupId}%` },
+            { order: 'id DESC' }
         );
+        const data = new Map();
+        for (const dbRow of rows) {
+            let time = 0;
+            if (dbRow[2]) time = dbRow[2];
+            const existing = data.get(dbRow[1]);
+            if (typeof existing !== 'undefined') time += existing.time;
+            data.set(dbRow[1], {
+                created_at: dbRow[0],
+                location: dbRow[1],
+                time,
+                worldName: dbRow[3],
+                groupName: dbRow[4]
+            });
+        }
         return data;
     },
 
     async getLastSeen(input, inCurrentWorld) {
         const count = inCurrentWorld ? 2 : 1;
-        let ref = {
-            created_at: '',
-            userId: ''
-        };
-        await adapter.execute(
-            (row) => {
-                if (row[1]) {
-                    ref = {
-                        created_at: row[0],
-                        userId: row[1]
-                    };
-                } else {
-                    ref = {
-                        created_at: row[0],
-                        userId: input.id
-                    };
-                }
-            },
-            `SELECT created_at, user_id FROM gamelog_join_leave WHERE user_id = @userId OR display_name = @displayName ORDER BY id DESC LIMIT @count`,
-            {
-                '@userId': input.id,
-                '@displayName': input.displayName,
-                '@count': count
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'user_id'],
+            'user_id = @userId OR display_name = @displayName',
+            { '@userId': input.id, '@displayName': input.displayName },
+            { order: 'id DESC', limit: count }
         );
-        return ref;
+        if (rows.length === 0) return { created_at: '', userId: '' };
+        return {
+            created_at: rows[0][0],
+            userId: rows[0][1] || input.id
+        };
     },
 
     async getLastJoinTimeForUserAtLocation(input, location) {
-        let joinTime = null;
-        await adapter.execute(
-            (row) => {
-                const ts = Date.parse(row[0]);
-                if (!isNaN(ts)) {
-                    joinTime = ts;
-                }
-            },
-            `SELECT created_at FROM gamelog_join_leave WHERE type = 'OnPlayerJoined' AND (user_id = @userId OR display_name = @displayName) AND location = @location ORDER BY id DESC LIMIT 1`,
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at'],
+            "type = 'OnPlayerJoined' AND (user_id = @userId OR display_name = @displayName) AND location = @location",
             {
                 '@userId': input.id,
                 '@displayName': input.displayName,
                 '@location': location
-            }
+            },
+            { order: 'id DESC', limit: 1 }
         );
-        return joinTime;
+        if (rows.length === 0) return null;
+        const ts = Date.parse(rows[0][0]);
+        return isNaN(ts) ? null : ts;
     },
 
     async getRecentlyMetUsers(currentUserId, limit = 8) {
-        const results = [];
-        await adapter.execute(
-            (row) => {
-                results.push({
-                    displayName: row[0],
-                    userId: row[1],
-                    lastSeen: row[2]
-                });
-            },
-            `SELECT display_name, user_id, MAX(created_at) AS last_seen
-             FROM gamelog_join_leave
-             WHERE (type = 'OnPlayerJoined' OR type = 'OnPlayerLeft')
-               AND user_id != @currentUserId
-               AND user_id IS NOT NULL
-               AND user_id != ''
-             GROUP BY user_id
-             ORDER BY MAX(id) DESC
-             LIMIT @limit`,
-            {
-                '@currentUserId': currentUserId,
-                '@limit': limit
-            }
-        );
-        return results;
+        const rows = await adapter.selectGroupBy('gamelog_join_leave', {
+            columns: ['display_name', 'user_id'],
+            aggregates: [{ expr: 'MAX(created_at)', alias: 'last_seen' }],
+            groupBy: ['user_id'],
+            where: "(type = 'OnPlayerJoined' OR type = 'OnPlayerLeft') AND user_id != @currentUserId AND user_id IS NOT NULL AND user_id != ''",
+            params: { '@currentUserId': currentUserId },
+            order: 'MAX(id) DESC',
+            limit
+        });
+        return rows.map((row) => ({
+            displayName: row[0],
+            userId: row[1],
+            lastSeen: row[2]
+        }));
     },
 
     async getRecentlyJoinedLocations(limit = 10) {
-        const results = [];
-        await adapter.execute(
-            (row) => {
-                results.push({
-                    worldId: row[0],
-                    worldName: row[1],
-                    location: row[2],
-                    lastVisited: row[3]
-                });
-            },
-            `SELECT world_id, world_name, location, MAX(created_at) AS last_visited
-             FROM gamelog_location
-             WHERE world_id IS NOT NULL AND world_id != ''
-             GROUP BY world_id
-             ORDER BY MAX(id) DESC
-             LIMIT @limit`,
-            { '@limit': limit }
-        );
-        return results;
+        const rows = await adapter.selectGroupBy('gamelog_location', {
+            columns: ['world_id', 'world_name', 'location'],
+            aggregates: [{ expr: 'MAX(created_at)', alias: 'last_visited' }],
+            groupBy: ['world_id'],
+            where: "world_id IS NOT NULL AND world_id != ''",
+            order: 'MAX(id) DESC',
+            limit
+        });
+        return rows.map((row) => ({
+            worldId: row[0],
+            worldName: row[1],
+            location: row[2],
+            lastVisited: row[3]
+        }));
     },
 
     async getJoinCount(input) {
-        var ref = {
-            joinCount: '',
-            userId: ''
-        };
-        await adapter.execute(
-            (row) => {
-                if (row[1]) {
-                    ref = {
-                        joinCount: row[0],
-                        userId: row[1]
-                    };
-                } else {
-                    ref = {
-                        joinCount: row[0],
-                        userId: input.id
-                    };
-                }
-            },
-            `SELECT COUNT(DISTINCT location) FROM gamelog_join_leave WHERE (type = 'OnPlayerJoined') AND (user_id = @userId OR display_name = @displayName)`,
-            {
-                '@userId': input.id,
-                '@displayName': input.displayName
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['COUNT(DISTINCT location)'],
+            "type = 'OnPlayerJoined' AND (user_id = @userId OR display_name = @displayName)",
+            { '@userId': input.id, '@displayName': input.displayName }
         );
-        return ref;
+        return {
+            joinCount: rows.length > 0 ? rows[0][0] : '',
+            userId: input.id
+        };
     },
 
     async getTimeSpent(input) {
-        var ref = {
-            timeSpent: 0,
-            userId: input.id
-        };
-        await adapter.execute(
-            (row) => {
-                if (typeof row[0] === 'number') {
-                    ref.timeSpent += row[0];
-                }
-            },
-            `SELECT time FROM gamelog_join_leave WHERE (type = 'OnPlayerLeft') AND (user_id = @userId OR display_name = @displayName)`,
-            {
-                '@userId': input.id,
-                '@displayName': input.displayName
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['time'],
+            "type = 'OnPlayerLeft' AND (user_id = @userId OR display_name = @displayName)",
+            { '@userId': input.id, '@displayName': input.displayName }
         );
-        return ref;
+        let timeSpent = 0;
+        for (const row of rows) {
+            if (typeof row[0] === 'number') timeSpent += row[0];
+        }
+        return { timeSpent, userId: input.id };
     },
 
     async getUserStats(input, inCurrentWorld) {
@@ -554,36 +464,28 @@ const gameLog = {
             userId: input.id,
             previousDisplayNames: new Map()
         };
-        await adapter.execute(
-            (row) => {
-                if (typeof row[2] === 'number') {
-                    ref.timeSpent += row[2];
-                }
-                i++;
-                if (i === 1 || (inCurrentWorld && i === 2)) {
-                    ref.lastSeen = row[0];
-                }
-                instances.add(row[3]);
-                if (input.displayName !== row[4]) {
-                    ref.previousDisplayNames.set(row[4], row[0]);
-                }
-            },
-            `SELECT created_at, user_id, time, location, display_name FROM gamelog_join_leave WHERE user_id = @userId OR display_name = @displayName ORDER BY id DESC`,
-            {
-                '@userId': input.id,
-                '@displayName': input.displayName
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'user_id', 'time', 'location', 'display_name'],
+            'user_id = @userId OR display_name = @displayName',
+            { '@userId': input.id, '@displayName': input.displayName },
+            { order: 'id DESC' }
         );
+        for (const row of rows) {
+            if (typeof row[2] === 'number') ref.timeSpent += row[2];
+            i++;
+            if (i === 1 || (inCurrentWorld && i === 2)) ref.lastSeen = row[0];
+            instances.add(row[3]);
+            if (input.displayName !== row[4])
+                ref.previousDisplayNames.set(row[4], row[0]);
+        }
         instances.delete('');
         ref.joinCount = instances.size;
         return ref;
     },
 
     async getAllUserStats(userIds, displayNames) {
-        if (!userIds.length && !displayNames.length) {
-            return [];
-        }
-        var data = [];
+        if (!userIds.length && !displayNames.length) return [];
         const args = {};
         const uidPlaceholders = [];
         userIds.forEach((userId, i) => {
@@ -595,47 +497,36 @@ const gameLog = {
             dnPlaceholders.push(`@dn_${i}`);
             args[`@dn_${i}`] = dn;
         });
-        var whereClauses = [];
+        const whereClauses = [];
         if (uidPlaceholders.length) {
-            whereClauses.push(`g.user_id IN (${uidPlaceholders.join(', ')})`);
+            whereClauses.push(`user_id IN (${uidPlaceholders.join(', ')})`);
         }
         if (dnPlaceholders.length) {
-            whereClauses.push(
-                `g.display_name IN (${dnPlaceholders.join(', ')})`
-            );
+            whereClauses.push(`display_name IN (${dnPlaceholders.join(', ')})`);
         }
 
-        await adapter.execute(
-            (dbRow) => {
-                var row = {
-                    lastSeen: dbRow[0],
-                    userId: dbRow[1],
-                    timeSpent: dbRow[2],
-                    joinCount: dbRow[3],
-                    displayName: dbRow[4]
-                };
-                data.push(row);
-            },
-            `SELECT
-                g.created_at,
-                g.user_id,
-                SUM(g.time) AS timeSpent,
-                COUNT(DISTINCT g.location) AS joinCount,
-                g.display_name,
-                MAX(g.id) AS max_id
-            FROM
-                gamelog_join_leave g
-            WHERE
-                ${whereClauses.join('\n                OR ')}
-            GROUP BY
-                g.user_id,
-                g.display_name
-            ORDER BY
-                g.user_id DESC
-            `,
-            args
-        );
-        return data;
+        // Standard SQL GROUP BY with dynamic IN lists
+        const rows = await adapter.selectGroupBy('gamelog_join_leave', {
+            columns: ['created_at', 'user_id', 'display_name'],
+            aggregates: [
+                { expr: 'SUM(time)', alias: 'timeSpent' },
+                { expr: 'COUNT(DISTINCT location)', alias: 'joinCount' },
+                { expr: 'MAX(id)', alias: 'max_id' }
+            ],
+            where: whereClauses.join(' OR '),
+            groupBy: ['user_id', 'display_name'],
+            order: 'user_id DESC',
+            params: args
+        });
+
+        return rows.map((dbRow) => ({
+            // Position: [created_at, user_id, display_name, timeSpent, joinCount, max_id]
+            lastSeen: dbRow[0],
+            userId: dbRow[1],
+            timeSpent: dbRow[3],
+            joinCount: dbRow[4],
+            displayName: dbRow[2]
+        }));
     },
 
     async getGameLogByLocation(instanceId, filters, vipList = []) {
@@ -1249,49 +1140,46 @@ const gameLog = {
     },
 
     async getLastDateGameLogDatabase() {
-        var gamelogDatabase = [];
-        var date = new Date().toJSON();
-        var dateOffset = new Date(Date.now() - 86400000).toJSON(); // 24 hours
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_location ORDER BY id DESC LIMIT 1');
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_join_leave ORDER BY id DESC LIMIT 1');
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_portal_spawn ORDER BY id DESC LIMIT 1');
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_event ORDER BY id DESC LIMIT 1');
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_video_play ORDER BY id DESC LIMIT 1');
-        await adapter.execute((dbRow) => {
-            gamelogDatabase.push(dbRow[0]);
-        }, 'SELECT created_at FROM gamelog_resource_load ORDER BY id DESC LIMIT 1');
-        if (gamelogDatabase.length > 0) {
-            gamelogDatabase.sort();
-            var newDate = gamelogDatabase[gamelogDatabase.length - 1];
+        const tables = [
+            'gamelog_location',
+            'gamelog_join_leave',
+            'gamelog_portal_spawn',
+            'gamelog_event',
+            'gamelog_video_play',
+            'gamelog_resource_load'
+        ];
+        const results = await Promise.all(
+            tables.map((t) =>
+                adapter.selectWhere(t, ['created_at'], null, null, {
+                    order: 'id DESC',
+                    limit: 1
+                })
+            )
+        );
+        const dates = results
+            .flatMap((rows) => rows.map((r) => r[0]))
+            .filter(Boolean);
+        if (dates.length > 0) {
+            dates.sort();
+            var date = new Date().toJSON();
+            var dateOffset = new Date(Date.now() - 86400000).toJSON();
+            var newDate = dates[dates.length - 1];
             if (newDate > dateOffset && newDate < date) {
-                date = newDate;
+                return newDate;
             }
         }
-        return date;
+        return new Date().toJSON();
     },
 
     async getGameLogWorldNameByWorldId(worldId) {
-        var worldName = '';
-        await adapter.execute(
-            (dbRow) => {
-                worldName = dbRow[0];
-            },
-            'SELECT world_name FROM gamelog_location WHERE world_id = @worldId ORDER BY id DESC LIMIT 1',
-            {
-                '@worldId': worldId
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['world_name'],
+            'world_id = @worldId',
+            { '@worldId': worldId },
+            { order: 'id DESC', limit: 1 }
         );
-        return worldName;
+        return rows.length > 0 ? rows[0][0] : '';
     },
 
     async getPreviousInstancesByUserId(input) {
@@ -1300,11 +1188,12 @@ const gameLog = {
         var currentGroup;
         var prevEvent;
 
+        // CTE + JOIN: portable standard SQL, no dialect functions.
+        // created_at_ts computed in JS (new Date) instead of adapter.sqlToUnixMs.
         await adapter.execute(
             (dbRow) => {
                 var [
                     created_at_iso,
-                    created_at_ts,
                     location,
                     time,
                     worldName,
@@ -1312,16 +1201,17 @@ const gameLog = {
                     eventId,
                     eventType
                 ] = dbRow;
+                var created_at_ts = new Date(created_at_iso).getTime();
 
                 if (
                     !currentGroup ||
                     currentGroup.location !== location ||
                     (created_at_ts - currentGroup.last_ts >
-                        groupingTimeTolerance && // groups multiple OnPlayerJoined and OnPlayerLeft together if they are within time tolerance limit
+                        groupingTimeTolerance &&
                         !(
                             prevEvent === 'OnPlayerJoined' &&
                             eventType === 'OnPlayerLeft'
-                        )) // allows OnPlayerLeft to connect with nearby OnPlayerJoined
+                        ))
                 ) {
                     currentGroup = {
                         created_at: created_at_iso,
@@ -1342,12 +1232,11 @@ const gameLog = {
 
                 prevEvent = eventType;
             },
-            `
-            WITH grouped_locations AS (
+            `WITH grouped_locations AS (
                 SELECT DISTINCT location, world_name, group_name
                 FROM gamelog_location
             )
-            SELECT gamelog_join_leave.created_at, ${adapter.sqlToUnixMs('gamelog_join_leave.created_at')} created_at_ts, gamelog_join_leave.location, gamelog_join_leave.time, grouped_locations.world_name, grouped_locations.group_name, gamelog_join_leave.id, gamelog_join_leave.type
+            SELECT gamelog_join_leave.created_at, gamelog_join_leave.location, gamelog_join_leave.time, grouped_locations.world_name, grouped_locations.group_name, gamelog_join_leave.id, gamelog_join_leave.type
             FROM gamelog_join_leave
             INNER JOIN grouped_locations ON gamelog_join_leave.location = grouped_locations.location
             WHERE user_id = @userId OR display_name = @displayName
@@ -1363,69 +1252,59 @@ const gameLog = {
 
     async getPreviousInstancesByWorldId(input) {
         var data = new Map();
-        await adapter.execute(
-            (dbRow) => {
-                var time = 0;
-                if (dbRow[2]) {
-                    time = dbRow[2];
-                }
-                var ref = data.get(dbRow[1]);
-                if (typeof ref !== 'undefined') {
-                    time += ref.time;
-                }
-                var row = {
-                    created_at: dbRow[0],
-                    location: dbRow[1],
-                    time,
-                    worldName: dbRow[3],
-                    groupName: dbRow[4]
-                };
-                data.set(row.location, row);
-            },
-            `SELECT created_at, location, time, world_name, group_name
-            FROM gamelog_location
-            WHERE world_id = @worldId
-            ORDER BY id DESC`,
-            {
-                '@worldId': input.id
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'location', 'time', 'world_name', 'group_name'],
+            'world_id = @worldId',
+            { '@worldId': input.id },
+            { order: 'id DESC' }
         );
+        for (const dbRow of rows) {
+            var time = 0;
+            if (dbRow[2]) time = dbRow[2];
+            var ref = data.get(dbRow[1]);
+            if (typeof ref !== 'undefined') time += ref.time;
+            var row = {
+                created_at: dbRow[0],
+                location: dbRow[1],
+                time,
+                worldName: dbRow[3],
+                groupName: dbRow[4]
+            };
+            data.set(row.location, row);
+        }
         return data;
     },
 
     async getPlayersFromInstance(location) {
         var players = new Map();
-        await adapter.execute(
-            (dbRow) => {
-                var time = 0;
-                var count = 0;
-                var created_at = dbRow[0];
-                if (dbRow[3]) {
-                    time = dbRow[3];
-                }
-                var ref = players.get(dbRow[1]);
-                if (typeof ref !== 'undefined') {
-                    time += ref.time;
-                    count = ref.count;
-                    created_at = ref.created_at;
-                }
-                if (dbRow[4] === 'OnPlayerJoined') {
-                    count++;
-                }
-                var row = {
-                    created_at,
-                    displayName: dbRow[1],
-                    userId: dbRow[2],
-                    time,
-                    count
-                };
-                players.set(row.displayName, row);
-            },
-            `SELECT created_at, display_name, user_id, time, type FROM gamelog_join_leave WHERE location = @location`,
-            {
-                '@location': location
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'display_name', 'user_id', 'time', 'type'],
+            'location = @location',
+            { '@location': location }
         );
+        for (const dbRow of rows) {
+            var time = 0;
+            var count = 0;
+            var created_at = dbRow[0];
+            if (dbRow[3]) time = dbRow[3];
+            var ref = players.get(dbRow[1]);
+            if (typeof ref !== 'undefined') {
+                time += ref.time;
+                count = ref.count;
+                created_at = ref.created_at;
+            }
+            if (dbRow[4] === 'OnPlayerJoined') count++;
+            var row = {
+                created_at,
+                displayName: dbRow[1],
+                userId: dbRow[2],
+                time,
+                count
+            };
+            players.set(row.displayName, row);
+        }
         return players;
     },
 
@@ -1435,63 +1314,56 @@ const gameLog = {
      */
     async getPlayerDetailFromInstance(location) {
         const entries = [];
-        await adapter.execute(
-            (dbRow) => {
-                entries.push({
-                    created_at: dbRow[0],
-                    display_name: dbRow[1],
-                    user_id: dbRow[2],
-                    time: dbRow[3] || 0
-                });
-            },
-            `SELECT created_at, display_name, user_id, time
-             FROM gamelog_join_leave
-             WHERE location = @location AND type = 'OnPlayerLeft'
-             ORDER BY created_at ASC`,
-            {
-                '@location': location
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'display_name', 'user_id', 'time'],
+            "location = @location AND type = 'OnPlayerLeft'",
+            { '@location': location },
+            { order: 'created_at ASC' }
         );
+        for (const dbRow of rows) {
+            entries.push({
+                created_at: dbRow[0],
+                display_name: dbRow[1],
+                user_id: dbRow[2],
+                time: dbRow[3] || 0
+            });
+        }
         return entries;
     },
 
     async getPreviousDisplayNamesByUserId(ref) {
         var data = new Map();
-        await adapter.execute(
-            (dbRow) => {
-                var row = {
-                    created_at: dbRow[0],
-                    displayName: dbRow[1]
-                };
-                if (ref.displayName !== row.displayName) {
-                    data.set(row.displayName, row.created_at);
-                }
-            },
-            `SELECT created_at, display_name
-            FROM gamelog_join_leave
-            WHERE user_id = @userId
-            ORDER BY id DESC`,
-            {
-                '@userId': ref.id
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'display_name'],
+            'user_id = @userId',
+            { '@userId': ref.id },
+            { order: 'id DESC' }
         );
+        for (const dbRow of rows) {
+            if (ref.displayName !== dbRow[1]) {
+                data.set(dbRow[1], dbRow[0]);
+            }
+        }
         return data;
     },
 
     async getGameLogInstancesTime() {
         var instances = new Map();
-        await adapter.execute((dbRow) => {
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['location', 'time'],
+            null
+        );
+        for (const dbRow of rows) {
             var time = 0;
             var location = dbRow[0];
-            if (dbRow[1]) {
-                time = dbRow[1];
-            }
+            if (dbRow[1]) time = dbRow[1];
             var ref = instances.get(location);
-            if (typeof ref !== 'undefined') {
-                time += ref;
-            }
+            if (typeof ref !== 'undefined') time += ref;
             instances.set(location, time);
-        }, 'SELECT location, time FROM gamelog_location');
+        }
         return instances;
     },
 
@@ -1516,13 +1388,17 @@ const gameLog = {
             params['@fromDate'] = fromDate;
             where.push('created_at >= @fromDate');
 
-            await adapter.execute(
-                (dbRow) => {
-                    data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
-                },
-                'SELECT created_at, time FROM gamelog_location WHERE created_at < @fromDate ORDER BY created_at DESC LIMIT 1',
-                { '@fromDate': fromDate }
+            // Standard SQL: last row before fromDate
+            const rows = await adapter.selectWhere(
+                'gamelog_location',
+                ['created_at', 'time'],
+                'created_at < @fromDate',
+                { '@fromDate': fromDate },
+                { order: 'created_at DESC', limit: 1 }
             );
+            for (const dbRow of rows) {
+                data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
+            }
         }
         if (toDays > 0) {
             const toDate = new Date(
@@ -1532,15 +1408,17 @@ const gameLog = {
             where.push('created_at < @toDate');
         }
 
-        const dateClause =
-            where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-        await adapter.execute(
-            (dbRow) => {
-                data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
-            },
-            `SELECT created_at, time FROM gamelog_location ${dateClause} ORDER BY created_at`,
-            params
+        const mainWhere = where.join(' AND ');
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'time'],
+            mainWhere || null,
+            params,
+            { order: 'created_at' }
         );
+        for (const dbRow of rows) {
+            data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
+        }
         return data;
     },
 
@@ -1553,13 +1431,16 @@ const gameLog = {
     async getCurrentUserOnlineSessionsAfter(afterCreatedAt, inclusive = false) {
         const data = [];
         const op = inclusive ? '>=' : '>';
-        await adapter.execute(
-            (dbRow) => {
-                data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
-            },
-            `SELECT created_at, time FROM gamelog_location WHERE created_at ${op} @after ORDER BY created_at`,
-            { '@after': afterCreatedAt }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            ['created_at', 'time'],
+            'created_at ' + op + ' @after',
+            { '@after': afterCreatedAt },
+            { order: 'created_at' }
         );
+        for (const dbRow of rows) {
+            data.push({ created_at: dbRow[0], time: dbRow[1] || 0 });
+        }
         return data;
     },
 
@@ -1578,60 +1459,49 @@ const gameLog = {
         sortBy = 'time',
         excludeWorldId = ''
     ) {
-        const results = [];
         const whereClause = days > 0 ? 'AND created_at >= @cutoff' : '';
         const excludeClause = excludeWorldId
             ? 'AND world_id != @excludeWorldId'
             : '';
         const orderBy =
             sortBy === 'count' ? 'visit_count DESC' : 'total_time DESC';
-        const params = { '@limit': limit };
+        const params = {};
         if (days > 0) {
             params['@cutoff'] = adapter.daysAgoISO(days);
         }
         if (excludeWorldId) {
             params['@excludeWorldId'] = excludeWorldId;
         }
-        await adapter.execute(
-            (dbRow) => {
-                results.push({
-                    worldId: dbRow[0],
-                    worldName: dbRow[1] || dbRow[0],
-                    visitCount: dbRow[2],
-                    totalTime: dbRow[3] || 0
-                });
-            },
-            `SELECT
-                world_id,
-                world_name,
-                COUNT(*) AS visit_count,
-                SUM(time) AS total_time
-            FROM gamelog_location
-            WHERE world_id IS NOT NULL
-                AND world_id != ''
-                AND world_id LIKE 'wrld_%'
-                ${whereClause}
-                ${excludeClause}
-            GROUP BY world_id
-            ORDER BY ${orderBy}
-            LIMIT @limit`,
+        // Standard SQL GROUP BY with portable ISO string filter
+        const rows = await adapter.selectGroupBy('gamelog_location', {
+            columns: ['world_id', 'world_name'],
+            aggregates: [
+                { expr: 'COUNT(*)', alias: 'visit_count' },
+                { expr: 'SUM(time)', alias: 'total_time' }
+            ],
+            where: `world_id IS NOT NULL AND world_id != '' AND world_id LIKE 'wrld_%' ${whereClause} ${excludeClause}`,
+            groupBy: ['world_id'],
+            order: orderBy,
+            limit: limit,
             params
-        );
-        return results;
+        });
+        return rows.map((dbRow) => ({
+            worldId: dbRow[0],
+            worldName: dbRow[1] || dbRow[0],
+            visitCount: dbRow[2],
+            totalTime: dbRow[3] || 0
+        }));
     },
 
     async getUserIdFromDisplayName(displayName) {
-        var userId = '';
-        await adapter.execute(
-            (row) => {
-                userId = row[0];
-            },
-            `SELECT user_id FROM gamelog_join_leave WHERE display_name = @displayName AND user_id != '' ORDER BY id DESC LIMIT 1`,
-            {
-                '@displayName': displayName
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['user_id'],
+            "display_name = @displayName AND user_id != ''",
+            { '@displayName': displayName },
+            { order: 'id DESC', limit: 1 }
         );
-        return userId;
+        return rows.length > 0 ? rows[0][0] : '';
     },
 
     /**
@@ -1645,6 +1515,8 @@ const gameLog = {
     async getInstanceActivity(startDate, endDate) {
         const currentUserData = [];
         const detailData = new Map();
+
+        // enter_time = created_at - time (ISO timestamp for BETWEEN comparison)
         await adapter.execute(
             (row) => {
                 const rowData = {
@@ -1658,9 +1530,8 @@ const gameLog = {
                 };
 
                 // skip dirty data
-                if (!rowData.location || rowData.location === 'traveling') {
+                if (!rowData.location || rowData.location === 'traveling')
                     return;
-                }
 
                 if (rowData.user_id === dbVars.userId) {
                     currentUserData.push(rowData);
@@ -1672,15 +1543,14 @@ const gameLog = {
                     rowData
                 ]);
             },
-            `SELECT
-                     *
-                FROM
-                    gamelog_join_leave
-                    WHERE type = 'OnPlayerLeft'
-                    AND (
-                        ${adapter.sqlEnterTime('created_at', 'time')} BETWEEN @utc_start_date AND @utc_end_date
-                        OR created_at BETWEEN @utc_start_date AND @utc_end_date
-                    );`,
+            `SELECT id, created_at, type, display_name, location, user_id, time
+             FROM gamelog_join_leave
+             WHERE type = 'OnPlayerLeft'
+             AND (
+                 ${adapter.sqlEnterTime('created_at', 'time')}
+                 BETWEEN @utc_start_date AND @utc_end_date
+                 OR created_at BETWEEN @utc_start_date AND @utc_end_date
+             )`,
             {
                 '@utc_start_date': startDate,
                 '@utc_end_date': endDate
@@ -1695,19 +1565,13 @@ const gameLog = {
      * @returns {Promise<string[]>}
      */
     async getDateOfInstanceActivity() {
-        let result = [];
-        await adapter.execute(
-            (row) => {
-                result.push(row[0]);
-            },
-            `SELECT created_at 
-                FROM gamelog_join_leave 
-                WHERE user_id = @userId`,
-            {
-                '@userId': dbVars.userId
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at'],
+            'user_id = @userId',
+            { '@userId': dbVars.userId }
         );
-        return result;
+        return rows.map((row) => row[0]);
     },
 
     /**
@@ -1721,82 +1585,108 @@ const gameLog = {
         const dedupeKeys = new Set();
         const appendResult = (row) => {
             const key = `${row.location}|${row.friendALeave}|${row.friendATime}|${row.friendBLeave}|${row.friendBTime}`;
-            if (dedupeKeys.has(key)) {
-                return;
-            }
+            if (dedupeKeys.has(key)) return;
             dedupeKeys.add(key);
             results.push(row);
         };
-        await adapter.execute(
-            (row) => {
-                appendResult({
-                    location: row[0],
-                    friendALeave: row[1],
-                    friendATime: row[2],
-                    friendBLeave: row[3],
-                    friendBTime: row[4]
-                });
-            },
-            `SELECT
-                a.location,
-                a.created_at AS friend_a_leave,
-                a.time AS friend_a_time,
-                b.created_at AS friend_b_leave,
-                b.time AS friend_b_time
-            FROM gamelog_join_leave a
-            INNER JOIN gamelog_join_leave b
-                ON a.location = b.location
-            WHERE a.type = 'OnPlayerLeft'
-                AND b.type = 'OnPlayerLeft'
-                AND a.user_id = @friendAUserId
-                AND b.user_id = @friendBUserId
-                AND a.location NOT IN ('', 'traveling', 'private', 'private:private')
-                AND b.location NOT IN ('', 'traveling', 'private', 'private:private')
-                AND a.time > 0
-                AND b.time > 0
-                AND ${adapter.sqlEnterTime('a.created_at', 'a.time')} < b.created_at
-                AND ${adapter.sqlEnterTime('b.created_at', 'b.time')} < a.created_at
-            ORDER BY a.created_at DESC`,
-            {
-                '@friendAUserId': friendAUserId,
-                '@friendBUserId': friendBUserId
-            }
-        );
 
-        const getInferredLocationSessions = async (userId) => {
-            const sessions = [];
-            await adapter.execute(
-                (row) => {
-                    sessions.push({
-                        location: row[0],
-                        // feed rows only store the end timestamp and duration
-                        // (ms), so created_at is treated as leaveAt.
-                        leaveAt: row[1],
-                        // `time` in feed rows is duration in milliseconds.
-                        time: row[2]
-                    });
-                },
-                `SELECT location, created_at, time
-                 FROM (
-                     SELECT previous_location AS location, created_at, time
-                     FROM ${adapter.userTable(dbVars.userPrefix, 'feed_gps')}
-                     WHERE user_id = @userId
-                       AND previous_location NOT IN ('', 'offline', 'traveling', 'private', 'private:private')
-                       AND time > 0
-                     UNION ALL
-                     SELECT location, created_at, time
-                     FROM ${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}
-                     WHERE user_id = @userId
-                       AND type = 'Offline'
-                       AND location NOT IN ('', 'offline', 'traveling', 'private', 'private:private')
-                       AND time > 0
-                 )
-                 ORDER BY created_at DESC`,
-                {
-                    '@userId': userId
+        // Standard SQL: load OnPlayerLeft records for both friends separately.
+        // Overlap detection moved to JS (enter_time is unreliable per VRChat API).
+        const locationFilter =
+            "location NOT IN ('', 'traveling', 'private', 'private:private')";
+        const [rowsA, rowsB] = await Promise.all([
+            adapter.selectWhere(
+                'gamelog_join_leave',
+                ['location', 'created_at', 'time'],
+                "type='OnPlayerLeft' AND user_id=@uid AND " +
+                    locationFilter +
+                    ' AND time>0',
+                { '@uid': friendAUserId },
+                { order: 'created_at DESC' }
+            ),
+            adapter.selectWhere(
+                'gamelog_join_leave',
+                ['location', 'created_at', 'time'],
+                "type='OnPlayerLeft' AND user_id=@uid AND " +
+                    locationFilter +
+                    ' AND time>0',
+                { '@uid': friendBUserId },
+                { order: 'created_at DESC' }
+            )
+        ]);
+
+        // Group by location for efficient JS overlap matching
+        const byLocationA = new Map();
+        for (const row of rowsA) {
+            const loc = row[0];
+            if (!byLocationA.has(loc)) byLocationA.set(loc, []);
+            byLocationA
+                .get(loc)
+                .push({ location: loc, created_at: row[1], time: row[2] || 0 });
+        }
+        const byLocationB = new Map();
+        for (const row of rowsB) {
+            const loc = row[0];
+            if (!byLocationB.has(loc)) byLocationB.set(loc, []);
+            byLocationB
+                .get(loc)
+                .push({ location: loc, created_at: row[1], time: row[2] || 0 });
+        }
+
+        // JS overlap detection: enter_time = created_at - time (both in ms via Date.parse)
+        for (const [location, sessionsA] of byLocationA) {
+            const sessionsB = byLocationB.get(location);
+            if (!sessionsB) continue;
+            for (const a of sessionsA) {
+                const aLeave = new Date(a.created_at).getTime();
+                const aEnter = aLeave - a.time;
+                for (const b of sessionsB) {
+                    const bLeave = new Date(b.created_at).getTime();
+                    const bEnter = bLeave - b.time;
+                    if (aEnter < bLeave && bEnter < aLeave) {
+                        appendResult({
+                            location,
+                            friendALeave: a.created_at,
+                            friendATime: a.time,
+                            friendBLeave: b.created_at,
+                            friendBTime: b.time
+                        });
+                    }
                 }
+            }
+        }
+
+        // Standard SQL UNION ALL via adapter with dynamic table names
+        const getInferredLocationSessions = async (userId) => {
+            const rows = await adapter.selectUnion(
+                [
+                    {
+                        table: adapter.userTable(dbVars.userPrefix, 'feed_gps'),
+                        columns: [
+                            'previous_location AS location',
+                            'created_at',
+                            'time'
+                        ],
+                        where: "user_id=@uid AND previous_location NOT IN ('','offline','traveling','private','private:private') AND time>0",
+                        params: { '@uid': userId }
+                    },
+                    {
+                        table: adapter.userTable(
+                            dbVars.userPrefix,
+                            'feed_online_offline'
+                        ),
+                        columns: ['location', 'created_at', 'time'],
+                        where: "user_id=@uid AND type='Offline' AND location NOT IN ('','offline','traveling','private','private:private') AND time>0",
+                        params: { '@uid': userId }
+                    }
+                ],
+                { order: 'created_at DESC' }
             );
-            return sessions;
+            return rows.map((row) => ({
+                location: row[0],
+                leaveAt: row[1],
+                time: row[2]
+            }));
         };
 
         const [friendASessions, friendBSessions] = await Promise.all([
@@ -1814,9 +1704,7 @@ const gameLog = {
 
         for (const sessionA of friendASessions) {
             const sessionBList = sessionsBByLocation.get(sessionA.location);
-            if (!sessionBList || sessionBList.length === 0) {
-                continue;
-            }
+            if (!sessionBList || sessionBList.length === 0) continue;
             const sessionALeaveMs = new Date(sessionA.leaveAt).getTime();
             const sessionAJoinMs = sessionALeaveMs - sessionA.time;
             for (const sessionB of sessionBList) {
@@ -1855,27 +1743,19 @@ const gameLog = {
     async getSelfPresenceForLocations(userId, locations) {
         if (!locations || locations.length === 0) return new Map();
         const result = new Map();
-        const params = { '@userId': userId };
-        const placeholders = locations.map((loc, i) => {
-            params[`@loc${i}`] = loc;
-            return `@loc${i}`;
-        });
-        await adapter.execute(
-            (row) => {
-                const loc = row[0];
-                if (!result.has(loc)) result.set(loc, []);
-                result
-                    .get(loc)
-                    .push({ selfLeave: row[1], selfTime: row[2] || 0 });
-            },
-            `SELECT location, created_at, time
-             FROM gamelog_join_leave
-             WHERE user_id = @userId
-               AND location IN (${placeholders.join(', ')})
-               AND type = 'OnPlayerLeft'
-               AND time > 0`,
-            params
+        const rows = await adapter.selectWhereIn(
+            'gamelog_join_leave',
+            ['location', 'created_at', 'time'],
+            'location',
+            locations,
+            "user_id = @userId AND type = 'OnPlayerLeft' AND time > 0",
+            { '@userId': userId }
         );
+        for (const row of rows) {
+            const loc = row[0];
+            if (!result.has(loc)) result.set(loc, []);
+            result.get(loc).push({ selfLeave: row[1], selfTime: row[2] || 0 });
+        }
         return result;
     },
 
@@ -1888,27 +1768,22 @@ const gameLog = {
     async getMaxPlayerCountForLocations(locations) {
         if (!locations || locations.length === 0) return new Map();
         const entries = [];
-        const params = {};
-        const placeholders = locations.map((loc, i) => {
-            params[`@loc${i}`] = loc;
-            return `@loc${i}`;
-        });
-        await adapter.execute(
-            (row) => {
-                entries.push({
-                    location: row[0],
-                    createdAt: row[1],
-                    time: row[2] || 0
-                });
-            },
-            `SELECT location, created_at, time
-             FROM gamelog_join_leave
-             WHERE location IN (${placeholders.join(', ')})
-               AND type = 'OnPlayerLeft'
-               AND time > 0
-             ORDER BY location`,
-            params
+        const rows = await adapter.selectWhereIn(
+            'gamelog_join_leave',
+            ['location', 'created_at', 'time'],
+            'location',
+            locations,
+            "type = 'OnPlayerLeft' AND time > 0",
+            {},
+            { order: 'location' }
         );
+        for (const row of rows) {
+            entries.push({
+                location: row[0],
+                createdAt: row[1],
+                time: row[2] || 0
+            });
+        }
 
         // Group by location
         const byLocation = new Map();
@@ -1945,34 +1820,31 @@ const gameLog = {
     async getInstanceJoinHistory() {
         var oneWeekAgo = new Date(Date.now() - 604800000).toJSON();
         var instances = new Map();
-        await adapter.execute(
-            (row) => {
-                if (!instances.has(row[1])) {
-                    var epoch = new Date(row[0]).getTime();
-                    instances.set(row[1], epoch);
-                }
-            },
-            `SELECT created_at, location FROM gamelog_join_leave WHERE user_id = @userId AND created_at > @created_at ORDER BY created_at DESC`,
-            {
-                '@userId': dbVars.userId,
-                '@created_at': oneWeekAgo
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_join_leave',
+            ['created_at', 'location'],
+            'user_id = @userId AND created_at > @created_at',
+            { '@userId': dbVars.userId, '@created_at': oneWeekAgo },
+            { order: 'created_at DESC' }
         );
+        for (const row of rows) {
+            if (!instances.has(row[1])) {
+                instances.set(row[1], new Date(row[0]).getTime());
+            }
+        }
         return instances;
     },
 
     deleteGameLogInstanceByInstanceId(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_location WHERE location = @location`,
-            {
-                '@location': input.location
-            }
-        );
+        adapter.delete('gamelog_location', { location: input.location });
     },
 
     deleteGameLogInstance(input) {
-        adapter.executeNonQuery(
-            `DELETE FROM gamelog_join_leave WHERE (user_id = @user_id OR display_name = @displayName) AND (location = @location) AND (id in (${input.events.join(',')}))`,
+        adapter.deleteWhere(
+            'gamelog_join_leave',
+            '(user_id = @user_id OR display_name = @displayName) AND location = @location AND id IN (' +
+                input.events.join(',') +
+                ')',
             {
                 '@user_id': input.id,
                 '@displayName': input.displayName,
@@ -2036,36 +1908,29 @@ const gameLog = {
      * @returns {Promise<Array<{userId: string, displayName: string, day: string, totalTime: number, joinCount: number}>>}
      */
     async getRelationshipTimelineData() {
-        const results = [];
-        await adapter.execute(
-            (row) => {
-                results.push({
-                    userId: row[0],
-                    displayName: row[1],
-                    day: row[2],
-                    totalTime: row[3],
-                    joinCount: row[4]
-                });
-            },
-            `SELECT
-                user_id,
-                display_name,
-                ${adapter.sqlDate('created_at')} AS day,
-                SUM(time) AS total_time,
-                COUNT(DISTINCT location) AS joinCount
-            FROM gamelog_join_leave
-            WHERE type = 'OnPlayerLeft'
-                AND user_id != ''
-                AND user_id != @currentUserId
-                AND time > 0
-                AND location NOT IN ('', 'traveling')
-            GROUP BY user_id, day
-            ORDER BY day ASC`,
-            {
-                '@currentUserId': dbVars.userId
-            }
-        );
-        return results;
+        // Standard SQL: SUBSTR for date truncation (portable ISO string slicing)
+        const rows = await adapter.selectGroupBy('gamelog_join_leave', {
+            columns: [
+                'user_id',
+                'display_name',
+                'SUBSTR(created_at, 1, 10) AS day'
+            ],
+            aggregates: [
+                { expr: 'SUM(time)', alias: 'total_time' },
+                { expr: 'COUNT(DISTINCT location)', alias: 'joinCount' }
+            ],
+            where: "type='OnPlayerLeft' AND user_id!='' AND user_id!=@currentUserId AND time>0 AND location NOT IN ('','traveling')",
+            groupBy: ['user_id', 'day'],
+            order: 'day ASC',
+            params: { '@currentUserId': dbVars.userId }
+        });
+        return rows.map((row) => ({
+            userId: row[0],
+            displayName: row[1],
+            day: row[2],
+            totalTime: row[3],
+            joinCount: row[4]
+        }));
     },
 
     // ── Sessions view queries (read-only, no existing behavior changed) ──
@@ -2077,32 +1942,32 @@ const gameLog = {
      * @returns {Promise<Array<{id: number, created_at: string, location: string, worldId: string, worldName: string, time: number, groupName: string}>>}
      */
     async getSessionsLocationSegments(beforeId, limit) {
-        const data = [];
-        const cursorClause = beforeId != null ? 'AND id < @beforeId' : '';
-        const args = { '@limit': limit };
-        if (beforeId != null) {
-            args['@beforeId'] = beforeId;
-        }
-        await adapter.execute(
-            (dbRow) => {
-                data.push({
-                    id: dbRow[0],
-                    created_at: dbRow[1],
-                    location: dbRow[2],
-                    worldId: dbRow[3],
-                    worldName: dbRow[4],
-                    time: dbRow[5],
-                    groupName: dbRow[6]
-                });
-            },
-            `SELECT id, created_at, location, world_id, world_name, time, group_name
-             FROM gamelog_location
-             WHERE 1=1 ${cursorClause}
-             ORDER BY id DESC
-             LIMIT @limit`,
-            args
+        const cursorClause = beforeId != null ? 'id < @beforeId' : null;
+        const args = beforeId != null ? { '@beforeId': beforeId } : {};
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            [
+                'id',
+                'created_at',
+                'location',
+                'world_id',
+                'world_name',
+                'time',
+                'group_name'
+            ],
+            cursorClause,
+            args,
+            { order: 'id DESC', limit }
         );
-        return data;
+        return rows.map((dbRow) => ({
+            id: dbRow[0],
+            created_at: dbRow[1],
+            location: dbRow[2],
+            worldId: dbRow[3],
+            worldName: dbRow[4],
+            time: dbRow[5],
+            groupName: dbRow[6]
+        }));
     },
 
     /**
@@ -2116,64 +1981,66 @@ const gameLog = {
     async getSessionsEventsForSegments(locationTags, afterDate, beforeDate) {
         if (!locationTags || locationTags.length === 0) return [];
 
-        const data = [];
-        const placeholders = [];
-        const args = {
+        const dateFilter =
+            'created_at >= @afterDate AND created_at <= @beforeDate';
+        const dateParams = {
             '@afterDate': afterDate,
             '@beforeDate': beforeDate
         };
 
-        locationTags.forEach((loc, i) => {
-            const key = `@loc_${i}`;
-            args[key] = loc;
-            placeholders.push(key);
-        });
-
-        const locIn = placeholders.join(', ');
-
         // join/leave events
-        await adapter.execute(
-            (dbRow) => {
-                data.push({
-                    type: dbRow[0],
-                    created_at: dbRow[1],
-                    displayName: dbRow[2],
-                    userId: dbRow[3],
-                    location: dbRow[4]
-                });
-            },
-            `SELECT type, created_at, display_name, user_id, location
-             FROM gamelog_join_leave
-             WHERE location IN (${locIn})
-               AND user_id != @selfId
-               AND created_at >= @afterDate
-               AND created_at <= @beforeDate
-             ORDER BY created_at ASC`,
-            { ...args, '@selfId': dbVars.userId }
+        const jlRows = await adapter.selectWhereIn(
+            'gamelog_join_leave',
+            ['type', 'created_at', 'display_name', 'user_id', 'location'],
+            'location',
+            locationTags,
+            'user_id != @selfId AND ' + dateFilter,
+            { '@selfId': dbVars.userId, ...dateParams },
+            { order: 'created_at ASC' }
         );
 
         // video_play events
-        await adapter.execute(
-            (dbRow) => {
-                data.push({
-                    type: 'VideoPlay',
-                    created_at: dbRow[0],
-                    videoUrl: dbRow[1],
-                    videoName: dbRow[2],
-                    videoId: dbRow[3],
-                    displayName: dbRow[4],
-                    userId: dbRow[5],
-                    location: dbRow[6]
-                });
-            },
-            `SELECT created_at, video_url, video_name, video_id, display_name, user_id, location
-             FROM gamelog_video_play
-             WHERE location IN (${locIn})
-               AND created_at >= @afterDate
-               AND created_at <= @beforeDate
-             ORDER BY created_at ASC`,
-            args
+        const vpRows = await adapter.selectWhereIn(
+            'gamelog_video_play',
+            [
+                'created_at',
+                'video_url',
+                'video_name',
+                'video_id',
+                'display_name',
+                'user_id',
+                'location'
+            ],
+            'location',
+            locationTags,
+            dateFilter,
+            dateParams,
+            { order: 'created_at ASC' }
         );
+
+        const data = [];
+
+        for (const dbRow of jlRows) {
+            data.push({
+                type: dbRow[0],
+                created_at: dbRow[1],
+                displayName: dbRow[2],
+                userId: dbRow[3],
+                location: dbRow[4]
+            });
+        }
+        for (const dbRow of vpRows) {
+            data.push({
+                type: 'VideoPlay',
+                created_at: dbRow[0],
+                videoUrl: dbRow[1],
+                videoName: dbRow[2],
+                videoId: dbRow[3],
+                displayName: dbRow[4],
+                userId: dbRow[5],
+                location: dbRow[6]
+            });
+        }
 
         return data;
     },
@@ -2186,30 +2053,30 @@ const gameLog = {
      * @returns {Promise<Array<object>>}
      */
     async getSessionsLocationSegmentsByAnchor(sinceDate, limit) {
-        const data = [];
-        await adapter.execute(
-            (dbRow) => {
-                data.push({
-                    id: dbRow[0],
-                    created_at: dbRow[1],
-                    location: dbRow[2],
-                    worldId: dbRow[3],
-                    worldName: dbRow[4],
-                    time: dbRow[5],
-                    groupName: dbRow[6]
-                });
-            },
-            `SELECT id, created_at, location, world_id, world_name, time, group_name
-             FROM gamelog_location
-             WHERE created_at >= @sinceDate
-             ORDER BY id DESC
-             LIMIT @limit`,
-            {
-                '@sinceDate': sinceDate,
-                '@limit': limit
-            }
+        const rows = await adapter.selectWhere(
+            'gamelog_location',
+            [
+                'id',
+                'created_at',
+                'location',
+                'world_id',
+                'world_name',
+                'time',
+                'group_name'
+            ],
+            'created_at >= @sinceDate',
+            { '@sinceDate': sinceDate, '@limit': limit },
+            { order: 'id DESC', limit }
         );
-        return data;
+        return rows.map((dbRow) => ({
+            id: dbRow[0],
+            created_at: dbRow[1],
+            location: dbRow[2],
+            worldId: dbRow[3],
+            worldName: dbRow[4],
+            time: dbRow[5],
+            groupName: dbRow[6]
+        }));
     }
 };
 

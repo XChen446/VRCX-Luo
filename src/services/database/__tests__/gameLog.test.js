@@ -26,7 +26,11 @@ describe('gameLog.getSelfPresenceForLocations', () => {
 
     test('filters out zero-duration records with AND time > 0', async () => {
         mocks.execute.mockImplementation(async (callback, sql, params) => {
-            callback(['wrld_1:123~region(us)', '2024-01-15T10:00:00Z', 3600000]);
+            callback([
+                'wrld_1:123~region(us)',
+                '2024-01-15T10:00:00Z',
+                3600000
+            ]);
             return undefined;
         });
 
@@ -55,22 +59,39 @@ describe('gameLog.getCoInstanceHistoryBetweenFriends', () => {
 
     test('includes inferred co-instance sessions from feed GPS/offline history', async () => {
         mocks.execute.mockImplementation(async (callback, sql, params) => {
-            if (sql.includes('FROM gamelog_join_leave a')) {
-                callback([
-                    'wrld_logged:123~region(us)',
-                    '2025-01-01T12:00:00Z',
-                    3600000,
-                    '2025-01-01T12:30:00Z',
-                    3600000
-                ]);
+            // selectWhere for gamelog_join_leave (friend A and B)
+            if (
+                sql.includes('FROM gamelog_join_leave') &&
+                !sql.includes('previous_location')
+            ) {
+                if (params['@uid'] === 'usr_a') {
+                    callback([
+                        'wrld_logged:123~region(us)',
+                        '2025-01-01T12:00:00Z',
+                        3600000
+                    ]);
+                } else if (params['@uid'] === 'usr_b') {
+                    callback([
+                        'wrld_logged:123~region(us)',
+                        '2025-01-01T12:30:00Z',
+                        3600000
+                    ]);
+                }
                 return undefined;
             }
-            if (sql.includes('FROM _feed_gps') || sql.includes('FROM _feed_online_offline')) {
-                if (params['@userId'] === 'usr_a') {
-                    callback(['wrld_inferred:55~region(us)', '2025-01-01T10:00:00Z', 3600000]);
-                } else if (params['@userId'] === 'usr_b') {
-                    callback(['wrld_inferred:55~region(us)', '2025-01-01T10:20:00Z', 3600000]);
-                }
+            // selectUnion for feed tables (friend A and B)
+            if (params['@uid'] === 'usr_a') {
+                callback([
+                    'wrld_inferred:55~region(us)',
+                    '2025-01-01T10:00:00Z',
+                    3600000
+                ]);
+            } else if (params['@uid'] === 'usr_b') {
+                callback([
+                    'wrld_inferred:55~region(us)',
+                    '2025-01-01T10:20:00Z',
+                    3600000
+                ]);
             }
             return undefined;
         });
@@ -94,22 +115,39 @@ describe('gameLog.getCoInstanceHistoryBetweenFriends', () => {
 
     test('deduplicates duplicate rows coming from multiple sources', async () => {
         mocks.execute.mockImplementation(async (callback, sql, params) => {
-            if (sql.includes('FROM gamelog_join_leave a')) {
+            // selectWhere for gamelog_join_leave
+            if (
+                sql.includes('FROM gamelog_join_leave') &&
+                !sql.includes('previous_location')
+            ) {
+                if (params['@uid'] === 'usr_a') {
+                    callback([
+                        'wrld_same:1~region(us)',
+                        '2025-01-01T10:00:00Z',
+                        3600000
+                    ]);
+                } else if (params['@uid'] === 'usr_b') {
+                    callback([
+                        'wrld_same:1~region(us)',
+                        '2025-01-01T10:20:00Z',
+                        3600000
+                    ]);
+                }
+                return undefined;
+            }
+            // selectUnion for feed tables
+            if (params['@uid'] === 'usr_a') {
                 callback([
                     'wrld_same:1~region(us)',
                     '2025-01-01T10:00:00Z',
-                    3600000,
+                    3600000
+                ]);
+            } else if (params['@uid'] === 'usr_b') {
+                callback([
+                    'wrld_same:1~region(us)',
                     '2025-01-01T10:20:00Z',
                     3600000
                 ]);
-                return undefined;
-            }
-            if (sql.includes('FROM _feed_gps') || sql.includes('FROM _feed_online_offline')) {
-                if (params['@userId'] === 'usr_a') {
-                    callback(['wrld_same:1~region(us)', '2025-01-01T10:00:00Z', 3600000]);
-                } else if (params['@userId'] === 'usr_b') {
-                    callback(['wrld_same:1~region(us)', '2025-01-01T10:20:00Z', 3600000]);
-                }
             }
             return undefined;
         });
@@ -154,8 +192,8 @@ describe('gameLog.getMyTopWorlds', () => {
         expect(mocks.execute.mock.calls[0][1]).toContain(
             'AND world_id != @excludeWorldId'
         );
+        expect(mocks.execute.mock.calls[0][1]).toContain('LIMIT 5');
         expect(mocks.execute.mock.calls[0][2]).toMatchObject({
-            '@limit': 5,
             '@excludeWorldId': 'wrld_home'
         });
         // @cutoff is computed via adapter.daysAgoISO(30), skip exact value assertion

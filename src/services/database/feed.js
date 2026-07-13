@@ -264,26 +264,29 @@ const feed = {
     },
 
     async searchBiosByContent(query, limit = 10) {
-        const results = [];
-        const searchLike = `%${query}%`;
-        await adapter.execute(
-            (row) => {
-                results.push({
-                    userId: row[0],
-                    displayName: row[1],
-                    bio: row[2]
-                });
-            },
-            `SELECT fb.user_id, fb.display_name, fb.bio FROM ${adapter.userTable(dbVars.userPrefix, 'feed_bio')} fb
-             WHERE fb.id IN (SELECT MAX(id) FROM ${adapter.userTable(dbVars.userPrefix, 'feed_bio')} GROUP BY user_id)
-             AND fb.bio LIKE @searchLike
-             LIMIT @limit`,
-            {
-                '@searchLike': searchLike,
-                '@limit': limit
-            }
+        const bioTable = adapter.userTable(dbVars.userPrefix, 'feed_bio');
+        const maxRows = await adapter.selectGroupBy(bioTable, {
+            columns: ['user_id'],
+            aggregates: [{ expr: 'MAX(id)', alias: 'max_id' }],
+            groupBy: ['user_id']
+        });
+        const maxIds = maxRows.map((r) => r[1]);
+        if (maxIds.length === 0) return [];
+
+        const rows = await adapter.selectWhereIn(
+            bioTable,
+            ['user_id', 'display_name', 'bio'],
+            'id',
+            maxIds,
+            'bio LIKE @searchLike',
+            { '@searchLike': `%${query}%` },
+            { limit }
         );
-        return results;
+        return rows.map((row) => ({
+            userId: row[0],
+            displayName: row[1],
+            bio: row[2]
+        }));
     },
 
     async getLastStatusChangeForUser(userId) {
@@ -354,15 +357,14 @@ const feed = {
      */
     async purgeAvatarFeedData(cutoffDate) {
         if (cutoffDate) {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${adapter.userTable(dbVars.userPrefix, 'feed_avatar')} WHERE created_at < @cutoff`,
-                {
-                    '@cutoff': cutoffDate
-                }
+            await adapter.deleteWhere(
+                adapter.userTable(dbVars.userPrefix, 'feed_avatar'),
+                'created_at < @cutoff',
+                { '@cutoff': cutoffDate }
             );
         } else {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${adapter.userTable(dbVars.userPrefix, 'feed_avatar')}`
+            await adapter.deleteAll(
+                adapter.userTable(dbVars.userPrefix, 'feed_avatar')
             );
         }
     },

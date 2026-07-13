@@ -69,8 +69,40 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * UPDATE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {object} data - columns to SET (key:value)
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters for the WHERE clause
+     * @abstract
+     */
+    updateWhere(_table, _data, _whereClause, _params) {
+        throw new Error('abstract');
+    }
+
     /** @abstract */
     delete(_table, _where) {
+        throw new Error('abstract');
+    }
+
+    /**
+     * DELETE all rows from a table.
+     * @param {string} table - target table name
+     * @abstract
+     */
+    deleteAll(_table) {
+        throw new Error('abstract');
+    }
+
+    /**
+     * DELETE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters for the WHERE clause
+     * @abstract
+     */
+    deleteWhere(_table, _whereClause, _params) {
         throw new Error('abstract');
     }
 
@@ -98,6 +130,17 @@ class EngineAdapter {
 
     /** @abstract */
     selectWhere(_table, _columns, _whereClause, _params, _options) {
+        throw new Error('abstract');
+    }
+
+    /**
+     * SELECT with JOIN(s), raw WHERE, ORDER BY, LIMIT.
+     * @param {object} spec - { from, alias?, joins?, columns, where?, params?, order?, limit? }
+     *   joins: [{ type, table, alias?, on }]
+     * @returns {Promise<Array<Array>>}
+     * @abstract
+     */
+    selectJoin(_spec) {
         throw new Error('abstract');
     }
 

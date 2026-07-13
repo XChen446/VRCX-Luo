@@ -47,11 +47,17 @@ const mutualGraph = {
         const pairs = entries instanceof Map ? entries : new Map();
         await adapter.begin();
         try {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${linkTable} WHERE friend_id NOT IN (SELECT friend_id FROM ${metaTable} WHERE opted_out = 1)`
+            await adapter.deleteWhere(
+                linkTable,
+                'friend_id NOT IN (SELECT friend_id FROM ' +
+                    metaTable +
+                    ' WHERE opted_out = 1)'
             );
-            await adapter.executeNonQuery(
-                `DELETE FROM ${friendTable} WHERE friend_id NOT IN (SELECT friend_id FROM ${metaTable} WHERE opted_out = 1)`
+            await adapter.deleteWhere(
+                friendTable,
+                'friend_id NOT IN (SELECT friend_id FROM ' +
+                    metaTable +
+                    ' WHERE opted_out = 1)'
             );
             if (pairs.size === 0) {
                 await adapter.commit();
@@ -81,8 +87,9 @@ const mutualGraph = {
                     delParams[`@id_${i}`] = id;
                     return `@id_${i}`;
                 });
-                await adapter.executeNonQuery(
-                    `DELETE FROM ${linkTable} WHERE friend_id IN (${delPlaceholders.join(', ')})`,
+                await adapter.deleteWhere(
+                    linkTable,
+                    'friend_id IN (' + delPlaceholders.join(', ') + ')',
                     delParams
                 );
             }

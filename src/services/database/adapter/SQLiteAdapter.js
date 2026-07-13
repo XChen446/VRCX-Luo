@@ -109,6 +109,24 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
+     * UPDATE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {object} data - columns to SET (key:value)
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters
+     */
+    updateWhere(table, data, whereClause, params = {}) {
+        const setClauses = Object.keys(data).map((col) => {
+            params[`@set_${col}`] = data[col];
+            return `${col} = @set_${col}`;
+        });
+        return sqliteService.executeNonQuery(
+            `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClause}`,
+            params
+        );
+    }
+
+    /**
      * DELETE with equality conditions.
      * @param {string} table - target table name
      * @param {object} where - equality conditions (AND-ed)
@@ -121,6 +139,27 @@ class SQLiteAdapter extends EngineAdapter {
         });
         return sqliteService.executeNonQuery(
             `DELETE FROM ${table} WHERE ${clauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    /**
+     * DELETE all rows from a table.
+     * @param {string} table - target table name
+     */
+    deleteAll(table) {
+        return sqliteService.executeNonQuery(`DELETE FROM ${table}`);
+    }
+
+    /**
+     * DELETE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters
+     */
+    deleteWhere(table, whereClause, params = {}) {
+        return sqliteService.executeNonQuery(
+            `DELETE FROM ${table} WHERE ${whereClause}`,
             params
         );
     }
@@ -190,6 +229,43 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
+     * SELECT with JOIN(s), raw WHERE, ORDER BY, LIMIT.
+     *
+     * JOIN 语法跨引擎高度一致，方言差异仅限于 LIMIT/ORDER BY 位置（已由 options 处理）。
+     * 接受完整的表别名和 ON 子句，由调用方保证列歧义消除。
+     *
+     * @param {object} spec
+     * @param {string}   spec.from       - 主表名
+     * @param {string}   [spec.alias]    - 主表别名
+     * @param {Array<{type:string, table:string, alias?:string, on:string}>} [spec.joins] - JOIN 描述
+     * @param {string[]|string} spec.columns - SELECT 列
+     * @param {string}   [spec.where]    - WHERE 子句（raw）
+     * @param {object}   [spec.params]   - 命名参数
+     * @param {string}   [spec.order]    - ORDER BY
+     * @param {number}   [spec.limit]    - LIMIT
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectJoin(spec) {
+        const { from, alias, joins, columns, where, params, order, limit } =
+            spec;
+        let sql = `SELECT ${Array.isArray(columns) ? columns.join(', ') : columns} FROM ${from}`;
+        if (alias) sql += ` ${alias}`;
+        if (joins) {
+            for (const j of joins) {
+                sql += ` ${j.type} JOIN ${j.table}`;
+                if (j.alias) sql += ` ${j.alias}`;
+                sql += ` ON ${j.on}`;
+            }
+        }
+        if (where) sql += ` WHERE ${where}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await sqliteService.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /**
      * SELECT with WHERE col IN (...) + optional extra conditions.
      * Builds named params for the IN list to avoid SQL injection.
      * @param {string} inColumn - column name for IN clause
@@ -242,11 +318,22 @@ class SQLiteAdapter extends EngineAdapter {
         const { schema, order, limit } = options;
         const allParams = {};
         const parts = sources.map((source) => {
-            const { table, columns, nulls, where, params, order: srcOrder, limit: srcLimit } = source;
+            const {
+                table,
+                columns,
+                nulls,
+                where,
+                params,
+                order: srcOrder,
+                limit: srcLimit
+            } = source;
             if (params) Object.assign(allParams, params);
-            let colStr = Array.isArray(columns) ? columns.join(', ') : columns || '*';
+            let colStr = Array.isArray(columns)
+                ? columns.join(', ')
+                : columns || '*';
             if (nulls && nulls.length > 0) {
-                colStr += ', ' + nulls.map((col) => `NULL AS ${col}`).join(', ');
+                colStr +=
+                    ', ' + nulls.map((col) => `NULL AS ${col}`).join(', ');
             }
             let sql = `SELECT ${colStr} FROM ${table}`;
             if (where) sql += ` WHERE ${where}`;
@@ -254,12 +341,20 @@ class SQLiteAdapter extends EngineAdapter {
             if (srcLimit) sql += ` LIMIT ${srcLimit}`;
             return sql;
         });
-        const outerSchema = schema ? (Array.isArray(schema) ? schema.join(', ') : schema) : '*';
+        const outerSchema = schema
+            ? Array.isArray(schema)
+                ? schema.join(', ')
+                : schema
+            : '*';
         let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), finalSql, allParams);
+        await sqliteService.execute(
+            (row) => rows.push(row),
+            finalSql,
+            allParams
+        );
         return rows;
     }
 
@@ -281,10 +376,21 @@ class SQLiteAdapter extends EngineAdapter {
     async selectGroupBy(table, spec) {
         // 这一坨参数叠叠乐是 GROUP BY 查询本身所需的复杂度，不是设计失误。
         // 总比让调用方手写 SELECT COUNT(*) FROM ... GROUP BY ... 然后每个引擎重写一遍好。
-        const { columns, aggregates, groupBy, where, params, order, limit, having } = spec;
+        const {
+            columns,
+            aggregates,
+            groupBy,
+            where,
+            params,
+            order,
+            limit,
+            having
+        } = spec;
         const colParts = [];
         if (columns) {
-            colParts.push(Array.isArray(columns) ? columns.join(', ') : columns);
+            colParts.push(
+                Array.isArray(columns) ? columns.join(', ') : columns
+            );
         }
         if (aggregates) {
             for (const agg of aggregates) {

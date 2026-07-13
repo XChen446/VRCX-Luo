@@ -68,31 +68,40 @@ const avatarFavorites = {
     },
 
     async getAvatarHistory(currentUserId, limit = 100) {
-        var data = [];
-        await adapter.execute(
-            (dbRow) => {
-                var row = {
-                    id: dbRow[0],
-                    authorId: dbRow[5],
-                    authorName: dbRow[6],
-                    created_at: dbRow[7],
-                    description: dbRow[8],
-                    imageUrl: dbRow[9],
-                    name: dbRow[10],
-                    releaseStatus: dbRow[11],
-                    thumbnailImageUrl: dbRow[12],
-                    updated_at: dbRow[13],
-                    version: dbRow[14]
-                };
-                data.push(row);
-            },
-            `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')} INNER JOIN cache_avatar ON cache_avatar.id = ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}.avatar_id WHERE author_id != @currentUserId ORDER BY ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}.created_at DESC LIMIT @limit`,
-            {
-                '@currentUserId': currentUserId,
-                '@limit': limit
-            }
+        const historyTable = adapter.userTable(
+            dbVars.userPrefix,
+            'avatar_history'
         );
-        return data;
+        const rows = await adapter.selectJoin({
+            from: historyTable,
+            alias: 'h',
+            joins: [
+                {
+                    type: 'INNER',
+                    table: 'cache_avatar',
+                    alias: 'c',
+                    on: 'c.id = h.avatar_id'
+                }
+            ],
+            columns: ['h.*', 'c.*'],
+            where: 'h.author_id != @currentUserId',
+            params: { '@currentUserId': currentUserId },
+            order: 'h.created_at DESC',
+            limit
+        });
+        return rows.map((dbRow) => ({
+            id: dbRow[0],
+            authorId: dbRow[5],
+            authorName: dbRow[6],
+            created_at: dbRow[7],
+            description: dbRow[8],
+            imageUrl: dbRow[9],
+            name: dbRow[10],
+            releaseStatus: dbRow[11],
+            thumbnailImageUrl: dbRow[12],
+            updated_at: dbRow[13],
+            version: dbRow[14]
+        }));
     },
 
     async getCachedAvatarById(id) {
@@ -114,10 +123,10 @@ const avatarFavorites = {
     },
 
     clearAvatarHistory() {
-        adapter.executeNonQuery(
-            `DELETE FROM ${adapter.userTable(dbVars.userPrefix, 'avatar_history')}`
+        adapter.deleteAll(
+            adapter.userTable(dbVars.userPrefix, 'avatar_history')
         );
-        adapter.executeNonQuery('DELETE FROM cache_avatar');
+        adapter.deleteAll('cache_avatar');
     },
 
     addAvatarToFavorites(avatarId, groupName) {

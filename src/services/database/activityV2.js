@@ -230,9 +230,9 @@ const activityV2 = {
         await adapter.begin();
         try {
             if (replaceFromStartAt !== null) {
-                await adapter.executeNonQuery(
-                    `DELETE FROM ${sessionsTable()}
-                     WHERE user_id = @userId AND start_at >= @replaceFromStartAt`,
+                await adapter.deleteWhere(
+                    sessionsTable(),
+                    'user_id = @userId AND start_at >= @replaceFromStartAt',
                     {
                         '@userId': userId,
                         '@replaceFromStartAt': replaceFromStartAt

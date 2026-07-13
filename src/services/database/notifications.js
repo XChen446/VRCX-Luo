@@ -40,7 +40,6 @@ const notifications = {
         maxEntries = dbVars.maxTableSize
     ) {
         const searchLike = `%${search}%`;
-        let notifications = [];
 
         let vipQuery = '';
         const vipArgs = {};
@@ -62,37 +61,33 @@ const notifications = {
             filterQuery = `AND type IN (${placeholders.join(', ')})`;
         }
 
-        await adapter.execute(
-            (dbRow) => {
-                let row = {
-                    id: dbRow[0],
-                    created_at: dbRow[1],
-                    type: dbRow[2],
-                    senderUserId: dbRow[3],
-                    senderUsername: dbRow[4],
-                    receiverUserId: dbRow[5],
-                    message: dbRow[6],
-                    details: {
-                        worldId: dbRow[7],
-                        worldName: dbRow[8],
-                        imageUrl: dbRow[9],
-                        inviteMessage: dbRow[10],
-                        requestMessage: dbRow[11],
-                        responseMessage: dbRow[12]
-                    },
-                    $isExpired: dbRow[13] === 1
-                };
-                notifications.unshift(row);
-            },
-            `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'notifications')} WHERE (sender_username LIKE @searchLike OR message LIKE @searchLike OR world_name LIKE @searchLike) ${vipQuery} ${filterQuery} ORDER BY created_at DESC LIMIT @limit`,
-            {
-                '@searchLike': searchLike,
-                '@limit': maxEntries,
-                ...vipArgs,
-                ...filterArgs
-            }
+        const rows = await adapter.selectWhere(
+            adapter.userTable(dbVars.userPrefix, 'notifications'),
+            '*',
+            `(sender_username LIKE @searchLike OR message LIKE @searchLike OR world_name LIKE @searchLike) ${vipQuery} ${filterQuery}`,
+            { '@searchLike': searchLike, ...vipArgs, ...filterArgs },
+            { order: 'created_at DESC', limit: maxEntries }
         );
-        return notifications;
+        return rows
+            .map((dbRow) => ({
+                id: dbRow[0],
+                created_at: dbRow[1],
+                type: dbRow[2],
+                senderUserId: dbRow[3],
+                senderUsername: dbRow[4],
+                receiverUserId: dbRow[5],
+                message: dbRow[6],
+                details: {
+                    worldId: dbRow[7],
+                    worldName: dbRow[8],
+                    imageUrl: dbRow[9],
+                    inviteMessage: dbRow[10],
+                    requestMessage: dbRow[11],
+                    responseMessage: dbRow[12]
+                },
+                $isExpired: dbRow[13] === 1
+            }))
+            .reverse();
     },
 
     addNotificationToDatabase(row) {

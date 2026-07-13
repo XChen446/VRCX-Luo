@@ -16,7 +16,6 @@
 import { adapter } from '../adapter/index.js';
 import configRepository from '../../config.js';
 
-
 /**
  * 从 currentVersion 迁移到 targetVersion，执行所有迁移。
  *
@@ -43,15 +42,21 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 
     // 阶段 2: 筛选并排序迁移
     const sortedMigrations = topologicalSort(
-        migrations.filter(m => m.version > currentVersion && m.version <= targetVersion)
+        migrations.filter(
+            (m) => m.version > currentVersion && m.version <= targetVersion
+        )
     );
 
     if (sortedMigrations.length === 0) {
-        console.log(`[迁移] 范围内无迁移版本 (${currentVersion}, ${targetVersion}]`);
+        console.log(
+            `[迁移] 范围内无迁移版本 (${currentVersion}, ${targetVersion}]`
+        );
         return true;
     }
 
-    console.log(`[迁移] 已选中 ${sortedMigrations.length} 个迁移: ${sortedMigrations.map(m => m.version).join(' -> ')}`);
+    console.log(
+        `[迁移] 已选中 ${sortedMigrations.length} 个迁移: ${sortedMigrations.map((m) => m.version).join(' -> ')}`
+    );
 
     // 获取当前数据库引擎（全局统一，避免重复调用）
     const currentEngine = getDatabaseEngine();
@@ -147,7 +152,9 @@ function validateMapFile(data, type) {
     }
 
     if (data.type !== type) {
-        throw new Error(`无效的 .map 文件: 期望类型 "${type}", 实际为 "${data.type}"`);
+        throw new Error(
+            `无效的 .map 文件: 期望类型 "${type}", 实际为 "${data.type}"`
+        );
     }
 
     if (type === 'schema') {
@@ -204,7 +211,11 @@ function checkDatabaseCompatibility(database, engine) {
 
     const check = (key, label) => {
         const val = database[key];
-        if (val && typeof val === 'string' && val.toLowerCase() !== engine.toLowerCase()) {
+        if (
+            val &&
+            typeof val === 'string' &&
+            val.toLowerCase() !== engine.toLowerCase()
+        ) {
             throw new Error(
                 `数据库引擎不匹配: 迁移要求 ${label} = "${val}", 当前引擎为 "${engine}"`
             );
@@ -255,7 +266,10 @@ function topologicalSort(migrations) {
             const schemaKey = `${m.version}-schema`;
             if (nodeMap.has(schemaKey)) {
                 adj.get(schemaKey).push(`${m.version}-data`);
-                inDegree.set(`${m.version}-data`, inDegree.get(`${m.version}-data`) + 1);
+                inDegree.set(
+                    `${m.version}-data`,
+                    inDegree.get(`${m.version}-data`) + 1
+                );
             }
         }
     }
@@ -288,7 +302,10 @@ function topologicalSort(migrations) {
         const [vNext] = sortedNodes[i + 1].split('-');
         if (Number(vNext) > Number(vCurr)) {
             adj.get(sortedNodes[i]).push(sortedNodes[i + 1]);
-            inDegree.set(sortedNodes[i + 1], inDegree.get(sortedNodes[i + 1]) + 1);
+            inDegree.set(
+                sortedNodes[i + 1],
+                inDegree.get(sortedNodes[i + 1]) + 1
+            );
         }
     }
 
@@ -310,10 +327,12 @@ function topologicalSort(migrations) {
 
         const id = queue.shift();
         const [verStr, type] = id.split('-');
-        const match = migrations.find(m => m.version === parseInt(verStr) && m.type === type);
+        const match = migrations.find(
+            (m) => m.version === parseInt(verStr) && m.type === type
+        );
         if (match) result.push(match);
 
-        for (const next of (adj.get(id) || [])) {
+        for (const next of adj.get(id) || []) {
             const newDeg = inDegree.get(next) - 1;
             inDegree.set(next, newDeg);
             if (newDeg === 0) queue.push(next);
@@ -324,7 +343,7 @@ function topologicalSort(migrations) {
     if (result.length !== migrations.length) {
         throw new Error(
             `[迁移] DAG 拓扑排序检测到循环引用：已解析 ${result.length}/${migrations.length} 个节点，` +
-            `剩余节点存在无法满足的依赖关系，终止迁移`
+                `剩余节点存在无法满足的依赖关系，终止迁移`
         );
     }
 
@@ -343,7 +362,9 @@ async function executeMigration(migration, options, engine) {
     // 检查 database 引擎兼容性
     checkDatabaseCompatibility(data.database, engine);
 
-    console.log(`[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`);
+    console.log(
+        `[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`
+    );
 
     // 每个版本包一层事务
     // 注意：同版本内 schema.map 和 data.map 是分开的两个事务（各自执行一次 executeMigration）
@@ -440,8 +461,8 @@ async function executeAddColumn(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} ADD COLUMN ${column} ${type} DEFAULT ${defaultValue}`;
-            await adapter.executeNonQuery(sql);
+            const columnDef = `${column} ${type} DEFAULT ${defaultValue}`;
+            await adapter.alterTableAddColumn(table, columnDef);
             console.log(`[迁移] 已添加列 ${column} 到 ${table}`);
         } catch (e) {
             const errStr = e.toString();
@@ -471,8 +492,7 @@ async function executeCreateIndex(tablePattern, op) {
         const columnsStr = columns.join(', ');
 
         try {
-            const sql = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${columnsStr})`;
-            await adapter.executeNonQuery(sql);
+            await adapter.createIndex(indexName, table, columns);
             console.log(`[迁移] 已在 ${table} 上创建索引 ${indexName}`);
         } catch (e) {
             console.error(`[迁移] 创建索引 ${indexName} 失败:`, e);
@@ -492,8 +512,7 @@ async function executeDropColumn(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} DROP COLUMN ${column}`;
-            await adapter.executeNonQuery(sql);
+            await adapter.alterTableDropColumn(table, column);
             console.log(`[迁移] 已删除 ${table} 的列 ${column}`);
         } catch (e) {
             const errStr = e.toString();
@@ -518,14 +537,15 @@ async function executeRenameTable(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} RENAME TO ${newName}`;
-            await adapter.executeNonQuery(sql);
+            await adapter.alterTableRename(table, newName);
             console.log(`[迁移] 已重命名 ${table} 为 ${newName}`);
         } catch (e) {
             const errStr = e.toString();
             // 幂等处理: 表已被重命名或不存在，跳过
             if (errStr.includes('no such table')) {
-                console.log(`[迁移] 表 ${table} 不存在（可能已被重命名），跳过`);
+                console.log(
+                    `[迁移] 表 ${table} 不存在（可能已被重命名），跳过`
+                );
             } else if (errStr.includes('already exists')) {
                 console.log(`[迁移] 目标表 ${newName} 已存在，跳过`);
             } else {
@@ -582,8 +602,7 @@ async function executeDelete(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `DELETE FROM ${table} WHERE ${where}`;
-            const result = await adapter.executeNonQuery(sql);
+            const result = await adapter.deleteWhere(table, where);
             if (Number(result) > 0) {
                 console.log(`[迁移] 从 ${table} 删除了 ${Number(result)} 行`);
             }
@@ -611,7 +630,10 @@ async function executeUpdate(tablePattern, op, params, options) {
 
         try {
             const sql = `UPDATE ${table} SET ${setClause} WHERE ${where}`;
-            const result = await adapter.executeNonQuery(sql, flattenArgs(resolvedSet));
+            const result = await adapter.executeNonQuery(
+                sql,
+                flattenArgs(resolvedSet)
+            );
             if (Number(result) > 0) {
                 console.log(`[迁移] 更新了 ${table} 的 ${Number(result)} 行`);
             }
@@ -632,16 +654,11 @@ async function executeInsert(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const colList = columns.join(', ');
-            const placeholders = columns.map((_, i) => `@p${i}`).join(', ');
-            const sql = `INSERT OR IGNORE INTO ${table} (${colList}) VALUES (${placeholders})`;
-
-            const args = {};
+            const data = {};
             columns.forEach((col, i) => {
-                args[`@p${i}`] = values[i];
+                data[col] = values[i];
             });
-
-            const result = await adapter.executeNonQuery(sql, args);
+            const result = await adapter.insert(table, data, 'ignore');
             if (Number(result) > 0) {
                 console.log(`[迁移] 插入到 ${table} ${Number(result)} 行`);
             }
@@ -663,16 +680,8 @@ async function expandWildcard(tablePattern) {
     }
 
     // 通配符模式: %_suffix
-    // 匹配以 suffix 结尾的任何表
-    const suffix = tablePattern.substring(1); // 移除开头的 %
-
-    const tables = [];
-    await adapter.execute((row) => {
-        tables.push(row[0]);
-    },
-        `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern ESCAPE '\\'`,
-        { '@pattern': `%${suffix}` }
-    );
+    // adapter.listTables 等价查询但不含 ESCAPE '\\'（通配符模式不含反斜杠，可忽略）
+    const tables = await adapter.listTables(tablePattern);
 
     return tables;
 }
@@ -752,7 +761,9 @@ async function resolveParam(paramName, params, options) {
         // 基本安全校验：确保嵌入内容是 SQL 子查询（以 ( 开头）
         const trimmed = sql.trim();
         if (!trimmed.startsWith('(')) {
-            console.warn(`[迁移] sql_embed 参数 ${paramName} 应以 ( 开头，实际: ${trimmed.slice(0, 40)}`);
+            console.warn(
+                `[迁移] sql_embed 参数 ${paramName} 应以 ( 开头，实际: ${trimmed.slice(0, 40)}`
+            );
             return null;
         }
         // 特殊标记，表示这不是一个值而是要嵌入的 SQL 片段
@@ -782,9 +793,13 @@ async function resolveParam(paramName, params, options) {
 async function executeWithParams(sql, args) {
     const results = [];
     try {
-        await adapter.execute((row) => {
-            results.push(Array.from(row));
-        }, sql, args);
+        await adapter.execute(
+            (row) => {
+                results.push(Array.from(row));
+            },
+            sql,
+            args
+        );
         return results;
     } catch (e) {
         console.error('[迁移] 子查询执行失败:', e);
@@ -801,13 +816,15 @@ async function executeWithParams(sql, args) {
  * @returns {string} - "col1 = @col1, col2 = (SELECT ...), ..."
  */
 function buildSetClause(setObj) {
-    return Object.keys(setObj).map(key => {
-        const val = setObj[key];
-        if (val && typeof val === 'object' && val.__sqlEmbed) {
-            return `${key} = ${val.sql}`;
-        }
-        return `${key} = @${key}`;
-    }).join(', ');
+    return Object.keys(setObj)
+        .map((key) => {
+            const val = setObj[key];
+            if (val && typeof val === 'object' && val.__sqlEmbed) {
+                return `${key} = ${val.sql}`;
+            }
+            return `${key} = @${key}`;
+        })
+        .join(', ');
 }
 
 /**
@@ -834,6 +851,4 @@ async function recordCheckpoint(version) {
     console.log(`[迁移] 检查点已记录: VRCX_databaseVersion = ${version}`);
 }
 
-export {
-    runMigrations
-};
+export { runMigrations };

@@ -6,10 +6,9 @@ const tableFixes = {
     async cleanLegendFromFriendLog() {
         var tables = await adapter.listTables('%_friend_log_history');
         for (var tableName of tables) {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${tableName}
-                WHERE type = 'TrustLevel' AND created_at > '2022-05-04T01:00:00.000Z'
-                AND ((trust_level = 'Veteran User' AND previous_trust_level = 'Trusted User') OR (trust_level = 'Trusted User' AND previous_trust_level = 'Veteran User'))`
+            await adapter.deleteWhere(
+                tableName,
+                "type = 'TrustLevel' AND created_at > '2022-05-04T01:00:00.000Z' AND ((trust_level = 'Veteran User' AND previous_trust_level = 'Trusted User') OR (trust_level = 'Trusted User' AND previous_trust_level = 'Veteran User'))"
             );
         }
     },
@@ -33,40 +32,30 @@ const tableFixes = {
             });
         }
         travelingList.forEach(async (travelingEntry) => {
-            await adapter.execute(
-                (dbRow) => {
-                    var onPlayingJoin = {
-                        rowId: dbRow[0],
-                        created_at: dbRow[1],
-                        type: dbRow[2],
-                        displayName: dbRow[3],
-                        location: dbRow[4],
-                        userId: dbRow[5],
-                        time: dbRow[6]
-                    };
-                    adapter.executeNonQuery(
-                        `UPDATE gamelog_join_leave SET location = @location WHERE id = @rowId`,
-                        {
-                            '@rowId': travelingEntry.rowId,
-                            '@location': onPlayingJoin.location
-                        }
-                    );
-                },
-                "SELECT * FROM gamelog_join_leave WHERE type = 'OnPlayerJoined' AND display_name = @displayName AND created_at <= @created_at ORDER BY created_at DESC LIMIT 1",
+            const joinRows = await adapter.selectWhere(
+                'gamelog_join_leave',
+                ['location'],
+                "type = 'OnPlayerJoined' AND display_name = @displayName AND created_at <= @created_at",
                 {
                     '@displayName': travelingEntry.displayName,
                     '@created_at': travelingEntry.created_at
-                }
+                },
+                { order: 'created_at DESC', limit: 1 }
             );
+            if (joinRows.length > 0) {
+                adapter.update(
+                    'gamelog_join_leave',
+                    { location: joinRows[0][0] },
+                    { id: travelingEntry.rowId }
+                );
+            }
         });
     },
 
     async fixNegativeGPS() {
         var gpsTables = await adapter.listTables('%_gps');
         gpsTables.forEach((tableName) => {
-            adapter.executeNonQuery(
-                `UPDATE ${tableName} SET time = 0 WHERE time < 0`
-            );
+            adapter.updateWhere(tableName, { time: 0 }, 'time < 0');
         });
     },
 
@@ -102,25 +91,26 @@ const tableFixes = {
             }
         });
 
-        adapter.executeNonQuery(
-            `UPDATE gamelog_join_leave SET time = 0 WHERE id IN (${badEntriesList})`
+        adapter.updateWhere(
+            'gamelog_join_leave',
+            { time: 0 },
+            `id IN (${badEntriesList})`
         );
     },
 
     async fixBrokenGroupInvites() {
         var notificationTables = await adapter.listTables('%_notifications');
         notificationTables.forEach((tableName) => {
-            adapter.executeNonQuery(
-                `DELETE FROM ${tableName} WHERE type LIKE '%.%'`
-            );
+            adapter.deleteWhere(tableName, "type LIKE '%.%'");
         });
     },
 
     async fixBrokenNotifications() {
         var tables = await adapter.listTables('%_notifications');
         for (var tableName of tables) {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${tableName} WHERE (created_at is null or created_at = '')`
+            await adapter.deleteWhere(
+                tableName,
+                "created_at is null or created_at = ''"
             );
         }
     },
@@ -128,8 +118,9 @@ const tableFixes = {
     async fixBrokenGroupChange() {
         var tables = await adapter.listTables('%_notifications');
         for (var tableName of tables) {
-            await adapter.executeNonQuery(
-                `DELETE FROM ${tableName} WHERE type = 'groupChange' AND created_at < '2024-04-23T03:00:00.000Z'`
+            await adapter.deleteWhere(
+                tableName,
+                "type = 'groupChange' AND created_at < '2024-04-23T03:00:00.000Z'"
             );
         }
     },
@@ -137,8 +128,10 @@ const tableFixes = {
     async fixCancelFriendRequestTypo() {
         var tables = await adapter.listTables('%_friend_log_history');
         for (var tableName of tables) {
-            await adapter.executeNonQuery(
-                `UPDATE ${tableName} SET type = 'CancelFriendRequest' WHERE type = 'CancelFriendRequst'`
+            await adapter.updateWhere(
+                tableName,
+                { type: 'CancelFriendRequest' },
+                "type = 'CancelFriendRequst'"
             );
         }
     },
