@@ -69,14 +69,14 @@ const activityV2 = {
             table,
             cols,
             `user_id = @userId AND ${typeClause} AND created_at < @from`,
-            { '@userId': userId, '@from': fromDateIso },
+            { userId, from: fromDateIso },
             { order: 'created_at DESC', limit: 1 }
         );
         const during = await adapter.selectWhere(
             table,
             cols,
             `user_id = @userId AND ${typeClause} AND created_at >= @from${toDateIso ? ' AND created_at < @to' : ''}`,
-            { '@userId': userId, '@from': fromDateIso, '@to': toDateIso },
+            { userId, from: fromDateIso, to: toDateIso },
             { order: 'created_at ASC' }
         );
         const after = toDateIso
@@ -84,7 +84,7 @@ const activityV2 = {
                   table,
                   cols,
                   `user_id = @userId AND ${typeClause} AND created_at >= @to`,
-                  { '@userId': userId, '@to': toDateIso },
+                  { userId, to: toDateIso },
                   { order: 'created_at ASC', limit: 1 }
               )
             : [];
@@ -100,7 +100,7 @@ const activityV2 = {
             adapter.userTable(dbVars.userPrefix, 'feed_online_offline'),
             ['created_at', 'type'],
             "user_id = @userId AND (type = 'Online' OR type = 'Offline') AND created_at > @afterCreatedAt",
-            { '@userId': userId, '@afterCreatedAt': afterCreatedAt },
+            { userId, afterCreatedAt },
             { order: 'created_at' }
         );
         return rows.map((dbRow) => ({ created_at: dbRow[0], type: dbRow[1] }));
@@ -113,14 +113,14 @@ const activityV2 = {
             'gamelog_location',
             cols,
             'created_at < @from',
-            { '@from': fromDateIso },
+            { from: fromDateIso },
             { order: 'created_at DESC', limit: 1 }
         );
         const during = await adapter.selectWhere(
             'gamelog_location',
             cols,
             `created_at >= @from${toDateIso ? ' AND created_at < @to' : ''}`,
-            { '@from': fromDateIso, '@to': toDateIso },
+            { from: fromDateIso, to: toDateIso },
             { order: 'created_at ASC' }
         );
         const after = toDateIso
@@ -128,7 +128,7 @@ const activityV2 = {
                   'gamelog_location',
                   cols,
                   'created_at >= @to',
-                  { '@to': toDateIso },
+                  { to: toDateIso },
                   { order: 'created_at ASC', limit: 1 }
               )
             : [];
@@ -145,7 +145,7 @@ const activityV2 = {
             'gamelog_location',
             ['created_at', 'time'],
             `created_at ${operator} @afterCreatedAt`,
-            { '@afterCreatedAt': afterCreatedAt },
+            { afterCreatedAt },
             { order: 'created_at' }
         );
         return rows.map((dbRow) => ({
@@ -199,7 +199,7 @@ const activityV2 = {
             sessionsTable(),
             ['start_at', 'end_at', 'is_open_tail', 'source_revision'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'start_at' }
         );
         return rows.map((dbRow) => ({
@@ -233,10 +233,7 @@ const activityV2 = {
                 await adapter.deleteWhere(
                     sessionsTable(),
                     'user_id = @userId AND start_at >= @replaceFromStartAt',
-                    {
-                        '@userId': userId,
-                        '@replaceFromStartAt': replaceFromStartAt
-                    }
+                    { userId, replaceFromStartAt }
                 );
             }
             await insertSessions(userId, sessions);

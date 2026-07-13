@@ -9,7 +9,7 @@ const gameLog = {
         var cutoff = date.toISOString().split('T')[0];
         var limit = dbVars.maxTableSize;
         const opts = { order: 'id DESC', limit: limit };
-        const params = { '@cutoff': cutoff };
+        const params = { cutoff };
 
         const locationRows = await adapter.selectWhere(
             'gamelog_location',
@@ -293,7 +293,7 @@ const gameLog = {
             'gamelog_location',
             ['created_at', 'world_id'],
             'world_id = @worldId',
-            { '@worldId': worldId },
+            { worldId },
             { order: 'id DESC', limit: count }
         );
         if (rows.length === 0) return { created_at: '', worldId: '' };
@@ -305,7 +305,7 @@ const gameLog = {
             'gamelog_location',
             ['COUNT(DISTINCT location)'],
             'world_id = @worldId',
-            { '@worldId': worldId }
+            { worldId }
         );
         return { visitCount: rows.length > 0 ? rows[0][0] : 0, worldId };
     },
@@ -315,7 +315,7 @@ const gameLog = {
             'gamelog_location',
             ['time'],
             'world_id = @worldId',
-            { '@worldId': worldId }
+            { worldId }
         );
         let timeSpent = 0;
         for (const row of rows) {
@@ -329,7 +329,7 @@ const gameLog = {
             'gamelog_location',
             ['created_at'],
             'location LIKE @groupId',
-            { '@groupId': `%${groupId}%` },
+            { groupId: `%${groupId}%` },
             { order: 'id DESC', limit: 1 }
         );
         return { created_at: rows.length > 0 ? rows[0][0] : '' };
@@ -340,7 +340,7 @@ const gameLog = {
             'gamelog_location',
             ['created_at', 'location', 'time', 'world_name', 'group_name'],
             'location LIKE @groupId',
-            { '@groupId': `%${groupId}%` },
+            { groupId: `%${groupId}%` },
             { order: 'id DESC' }
         );
         const data = new Map();
@@ -366,7 +366,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'user_id'],
             'user_id = @userId OR display_name = @displayName',
-            { '@userId': input.id, '@displayName': input.displayName },
+            { userId: input.id, displayName: input.displayName },
             { order: 'id DESC', limit: count }
         );
         if (rows.length === 0) return { created_at: '', userId: '' };
@@ -381,11 +381,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at'],
             "type = 'OnPlayerJoined' AND (user_id = @userId OR display_name = @displayName) AND location = @location",
-            {
-                '@userId': input.id,
-                '@displayName': input.displayName,
-                '@location': location
-            },
+            { userId: input.id, displayName: input.displayName, location },
             { order: 'id DESC', limit: 1 }
         );
         if (rows.length === 0) return null;
@@ -399,7 +395,7 @@ const gameLog = {
             aggregates: [{ expr: 'MAX(created_at)', alias: 'last_seen' }],
             groupBy: ['user_id'],
             where: "(type = 'OnPlayerJoined' OR type = 'OnPlayerLeft') AND user_id != @currentUserId AND user_id IS NOT NULL AND user_id != ''",
-            params: { '@currentUserId': currentUserId },
+            params: { currentUserId },
             order: 'MAX(id) DESC',
             limit
         });
@@ -432,7 +428,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['COUNT(DISTINCT location)'],
             "type = 'OnPlayerJoined' AND (user_id = @userId OR display_name = @displayName)",
-            { '@userId': input.id, '@displayName': input.displayName }
+            { userId: input.id, displayName: input.displayName }
         );
         return {
             joinCount: rows.length > 0 ? rows[0][0] : '',
@@ -445,7 +441,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['time'],
             "type = 'OnPlayerLeft' AND (user_id = @userId OR display_name = @displayName)",
-            { '@userId': input.id, '@displayName': input.displayName }
+            { userId: input.id, displayName: input.displayName }
         );
         let timeSpent = 0;
         for (const row of rows) {
@@ -468,7 +464,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'user_id', 'time', 'location', 'display_name'],
             'user_id = @userId OR display_name = @displayName',
-            { '@userId': input.id, '@displayName': input.displayName },
+            { userId: input.id, displayName: input.displayName },
             { order: 'id DESC' }
         );
         for (const row of rows) {
@@ -535,9 +531,9 @@ const gameLog = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -651,9 +647,9 @@ const gameLog = {
 
         const gamelogDatabase = [];
         const args = {
-            '@locationLike': `%${instanceId}%`,
-            '@limit': dbVars.searchTableSize,
-            '@perTable': dbVars.searchTableSize,
+            locationLike: `%${instanceId}%`,
+            limit: dbVars.searchTableSize,
+            perTable: dbVars.searchTableSize,
             ...vipArgs
         };
         await adapter.execute(
@@ -738,9 +734,9 @@ const gameLog = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -852,8 +848,8 @@ const gameLog = {
         }
         const gamelogDatabase = [];
         const args = {
-            '@limit': maxEntries,
-            '@perTable': maxEntries,
+            limit: maxEntries,
+            perTable: maxEntries,
             ...vipArgs
         };
         await adapter.execute(
@@ -938,9 +934,9 @@ const gameLog = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -1073,9 +1069,9 @@ const gameLog = {
         }
         const gamelogDatabase = [];
         const args = {
-            '@searchLike': searchLike,
-            '@limit': maxEntries,
-            '@perTable': maxEntries,
+            searchLike: searchLike,
+            limit: maxEntries,
+            perTable: maxEntries,
             ...vipArgs
         };
         await adapter.execute(
@@ -1176,7 +1172,7 @@ const gameLog = {
             'gamelog_location',
             ['world_name'],
             'world_id = @worldId',
-            { '@worldId': worldId },
+            { worldId },
             { order: 'id DESC', limit: 1 }
         );
         return rows.length > 0 ? rows[0][0] : '';
@@ -1242,8 +1238,8 @@ const gameLog = {
             WHERE user_id = @userId OR display_name = @displayName
             ORDER BY gamelog_join_leave.id ASC`,
             {
-                '@userId': input.id,
-                '@displayName': input.displayName
+                userId: input.id,
+                displayName: input.displayName
             }
         );
 
@@ -1256,7 +1252,7 @@ const gameLog = {
             'gamelog_location',
             ['created_at', 'location', 'time', 'world_name', 'group_name'],
             'world_id = @worldId',
-            { '@worldId': input.id },
+            { worldId: input.id },
             { order: 'id DESC' }
         );
         for (const dbRow of rows) {
@@ -1282,7 +1278,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'display_name', 'user_id', 'time', 'type'],
             'location = @location',
-            { '@location': location }
+            { location }
         );
         for (const dbRow of rows) {
             var time = 0;
@@ -1318,7 +1314,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'display_name', 'user_id', 'time'],
             "location = @location AND type = 'OnPlayerLeft'",
-            { '@location': location },
+            { location },
             { order: 'created_at ASC' }
         );
         for (const dbRow of rows) {
@@ -1338,7 +1334,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'display_name'],
             'user_id = @userId',
-            { '@userId': ref.id },
+            { userId: ref.id },
             { order: 'id DESC' }
         );
         for (const dbRow of rows) {
@@ -1385,7 +1381,7 @@ const gameLog = {
             const fromDate = new Date(
                 now.getTime() - fromDays * 86400000
             ).toISOString();
-            params['@fromDate'] = fromDate;
+            params.fromDate = fromDate;
             where.push('created_at >= @fromDate');
 
             // Standard SQL: last row before fromDate
@@ -1393,7 +1389,7 @@ const gameLog = {
                 'gamelog_location',
                 ['created_at', 'time'],
                 'created_at < @fromDate',
-                { '@fromDate': fromDate },
+                { fromDate },
                 { order: 'created_at DESC', limit: 1 }
             );
             for (const dbRow of rows) {
@@ -1404,7 +1400,7 @@ const gameLog = {
             const toDate = new Date(
                 now.getTime() - toDays * 86400000
             ).toISOString();
-            params['@toDate'] = toDate;
+            params.toDate = toDate;
             where.push('created_at < @toDate');
         }
 
@@ -1435,7 +1431,7 @@ const gameLog = {
             'gamelog_location',
             ['created_at', 'time'],
             'created_at ' + op + ' @after',
-            { '@after': afterCreatedAt },
+            { after: afterCreatedAt },
             { order: 'created_at' }
         );
         for (const dbRow of rows) {
@@ -1467,10 +1463,10 @@ const gameLog = {
             sortBy === 'count' ? 'visit_count DESC' : 'total_time DESC';
         const params = {};
         if (days > 0) {
-            params['@cutoff'] = adapter.daysAgoISO(days);
+            params.cutoff = adapter.daysAgoISO(days);
         }
         if (excludeWorldId) {
-            params['@excludeWorldId'] = excludeWorldId;
+            params.excludeWorldId = excludeWorldId;
         }
         // Standard SQL GROUP BY with portable ISO string filter
         const rows = await adapter.selectGroupBy('gamelog_location', {
@@ -1498,7 +1494,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['user_id'],
             "display_name = @displayName AND user_id != ''",
-            { '@displayName': displayName },
+            { displayName },
             { order: 'id DESC', limit: 1 }
         );
         return rows.length > 0 ? rows[0][0] : '';
@@ -1552,8 +1548,8 @@ const gameLog = {
                  OR created_at BETWEEN @utc_start_date AND @utc_end_date
              )`,
             {
-                '@utc_start_date': startDate,
-                '@utc_end_date': endDate
+                utc_start_date: startDate,
+                utc_end_date: endDate
             }
         );
 
@@ -1569,7 +1565,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at'],
             'user_id = @userId',
-            { '@userId': dbVars.userId }
+            { userId: dbVars.userId }
         );
         return rows.map((row) => row[0]);
     },
@@ -1601,7 +1597,7 @@ const gameLog = {
                 "type='OnPlayerLeft' AND user_id=@uid AND " +
                     locationFilter +
                     ' AND time>0',
-                { '@uid': friendAUserId },
+                { uid: friendAUserId },
                 { order: 'created_at DESC' }
             ),
             adapter.selectWhere(
@@ -1610,7 +1606,7 @@ const gameLog = {
                 "type='OnPlayerLeft' AND user_id=@uid AND " +
                     locationFilter +
                     ' AND time>0',
-                { '@uid': friendBUserId },
+                { uid: friendBUserId },
                 { order: 'created_at DESC' }
             )
         ]);
@@ -1668,7 +1664,7 @@ const gameLog = {
                             'time'
                         ],
                         where: "user_id=@uid AND previous_location NOT IN ('','offline','traveling','private','private:private') AND time>0",
-                        params: { '@uid': userId }
+                        params: { uid: userId }
                     },
                     {
                         table: adapter.userTable(
@@ -1677,7 +1673,7 @@ const gameLog = {
                         ),
                         columns: ['location', 'created_at', 'time'],
                         where: "user_id=@uid AND type='Offline' AND location NOT IN ('','offline','traveling','private','private:private') AND time>0",
-                        params: { '@uid': userId }
+                        params: { uid: userId }
                     }
                 ],
                 { order: 'created_at DESC' }
@@ -1749,7 +1745,7 @@ const gameLog = {
             'location',
             locations,
             "user_id = @userId AND type = 'OnPlayerLeft' AND time > 0",
-            { '@userId': userId }
+            { userId }
         );
         for (const row of rows) {
             const loc = row[0];
@@ -1824,7 +1820,7 @@ const gameLog = {
             'gamelog_join_leave',
             ['created_at', 'location'],
             'user_id = @userId AND created_at > @created_at',
-            { '@userId': dbVars.userId, '@created_at': oneWeekAgo },
+            { userId: dbVars.userId, created_at: oneWeekAgo },
             { order: 'created_at DESC' }
         );
         for (const row of rows) {
@@ -1845,11 +1841,7 @@ const gameLog = {
             '(user_id = @user_id OR display_name = @displayName) AND location = @location AND id IN (' +
                 input.events.join(',') +
                 ')',
-            {
-                '@user_id': input.id,
-                '@displayName': input.displayName,
-                '@location': input.location
-            }
+            { user_id: input.id, displayName: input.displayName, location: input.location }
         );
     },
 
@@ -1922,7 +1914,7 @@ const gameLog = {
             where: "type='OnPlayerLeft' AND user_id!='' AND user_id!=@currentUserId AND time>0 AND location NOT IN ('','traveling')",
             groupBy: ['user_id', 'day'],
             order: 'day ASC',
-            params: { '@currentUserId': dbVars.userId }
+            params: { currentUserId: dbVars.userId }
         });
         return rows.map((row) => ({
             userId: row[0],
@@ -1943,7 +1935,7 @@ const gameLog = {
      */
     async getSessionsLocationSegments(beforeId, limit) {
         const cursorClause = beforeId != null ? 'id < @beforeId' : null;
-        const args = beforeId != null ? { '@beforeId': beforeId } : {};
+        const args = beforeId != null ? { beforeId } : {};
         const rows = await adapter.selectWhere(
             'gamelog_location',
             [
@@ -1983,10 +1975,7 @@ const gameLog = {
 
         const dateFilter =
             'created_at >= @afterDate AND created_at <= @beforeDate';
-        const dateParams = {
-            '@afterDate': afterDate,
-            '@beforeDate': beforeDate
-        };
+        const dateParams = { afterDate, beforeDate };
 
         // join/leave events
         const jlRows = await adapter.selectWhereIn(
@@ -1995,7 +1984,7 @@ const gameLog = {
             'location',
             locationTags,
             'user_id != @selfId AND ' + dateFilter,
-            { '@selfId': dbVars.userId, ...dateParams },
+            { selfId: dbVars.userId, ...dateParams },
             { order: 'created_at ASC' }
         );
 
@@ -2065,7 +2054,7 @@ const gameLog = {
                 'group_name'
             ],
             'created_at >= @sinceDate',
-            { '@sinceDate': sinceDate, '@limit': limit },
+            { sinceDate, limit },
             { order: 'id DESC', limit }
         );
         return rows.map((dbRow) => ({

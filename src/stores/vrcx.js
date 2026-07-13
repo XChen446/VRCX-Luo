@@ -422,7 +422,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             const versionRows = await adapter.executeReadOnly(
                 oldPath,
                 "SELECT value FROM configs WHERE key = @key",
-                { '@key': 'config:VRCX_databaseversion' }
+                { key: 'config:VRCX_databaseversion' }
             );
             const oldVersion =
                 versionRows && versionRows.length > 0

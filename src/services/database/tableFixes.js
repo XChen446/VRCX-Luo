@@ -36,10 +36,7 @@ const tableFixes = {
                 'gamelog_join_leave',
                 ['location'],
                 "type = 'OnPlayerJoined' AND display_name = @displayName AND created_at <= @created_at",
-                {
-                    '@displayName': travelingEntry.displayName,
-                    '@created_at': travelingEntry.created_at
-                },
+                { displayName: travelingEntry.displayName, created_at: travelingEntry.created_at },
                 { order: 'created_at DESC', limit: 1 }
             );
             if (joinRows.length > 0) {

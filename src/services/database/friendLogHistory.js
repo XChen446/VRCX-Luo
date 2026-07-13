@@ -91,11 +91,11 @@ const friendLogHistory = {
                 'type',
                 types,
                 'user_id = @user_id',
-                { '@user_id': userId }
+                { user_id: userId }
             );
         } else {
             rows = await adapter.selectWhere(table, '*', 'user_id = @user_id', {
-                '@user_id': userId
+                user_id: userId
             });
         }
         return rows.map((dbRow) => {

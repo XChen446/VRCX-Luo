@@ -742,7 +742,7 @@ async function resolveParam(paramName, params, options) {
         if (Array.isArray(bind) && bind.length > 0) {
             for (const key of bind) {
                 if (paramDef[key] !== undefined) {
-                    queryArgs[`@${key}`] = paramDef[key];
+                    queryArgs[key] = paramDef[key];
                 }
             }
         }
@@ -837,7 +837,7 @@ function flattenArgs(obj) {
     const args = {};
     for (const [key, value] of Object.entries(obj)) {
         if (value && typeof value === 'object' && value.__sqlEmbed) continue;
-        args[`@${key}`] = value;
+        args[key] = value;
     }
     return args;
 }

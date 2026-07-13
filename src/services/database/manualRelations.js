@@ -76,7 +76,7 @@ const manualRelations = {
             `${adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL')}`,
             ['1'],
             'user_id_a = @idA AND user_id_b = @idB',
-            { '@idA': id1, '@idB': id2 },
+            { idA: id1, idB: id2 },
             { limit: 1 }
         );
         return rows.length > 0;
@@ -92,7 +92,7 @@ const manualRelations = {
             adapter.userTable(dbVars.userPrefix, 'manual_relations_MANUEL'),
             ['user_id_a', 'user_id_b', 'relation_type', 'added_at'],
             'user_id_a = @userId OR user_id_b = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'added_at DESC' }
         );
         return rows.map((row) => ({
@@ -114,7 +114,7 @@ const manualRelations = {
             'gamelog_join_leave',
             ['location', 'created_at', 'time'],
             "type = 'OnPlayerLeft' AND user_id = @myId AND time > 0 AND location NOT IN ('', 'traveling')",
-            { '@myId': myUserId }
+            { myId: myUserId }
         );
         for (const row of mySessionRows) {
             const loc = row[0];
@@ -131,7 +131,7 @@ const manualRelations = {
             'gamelog_join_leave',
             ['location', 'user_id', 'created_at', 'time'],
             `type = 'OnPlayerLeft' AND user_id != @myId AND user_id != '' AND time > 0 AND ${excludeLoc}`,
-            { '@myId': myUserId }
+            { myId: myUserId }
         );
         const rows2 = await adapter.selectWhere(
             adapter.userTable(dbVars.userPrefix, 'feed_gps'),

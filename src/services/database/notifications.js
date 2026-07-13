@@ -45,7 +45,7 @@ const notifications = {
         const vipArgs = {};
         if (vipList.length > 0) {
             const placeholders = vipList.map((id, i) => {
-                vipArgs[`@vip_${i}`] = id;
+                vipArgs[`vip_${i}`] = id;
                 return `@vip_${i}`;
             });
             vipQuery = `AND sender_user_id IN (${placeholders.join(', ')})`;
@@ -55,7 +55,7 @@ const notifications = {
         const filterArgs = {};
         if (filters.length > 0) {
             const placeholders = filters.map((type, i) => {
-                filterArgs[`@filter_${i}`] = type;
+                filterArgs[`filter_${i}`] = type;
                 return `@filter_${i}`;
             });
             filterQuery = `AND type IN (${placeholders.join(', ')})`;
@@ -65,7 +65,7 @@ const notifications = {
             adapter.userTable(dbVars.userPrefix, 'notifications'),
             '*',
             `(sender_username LIKE @searchLike OR message LIKE @searchLike OR world_name LIKE @searchLike) ${vipQuery} ${filterQuery}`,
-            { '@searchLike': searchLike, ...vipArgs, ...filterArgs },
+            { searchLike, ...vipArgs, ...filterArgs },
             { order: 'created_at DESC', limit: maxEntries }
         );
         return rows

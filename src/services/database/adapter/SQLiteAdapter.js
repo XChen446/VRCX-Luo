@@ -13,19 +13,36 @@ import { EngineAdapter } from './EngineAdapter.js';
  * structured parameters and never construct SQL strings directly.
  */
 class SQLiteAdapter extends EngineAdapter {
-    /** Execute raw SQL with row callback. For complex queries (UNION ALL, subqueries). */
+    /**
+     * Normalize param keys: add `@` prefix for named-param objects.
+     * Arrays (positional `?`) and null/undefined pass through unchanged.
+     * @param {object|Array|null} args
+     * @returns {object|Array|null}
+     */
+    _normalizeArgs(args) {
+        if (args && typeof args === 'object' && !Array.isArray(args)) {
+            const prefixed = {};
+            for (const [k, v] of Object.entries(args)) {
+                prefixed[k.startsWith('@') ? k : `@${k}`] = v;
+            }
+            return prefixed;
+        }
+        return args;
+    }
+
+    /** Execute raw SQL with row callback. Normalizes named-param keys. */
     execute(callback, sql, args) {
-        return sqliteService.execute(callback, sql, args);
+        return sqliteService.execute(callback, sql, this._normalizeArgs(args));
     }
 
-    /** Execute raw SQL without row callback. */
+    /** Execute raw SQL without row callback. Normalizes named-param keys. */
     executeNonQuery(sql, args) {
-        return sqliteService.executeNonQuery(sql, args);
+        return sqliteService.executeNonQuery(sql, this._normalizeArgs(args));
     }
 
-    /** Execute read-only SQL on a separate SQLite connection. */
+    /** Execute read-only SQL on a separate SQLite connection. Normalizes named-param keys. */
     executeReadOnly(path, sql, args) {
-        return sqliteService.executeReadOnly(path, sql, args);
+        return sqliteService.executeReadOnly(path, sql, this._normalizeArgs(args));
     }
 
     /** @private Map 'ignore'|'replace' to OR IGNORE|OR REPLACE clause. */
@@ -48,10 +65,10 @@ class SQLiteAdapter extends EngineAdapter {
         const columns = Object.keys(data);
         const params = {};
         const values = columns.map((col) => {
-            params[`@${col}`] = data[col];
+            params[col] = data[col];
             return `@${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `INSERT ${clause} INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
             params
         );
@@ -73,14 +90,14 @@ class SQLiteAdapter extends EngineAdapter {
                 '(' +
                 columns
                     .map((col) => {
-                        params[`@${col}_${i}`] = row[col];
+                        params[`${col}_${i}`] = row[col];
                         return `@${col}_${i}`;
                     })
                     .join(', ') +
                 ')'
             );
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `INSERT ${clause} INTO ${table} (${columns.join(', ')}) VALUES ${values.join(', ')}`,
             params
         );
@@ -95,14 +112,14 @@ class SQLiteAdapter extends EngineAdapter {
     update(table, data, where) {
         const params = {};
         const setClauses = Object.keys(data).map((col) => {
-            params[`@set_${col}`] = data[col];
+            params[`set_${col}`] = data[col];
             return `${col} = @set_${col}`;
         });
         const whereClauses = Object.keys(where).map((col) => {
-            params[`@where_${col}`] = where[col];
+            params[`where_${col}`] = where[col];
             return `${col} = @where_${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`,
             params
         );
@@ -117,10 +134,10 @@ class SQLiteAdapter extends EngineAdapter {
      */
     updateWhere(table, data, whereClause, params = {}) {
         const setClauses = Object.keys(data).map((col) => {
-            params[`@set_${col}`] = data[col];
+            params[`set_${col}`] = data[col];
             return `${col} = @set_${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClause}`,
             params
         );
@@ -134,10 +151,10 @@ class SQLiteAdapter extends EngineAdapter {
     delete(table, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `DELETE FROM ${table} WHERE ${clauses.join(' AND ')}`,
             params
         );
@@ -148,7 +165,7 @@ class SQLiteAdapter extends EngineAdapter {
      * @param {string} table - target table name
      */
     deleteAll(table) {
-        return sqliteService.executeNonQuery(`DELETE FROM ${table}`);
+        return this.executeNonQuery(`DELETE FROM ${table}`);
     }
 
     /**
@@ -158,7 +175,7 @@ class SQLiteAdapter extends EngineAdapter {
      * @param {object} [params] - named parameters
      */
     deleteWhere(table, whereClause, params = {}) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `DELETE FROM ${table} WHERE ${whereClause}`,
             params
         );
@@ -171,12 +188,12 @@ class SQLiteAdapter extends EngineAdapter {
     async selectOne(table, columns, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         let result = null;
-        await sqliteService.execute(
+        await this.execute(
             (row) => {
                 result = row;
             },
@@ -195,7 +212,7 @@ class SQLiteAdapter extends EngineAdapter {
         const { order, limit, distinct } = options;
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
@@ -204,7 +221,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -224,7 +241,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -261,7 +278,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -288,7 +305,7 @@ class SQLiteAdapter extends EngineAdapter {
         const { order, limit } = options;
         const params = { ...(extraParams || {}) };
         const placeholders = inValues.map((v, i) => {
-            params[`@in_${i}`] = v;
+            params[`in_${i}`] = v;
             return `@in_${i}`;
         });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
@@ -297,7 +314,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -350,7 +367,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute(
+        await this.execute(
             (row) => rows.push(row),
             finalSql,
             allParams
@@ -406,7 +423,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -418,10 +435,10 @@ class SQLiteAdapter extends EngineAdapter {
      */
     async listTables(likePattern) {
         const tables = [];
-        await sqliteService.execute(
+        await this.execute(
             (row) => tables.push(row[0]),
             `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern`,
-            { '@pattern': likePattern }
+            { pattern: likePattern }
         );
         return tables;
     }
@@ -491,11 +508,11 @@ class SQLiteAdapter extends EngineAdapter {
     async count(table, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
         let result = 0;
-        await sqliteService.execute(
+        await this.execute(
             (row) => {
                 result = row[0];
             },
@@ -508,7 +525,7 @@ class SQLiteAdapter extends EngineAdapter {
     /** COUNT with raw WHERE clause. Omit whereClause to COUNT all rows. */
     async countWhere(table, whereClause, params) {
         let result = 0;
-        await sqliteService.execute(
+        await this.execute(
             (row) => {
                 result = row[0];
             },
@@ -657,12 +674,12 @@ class SQLiteAdapter extends EngineAdapter {
      * @param {object} where - equality conditions (AND-ed)
      */
     increment(table, column, amount, where) {
-        const params = { '@amount': amount };
+        const params = { amount };
         const whereClauses = Object.keys(where).map((col) => {
-            params[`@where_${col}`] = where[col];
+            params[`where_${col}`] = where[col];
             return `${col} = @where_${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `UPDATE ${table} SET ${column} = ${column} + @amount WHERE ${whereClauses.join(' AND ')}`,
             params
         );
@@ -686,15 +703,15 @@ class SQLiteAdapter extends EngineAdapter {
         const columns = Object.keys(insertData);
         const params = {};
         const values = columns.map((col) => {
-            params[`@${col}`] = insertData[col];
+            params[col] = insertData[col];
             return `@${col}`;
         });
         const updateClauses = Object.keys(updateData).map((col) => {
-            params[`@up_${col}`] = updateData[col];
+            params[`up_${col}`] = updateData[col];
             return `${col} = @up_${col}`;
         });
         const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON CONFLICT(${conflictColumn}) DO UPDATE SET ${updateClauses.join(', ')}`;
-        return sqliteService.executeNonQuery(sql, params);
+        return this.executeNonQuery(sql, params);
     }
 
     /**

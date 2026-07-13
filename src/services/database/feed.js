@@ -251,7 +251,7 @@ const feed = {
             adapter.userTable(dbVars.userPrefix, 'feed_bio'),
             ['bio', 'previous_bio', 'created_at'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'id DESC', limit: 1 }
         );
         if (rows.length === 0) return null;
@@ -279,7 +279,7 @@ const feed = {
             'id',
             maxIds,
             'bio LIKE @searchLike',
-            { '@searchLike': `%${query}%` },
+            { searchLike: `%${query}%` },
             { limit }
         );
         return rows.map((row) => ({
@@ -300,7 +300,7 @@ const feed = {
                 'created_at'
             ],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'id DESC', limit: 1 }
         );
         if (rows.length === 0) return null;
@@ -319,7 +319,7 @@ const feed = {
             adapter.userTable(dbVars.userPrefix, 'feed_bio'),
             ['bio', 'previous_bio', 'created_at'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'id DESC', limit: limit }
         );
         return rows.map((row) => ({
@@ -360,7 +360,7 @@ const feed = {
             await adapter.deleteWhere(
                 adapter.userTable(dbVars.userPrefix, 'feed_avatar'),
                 'created_at < @cutoff',
-                { '@cutoff': cutoffDate }
+                { cutoff: cutoffDate }
             );
         } else {
             await adapter.deleteAll(
@@ -398,7 +398,7 @@ const feed = {
             adapter.userTable(dbVars.userPrefix, 'feed_status'),
             ['created_at', 'status'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'created_at ASC' }
         );
         return rows.map((row) => ({
@@ -419,7 +419,7 @@ const feed = {
             adapter.userTable(dbVars.userPrefix, 'feed_online_offline'),
             ['created_at', 'type'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { order: 'created_at ASC' }
         );
         return rows.map((row) => ({
@@ -442,7 +442,7 @@ const feed = {
             adapter.userTable(dbVars.userPrefix, 'feed_gps'),
             ['created_at'],
             'user_id = @userId AND location = @location',
-            { '@userId': userId, '@location': location },
+            { userId, location },
             { order: 'id DESC', limit: 1 }
         );
         if (rows.length === 0) return null;
@@ -466,9 +466,9 @@ const feed = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -518,12 +518,12 @@ const feed = {
             });
         }
         const searchLike = `%${search}%`;
-        const sharedParams = { '@searchLike': searchLike, ...vipArgs };
+        const sharedParams = { searchLike, ...vipArgs };
         if (dateFrom) {
-            sharedParams['@dateFrom'] = dateFrom;
+            sharedParams.dateFrom = dateFrom;
         }
         if (dateTo) {
-            sharedParams['@dateTo'] = dateTo;
+            sharedParams.dateTo = dateTo;
         }
         const srcOpts = {
             order: 'created_at DESC, id DESC',
@@ -606,9 +606,9 @@ const feed = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -707,9 +707,9 @@ const feed = {
         if (vipList.length > 0) {
             const vipPlaceholders = [];
             vipList.forEach((vip, i) => {
-                const key = `@vip_${i}`;
+                const key = `vip_${i}`;
                 vipArgs[key] = vip;
-                vipPlaceholders.push(key);
+                vipPlaceholders.push(`@${key}`);
             });
             vipQuery = `AND user_id IN (${vipPlaceholders.join(', ')})`;
         }
@@ -745,7 +745,7 @@ const feed = {
                 feedSource(table, cols, { where, params: vipArgs, ...srcOpts })
             );
         };
-        vipArgs['@instanceLike'] = `%${instanceId}%`;
+        vipArgs.instanceLike = `%${instanceId}%`;
 
         if (gps)
             pushSource(
@@ -799,7 +799,7 @@ const feed = {
             ],
             groupBy: ['world_id'],
             where: baseWhere,
-            params: { '@daysAgo': daysAgo },
+            params: { daysAgo },
             order: 'unique_friends DESC, visit_count DESC',
             limit
         });
@@ -818,7 +818,7 @@ const feed = {
             ],
             groupBy: ['world_id'],
             where: `created_at >= @daysAgo AND created_at < @halfAgo AND location LIKE 'wrld_%' AND ${adapter.sqlHasInstanceId('location')} AND world_name IS NOT NULL AND world_name != ''`,
-            params: { '@daysAgo': daysAgo, '@halfAgo': halfAgo }
+            params: { daysAgo, halfAgo }
         });
         const trendMap = new Map();
         for (const dbRow of trendRows) trendMap.set(dbRow[0], dbRow[1]);
@@ -830,7 +830,7 @@ const feed = {
             ],
             groupBy: ['world_id'],
             where: `created_at >= @halfAgo AND location LIKE 'wrld_%' AND ${adapter.sqlHasInstanceId('location')} AND world_name IS NOT NULL AND world_name != ''`,
-            params: { '@halfAgo': halfAgo }
+            params: { halfAgo }
         });
         const recentMap = new Map();
         for (const dbRow of recentRows) recentMap.set(dbRow[0], dbRow[1]);
@@ -867,7 +867,7 @@ const feed = {
                 ],
                 groupBy: ['user_id'],
                 where: `${adapter.sqlExtractWorldId('location')} = @worldId AND created_at >= @daysAgo`,
-                params: { '@worldId': worldId, '@daysAgo': daysAgo },
+                params: { worldId, daysAgo },
                 order: 'visit_count DESC'
             }
         );
