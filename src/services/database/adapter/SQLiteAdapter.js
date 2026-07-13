@@ -447,6 +447,46 @@ class SQLiteAdapter extends EngineAdapter {
         return rows;
     }
 
+    /**
+     * Enumerate all user tables with their column metadata.
+     *
+     * Combines sqlite_schema enumeration with PRAGMA table_xinfo per table.
+     * Returns structured objects instead of positional arrays.
+     *
+     * @param {object} [options] - { path? }
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>}
+     */
+    async listTablesTypes({ path } = {}) {
+        const exec = path
+            ? (sql) => this.executeReadOnly(path, sql)
+            : async (sql) => {
+                  const rows = [];
+                  await sqliteService.execute((r) => rows.push(r), sql);
+                  return rows;
+              };
+
+        const tableRows = await exec(
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        );
+
+        const result = [];
+        for (const [tableName] of tableRows) {
+            const colRows = await exec(`PRAGMA table_xinfo("${tableName}")`);
+            result.push({
+                tableName,
+                columns: colRows.map((c) => ({
+                    name: c[1],
+                    type: c[2],
+                    notNull: !!c[3],
+                    defaultValue: c[4],
+                    isPK: !!c[5],
+                    isHidden: !!c[6]
+                }))
+            });
+        }
+        return result;
+    }
+
     /** COUNT with equality conditions. */
     async count(table, where) {
         const params = {};

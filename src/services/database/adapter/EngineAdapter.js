@@ -273,6 +273,16 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * Enumerate all user tables with their column metadata.
+     * @param {object} [options] - { path? }
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>>>}
+     * @abstract
+     */
+    listTablesTypes(_options) {
+        throw new Error('abstract');
+    }
+
     // ── Naming ───────────────────────────────────────────────────────
 
     /** @abstract */

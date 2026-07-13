@@ -440,17 +440,11 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             // 2) 确保新库有完整的表结构
             await database.initTables();
 
-            // 3) 枚举旧库所有表，搬运数据
-            const tableRows = await adapter.executeReadOnly(
-                oldPath,
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            );
+            // 3) 枚举旧库所有表及其列信息，搬运数据
+            const tables = await adapter.listTablesTypes({ path: oldPath });
 
-            if (tableRows) {
-                for (const row of tableRows) {
-                    const tableName = row[0];
-                    await copyTableData(oldPath, tableName);
-                }
+            for (const { tableName, columns } of tables) {
+                await copyTableData(oldPath, tableName, columns);
             }
 
             // 4) 对新库跑迁移/修复
@@ -483,56 +477,27 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      * 通过只读连接从旧库读出一个表的所有数据，写入当前库。
      * 使用 INSERT OR IGNORE 跳过主键冲突的行。
      */
-    async function copyTableData(oldPath, tableName) {
-        // 读列信息（构造占位符用）
-        const colRows = await adapter.getTableColumns(tableName, oldPath);
-        if (!colRows || colRows.length === 0) return;
+    async function copyTableData(oldPath, tableName, columns) {
+        const visibleColumns = columns.filter((c) => !c.isHidden);
+        if (visibleColumns.length === 0) return;
 
-        // 过滤掉隐藏列 (colRows[i][5] = hidden flag)
-        const columns = colRows
-            .filter((c) => !c[5])
-            .map((c) => c[1]);
-        if (columns.length === 0) return;
+        const colList = visibleColumns.map((c) => c.name).join(', ');
 
-        const colList = columns.join(', ');
-
-        // 读数据
         const dataRows = await adapter.executeReadOnly(
             oldPath,
             `SELECT ${colList} FROM \"${tableName}\"`
         );
         if (!dataRows || dataRows.length === 0) return;
 
-        // 分批写入（每批 500 行）
-        const BATCH = 500;
-        const colCount = columns.length;
-        for (let i = 0; i < dataRows.length; i += BATCH) {
-            const batch = dataRows.slice(i, i + BATCH);
+        const rowsAsObjects = dataRows.map((row) => {
+            const obj = {};
+            visibleColumns.forEach((col, i) => {
+                obj[col.name] = row[i];
+            });
+            return obj;
+        });
 
-            // 构造 @p0..@pN 参数化批量 INSERT
-            const paramKeys = [];
-            const args = {};
-            for (let ri = 0; ri < batch.length; ri++) {
-                for (let ci = 0; ci < colCount; ci++) {
-                    const pk = `@p${ri * colCount + ci}`;
-                    paramKeys.push(pk);
-                    args[pk] = batch[ri][ci];
-                }
-            }
-
-            const valueGroups = [];
-            for (let ri = 0; ri < batch.length; ri++) {
-                const start = ri * colCount;
-                valueGroups.push(
-                    `(${paramKeys.slice(start, start + colCount).join(', ')})`
-                );
-            }
-
-            await adapter.executeNonQuery(
-                `INSERT OR IGNORE INTO \"${tableName}\" (${colList}) VALUES ${valueGroups.join(', ')}`,
-                args
-            );
-        }
+        await adapter.bulkInsert(tableName, rowsAsObjects, 'ignore');
     }
 
     async function waitForDatabaseInit() {
