@@ -111,6 +111,15 @@ class EngineAdapter {
     }
 
     /**
+     * DROP TABLE IF EXISTS.
+     * @param {string} table - table name to drop
+     * @abstract
+     */
+    dropTable(_table) {
+        throw new Error('abstract');
+    }
+
+    /**
      * DELETE with raw WHERE clause (non-equality conditions).
      * @param {string} table - target table name
      * @param {string} whereClause - raw WHERE content (without the WHERE keyword)

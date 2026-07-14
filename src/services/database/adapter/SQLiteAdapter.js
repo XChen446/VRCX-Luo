@@ -163,6 +163,11 @@ class SQLiteAdapter extends EngineAdapter {
         return this.executeNonQuery(`DELETE FROM ${table}`);
     }
 
+    /** DROP TABLE IF EXISTS. */
+    dropTable(table) {
+        return this.executeNonQuery(`DROP TABLE IF EXISTS ${table}`);
+    }
+
     /**
      * DELETE with raw WHERE clause (non-equality conditions).
      * @param {string} table - target table name
