@@ -44,7 +44,7 @@ export class AccountSession {
         this.userInfo = reactive({ id: userId, displayName: '' });
         this.label = '?';
         /**
-         * @type {Map<string, {id: string, state: string, ref?: object, $accountIds?: string[]}>}
+         * @type {Map<string, {id: string, name?: string, state: string, ref?: any, $accountIds?: string[], isVIP?: boolean, memo?: string, pendingOffline?: boolean, $nickName?: string}>}
          */
         this.friendsCache = new Map();
 
@@ -159,12 +159,15 @@ export class AccountSession {
     /**
      * Makes an API request using this account's secondary HTTP client.
      * Returns the parsed JSON response body.
+     * @param {string} endpoint
+     * @param {{ method?: string, params?: object, uploadImage?: boolean, headers?: object }} [options]
      */
     async _requestRaw(endpoint, options = {}) {
         const apiBase = this._apiEndpoint || AppDebug.endpointDomain;
         const init = {
             url: `${apiBase}/${endpoint}`,
             method: options.method || 'GET',
+            body: undefined,
             ...options
         };
 
