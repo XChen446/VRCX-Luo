@@ -419,6 +419,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
         try {
             // 1) 读出旧库版本号
+            // TODO: 迁移模块版本号检测阶段需要重写，不能使用oldpath直接替代，配置参数有可能改变
             const versionRows = await adapter.executeReadOnly(
                 oldPath,
                 "SELECT value FROM configs WHERE key = @key",
@@ -483,6 +484,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
         const colList = visibleColumns.map((c) => c.name).join(', ');
 
+        // TODO: 迁移模块重写（同上
         const dataRows = await adapter.executeReadOnly(
             oldPath,
             `SELECT ${colList} FROM \"${tableName}\"`
