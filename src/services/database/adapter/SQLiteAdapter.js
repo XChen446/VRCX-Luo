@@ -323,9 +323,11 @@ class SQLiteAdapter extends EngineAdapter {
      *
      * Each source defines a sub-SELECT. `columns` are real columns for that table;
      * `nulls` are columns that should appear as NULL in this branch (for column alignment).
+     * Pass `columns` as a raw SQL string (with `'Literal' AS type`, `NULL AS col`) 
+     * and omit `nulls` to handle complex interleaved column layouts.
      * All sources' params are merged together (they should use distinct or shared keys).
      *
-     * @param {object[]} sources - Array of { table, columns, nulls?, where?, params?, order?, limit? }
+     * @param {object[]} sources - Array of { table, columns?, nulls?, where?, params?, order?, limit? }
      * @param {object}   [options] - { schema?, order?, limit? }
      *   schema: outer column list (default '*'), order: outer ORDER BY, limit: outer LIMIT
      * @returns {Promise<Array<Array>>}

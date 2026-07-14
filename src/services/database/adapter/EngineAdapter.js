@@ -183,7 +183,7 @@ class EngineAdapter {
 
     /**
      * UNION ALL across multiple sources with optional outer ORDER BY + LIMIT.
-     * Each source: { table, columns, nulls?, where?, params?, order?, limit? }
+     * Each source: { table, columns?, nulls?, where?, params?, order?, limit? }
      * @param {object[]} sources
      * @param {object}   [options] - { schema?, order?, limit? }
      * @returns {Promise<Array<Array>>}
