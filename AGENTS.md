@@ -60,3 +60,12 @@ build/            → build output (gitignored)
 ## Build (Windows Local)
 
 `build-windows-local.bat` auto-installs .NET 10 SDK via winget if missing, then runs `npm run prod` + `dotnet build Dotnet/VRCX-Cef.csproj`.
+
+## Docs Knowledge Index
+
+项目架构、数据库设计、多账号方案等深度文档在 `docs/`：
+- `DATABASE_SCHEMA.md` — 数据库概念模型 (MCD) 与关系架构 (SR)，实体关联概览
+- `vrcx_mcd_mld.md` / `vrcx_sr_mld.md` — Merise 逻辑模型与关系模式，列出所有表名、字段、主键/外键
+- `DATA_REFRESH.md` — 四层数据刷新架构（L1 游戏日志、L2 WS、L3 轮询、L4 全量同步 + Luo 补全机制），Feed 采集/持久化/UI 查询全链路
+- `MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` — 多账号 V4 详细设计（AccountHub、AccountSession、热替换 Store、聚合视图、通知路由），含文件改动清单与代码量估算
+- `vrcx_erd.svg` / `vrcx_erd.mmd` / `vrcx_erd.dbml` — ER 图多格式输出
