@@ -8,8 +8,9 @@
  *  - Write GPS / Online / Offline feed events to the secondary account's DB tables
  *  - Run a lightweight periodic poll for friends list refresh
  *
- * Intentionally does NOT touch the global Stores (friendStore, userStore, etc.),
+ * Intentionally does NOT touch the global data Stores (friendStore, userStore, etc.),
  * so the primary account's UI is completely unaffected.
+ * The only exception is useModalStore, used solely for 2FA verification dialogs.
  */
 
 import { reactive } from 'vue';
@@ -21,10 +22,6 @@ import * as workerTimers from 'worker-timers';
 import { useModalStore } from '../stores/modal';
 
 // ── Utility ────────────────────────────────────────────────────────────────────
-
-function isVagueLoc(loc) {
-    return !loc || loc === 'private' || (typeof loc === 'string' && loc.startsWith('offline'));
-}
 
 function isDetailedLoc(loc) {
     return loc && loc !== 'private' && !(typeof loc === 'string' && loc.startsWith('offline')) && loc !== ':';
@@ -51,6 +48,8 @@ export class AccountSession {
         this._ws = null;
         this._pollTimer = null;
         this._destroyed = false;
+        this._apiEndpoint = null;
+        this._wsEndpoint = null;
     }
 
     // ── Session lifecycle ──────────────────────────────────────────────────────
@@ -99,6 +98,10 @@ export class AccountSession {
             const endpointToUse = endpoint || AppDebug.endpointDomainVrchat;
             const wsToUse = websocket || AppDebug.websocketDomainVrchat;
 
+            // Set endpoints before login requests so _requestRaw uses the correct base
+            this._apiEndpoint = endpointToUse;
+            this._wsEndpoint = wsToUse;
+
             const auth = btoa(
                 `${encodeURIComponent(username)}:${encodeURIComponent(password)}`
             );
@@ -109,9 +112,6 @@ export class AccountSession {
             if (currentUser?.requiresTwoFactorAuth) {
                 currentUser = await this._completeTwoFactorAuth(currentUser, savedEntry);
             }
-
-            this._wsEndpoint = wsToUse;
-            this._apiEndpoint = endpointToUse;
         } else {
             this._apiEndpoint = savedEntry.loginParams?.endpoint || AppDebug.endpointDomainVrchat;
             this._wsEndpoint = savedEntry.loginParams?.websocket || AppDebug.websocketDomainVrchat;
@@ -123,7 +123,6 @@ export class AccountSession {
 
         this.userInfo = currentUser;
         this.label = currentUser.displayName || this.userId;
-        this._initialized = true;
 
         // Initialise DB tables for this account
         await this._initTables();

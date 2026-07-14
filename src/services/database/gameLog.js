@@ -350,7 +350,10 @@ const gameLog = {
             { order: 'id DESC', limit: count }
         );
         if (rows.length === 0) return { created_at: '', worldId: '' };
-        return { created_at: rows[0][0], worldId: rows[0][1] };
+        // When currentWorldMatch is true, rows[0] is the current visit;
+        // skip it and return rows[1] (the previous visit) if available.
+        const rowIndex = currentWorldMatch && rows.length > 1 ? 1 : 0;
+        return { created_at: rows[rowIndex][0], worldId: rows[rowIndex][1] };
     },
 
     async getVisitCount(worldId) {
@@ -423,9 +426,12 @@ const gameLog = {
             { order: 'id DESC', limit: count }
         );
         if (rows.length === 0) return { created_at: '', userId: '' };
+        // When inCurrentWorld is true, rows[0] is the current encounter;
+        // skip it and return rows[1] (the previous encounter) if available.
+        const rowIndex = inCurrentWorld && rows.length > 1 ? 1 : 0;
         return {
-            created_at: rows[0][0],
-            userId: rows[0][1] || input.id
+            created_at: rows[rowIndex][0],
+            userId: rows[rowIndex][1] || input.id
         };
     },
 

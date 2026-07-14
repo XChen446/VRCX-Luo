@@ -204,20 +204,24 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
-     * SELECT rows with equality conditions.
+     * SELECT rows with equality conditions. Omit `where` to select all rows.
+     * @param {object} [where] - equality conditions (AND-ed), omit for no WHERE clause
      * @param {object} [options] - { order, limit, distinct }
      * @returns {Array<Array>} array of row arrays
      */
     async select(table, columns, where, options = {}) {
         const { order, limit, distinct } = options;
-        const params = {};
-        const clauses = Object.keys(where).map((col) => {
-            params[col] = where[col];
-            return `${col} = @${col}`;
-        });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         const distinctStr = distinct ? 'DISTINCT ' : '';
-        let sql = `SELECT ${distinctStr}${colStr} FROM ${table} WHERE ${clauses.join(' AND ')}`;
+        let sql = `SELECT ${distinctStr}${colStr} FROM ${table}`;
+        const params = {};
+        if (where && Object.keys(where).length > 0) {
+            const clauses = Object.keys(where).map((col) => {
+                params[col] = where[col];
+                return `${col} = @${col}`;
+            });
+            sql += ` WHERE ${clauses.join(' AND ')}`;
+        }
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
@@ -473,7 +477,7 @@ class SQLiteAdapter extends EngineAdapter {
      * Returns structured objects instead of positional arrays.
      *
      * @param {object} [options] - { path? }
-     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>}
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
      */
     async listTablesTypes({ path } = {}) {
         const exec = path

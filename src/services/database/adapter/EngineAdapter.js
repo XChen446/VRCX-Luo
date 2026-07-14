@@ -111,15 +111,6 @@ class EngineAdapter {
     }
 
     /**
-     * DROP TABLE IF EXISTS.
-     * @param {string} table - table name to drop
-     * @abstract
-     */
-    dropTable(_table) {
-        throw new Error('abstract');
-    }
-
-    /**
      * DELETE with raw WHERE clause (non-equality conditions).
      * @param {string} table - target table name
      * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
@@ -147,7 +138,10 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
-    /** @abstract */
+    /**
+     * SELECT rows with equality conditions. Omit `where` to select all rows.
+     * @abstract
+     */
     select(_table, _columns, _where, _options) {
         throw new Error('abstract');
     }
@@ -244,6 +238,15 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * DROP TABLE IF EXISTS.
+     * @param {string} table - table name to drop
+     * @abstract
+     */
+    dropTable(_table) {
+        throw new Error('abstract');
+    }
+
     // ── Transaction ──────────────────────────────────────────────────
 
     /** @abstract */
@@ -300,7 +303,7 @@ class EngineAdapter {
     /**
      * Enumerate all user tables with their column metadata.
      * @param {object} [options] - { path? }
-     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>>>}
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
      * @abstract
      */
     listTablesTypes(_options) {

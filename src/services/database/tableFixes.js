@@ -77,6 +77,7 @@ const tableFixes = {
 
     async fixBrokenLeaveEntries() {
         var badEntries = await this.getBrokenLeaveEntries();
+        if (badEntries.length === 0) return;
         var badEntriesList = '';
         var count = badEntries.length;
         badEntries.forEach((entry) => {

@@ -451,12 +451,13 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             // 4) 对新库跑迁移/修复
             await runFixes(targetVersion, { oldDbPath: oldPath });
 
-            // 5) 设版本号
+            // 5) 设版本号 — 保留旧库和目标版本中的较高值，避免降级
+            const finalVersion = Math.max(oldVersion, targetVersion);
             await configRepository.setInt(
                 'VRCX_databaseVersion',
-                targetVersion
+                finalVersion
             );
-            state.databaseVersion = targetVersion;
+            state.databaseVersion = finalVersion;
             console.log('数据库迁移完成。');
             return true;
         } catch (err) {
