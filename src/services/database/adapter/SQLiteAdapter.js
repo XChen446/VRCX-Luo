@@ -13,12 +13,7 @@ import { EngineAdapter } from './EngineAdapter.js';
  * structured parameters and never construct SQL strings directly.
  */
 class SQLiteAdapter extends EngineAdapter {
-    /**
-     * Normalize param keys: add `@` prefix for named-param objects.
-     * Arrays (positional `?`) and null/undefined pass through unchanged.
-     * @param {object|Array|null} args
-     * @returns {object|Array|null}
-     */
+    /** @override */
     _normalizeArgs(args) {
         if (args && typeof args === 'object' && !Array.isArray(args)) {
             const prefixed = {};
@@ -457,7 +452,7 @@ class SQLiteAdapter extends EngineAdapter {
             return this.executeReadOnly(path, `PRAGMA table_xinfo("${table}")`);
         }
         const rows = [];
-        await sqliteService.execute(
+        await this.execute(
             (row) => rows.push(row),
             `PRAGMA table_xinfo("${table}")`
         );
@@ -478,7 +473,7 @@ class SQLiteAdapter extends EngineAdapter {
             ? (sql) => this.executeReadOnly(path, sql)
             : async (sql) => {
                   const rows = [];
-                  await sqliteService.execute((r) => rows.push(r), sql);
+                  await this.execute((r) => rows.push(r), sql);
                   return rows;
               };
 
