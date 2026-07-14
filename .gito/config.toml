@@ -37,7 +37,7 @@ report_template_md = """
 {%- endfor -%}
 {%- if report.processing_warnings -%}{{"\n\n"}}## 处理警告
 {%- for warning in report.processing_warnings -%}{{"\n"}}  - {{ warning.message -}}{%- endfor -%}
-{%- endif -}
+{%- endif -%}
 {{- HTML_CR_COMMENT_MARKER -}}
 """
 
@@ -70,7 +70,7 @@ report_template_cli = """
 {%- endfor -%}{{"\n"}}
 {%- endfor -%}
 {%- if report.processing_warnings -%}{{"\n\n"}}{{ Style.BRIGHT }}处理警告{{ Style.RESET_ALL -}}{%- for warning in report.processing_warnings -%}{{"\n"}}  {{ Fore.YELLOW }}- {{ warning.message }}{{ Style.RESET_ALL -}}{%- endfor -%}
-{%- endif -}
+{%- endif -%}
 """
 
 # ── LLM 配置 ──
