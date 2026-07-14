@@ -18,6 +18,21 @@ class EngineAdapter {
     }
 
     /**
+     * Normalize parameter objects for the dialect's binding style.
+     *
+     * SQLite uses named `@param` keys; PG uses positional `$N`; MySQL uses `?`.
+     * Override in subclasses to transform `{ key: val }` into the dialect's
+     * required form. Default identity pass-through.
+     *
+     * @param {object|Array|null} args
+     * @returns {object|Array|null}
+     * @protected
+     */
+    _normalizeArgs(args) {
+        return args;
+    }
+
+    /**
      * Execute an async function with a temporary prefix override
      * for userTable(). Nested calls are supported.
      * @param {string} prefix
