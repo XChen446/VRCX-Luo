@@ -552,11 +552,6 @@ class SQLiteAdapter extends EngineAdapter {
         );
     }
 
-    /** CREATE TABLE IF NOT EXISTS from raw SQL string. */
-    createTableRaw(sql) {
-        return sqliteService.executeNonQuery(sql);
-    }
-
     /** CREATE INDEX IF NOT EXISTS. */
     createIndex(indexName, table, columns, unique = false) {
         const uniqueStr = unique ? 'UNIQUE ' : '';
