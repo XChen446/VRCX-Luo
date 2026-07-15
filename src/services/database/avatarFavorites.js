@@ -84,7 +84,7 @@ const avatarFavorites = {
                 }
             ],
             columns: ['h.*', 'c.*'],
-            where: 'h.author_id != @currentUserId',
+            where: 'c.author_id != @currentUserId',
             params: { currentUserId },
             order: 'h.created_at DESC',
             limit

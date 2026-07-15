@@ -369,7 +369,7 @@ class SQLiteAdapter extends EngineAdapter {
                 ? schema.join(', ')
                 : schema
             : '*';
-        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.map((p) => `(${p})`).join(' UNION ALL ')})`;
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];

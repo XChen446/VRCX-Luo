@@ -638,7 +638,7 @@ const gameLog = {
             });
         }
 
-        const sharedParams = { locationLike: `%${instanceId}%`, ...vipArgs };
+        const sharedParams = { locationLike: `%${instanceId}%`, currentUserId: dbVars.userId, ...vipArgs };
         const perTable = dbVars.searchTableSize;
         const sources = [];
         if (location) {
@@ -663,7 +663,7 @@ const gameLog = {
             sources.push({
                 table: 'gamelog_join_leave',
                 columns: C16.JOIN_LEAVE,
-                where: `(location LIKE @locationLike AND user_id != '${dbVars.userId}') ${vipQuery} ${query}`,
+                where: `(location LIKE @locationLike AND user_id != @currentUserId) ${vipQuery} ${query}`,
                 params: sharedParams,
                 order: 'id DESC',
                 limit: perTable
@@ -1042,7 +1042,7 @@ const gameLog = {
             });
         }
         const searchLike = `%${search}%`;
-        const sharedParams = { searchLike, ...vipArgs };
+        const sharedParams = { searchLike, currentUserId: dbVars.userId, ...vipArgs };
         const perTable = maxEntries;
         const sources = [];
         if (location) {
@@ -1064,7 +1064,7 @@ const gameLog = {
             sources.push({
                 table: 'gamelog_join_leave',
                 columns: C16.JOIN_LEAVE + C18_TAIL,
-                where: `(display_name LIKE @searchLike AND user_id != '${dbVars.userId}') ${vipQuery} ${query}`,
+                where: `(display_name LIKE @searchLike AND user_id != @currentUserId) ${vipQuery} ${query}`,
                 params: sharedParams,
                 order: 'id DESC',
                 limit: perTable
