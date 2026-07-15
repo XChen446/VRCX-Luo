@@ -327,9 +327,15 @@ class SQLiteAdapter extends EngineAdapter {
      *
      * Each source defines a sub-SELECT. `columns` are real columns for that table;
      * `nulls` are columns that should appear as NULL in this branch (for column alignment).
-     * Pass `columns` as a raw SQL string (with `'Literal' AS type`, `NULL AS col`) 
+     * Pass `columns` as a raw SQL string (with `'Literal' AS type`, `NULL AS col`)
      * and omit `nulls` to handle complex interleaved column layouts.
      * All sources' params are merged together (they should use distinct or shared keys).
+     *
+     * SQLite compound-select 语法限制：
+     * 1. 分支内不允许 ORDER BY / LIMIT（只能出现在整个 compound select 末尾）
+     * 2. 不支持 `(SELECT ...) UNION ALL (SELECT ...)` 分支括号语法
+     * 解决：每个分支包装成 `SELECT * FROM (branch)` 派生表，分支内的
+     * ORDER BY/LIMIT 在派生表内部合法，UNION ALL 分支本身无外层括号。
      *
      * @param {object[]} sources - Array of { table, columns?, nulls?, where?, params?, order?, limit? }
      * @param {object}   [options] - { schema?, order?, limit? }
@@ -362,14 +368,17 @@ class SQLiteAdapter extends EngineAdapter {
             if (where) sql += ` WHERE ${where}`;
             if (srcOrder) sql += ` ORDER BY ${srcOrder}`;
             if (srcLimit) sql += ` LIMIT ${srcLimit}`;
-            return sql;
+            // Wrap each branch as a derived table so that per-branch
+            // ORDER BY/LIMIT is legal inside, while the UNION ALL branches
+            // themselves stay unparenthesised (SQLite requirement).
+            return `SELECT * FROM (${sql})`;
         });
         const outerSchema = schema
             ? Array.isArray(schema)
                 ? schema.join(', ')
                 : schema
             : '*';
-        let finalSql = `SELECT ${outerSchema} FROM (${parts.map((p) => `(${p})`).join(' UNION ALL ')})`;
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
