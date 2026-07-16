@@ -96,6 +96,7 @@ class EngineAdapter {
      * Single-row INSERT with optional conflict handling.
      *
      * @abstract
+     * @engine-specific — SQLite: `INSERT OR IGNORE`/`INSERT OR REPLACE`; PostgreSQL: `ON CONFLICT DO NOTHING`/`ON CONFLICT DO UPDATE`; MySQL: `INSERT IGNORE`/`REPLACE INTO`
      * @param {string} _table - target table name (with prefix if applicable)
      * @param {object} _data - column:value mapping
      * @param {string} [_conflict] - 'ignore' → INSERT OR IGNORE, 'replace' → INSERT OR REPLACE
@@ -109,6 +110,7 @@ class EngineAdapter {
      * Bulk multi-row INSERT with optional conflict handling.
      *
      * @abstract
+     * @engine-specific — SQLite: `INSERT OR IGNORE`/`INSERT OR REPLACE`; PostgreSQL: `ON CONFLICT DO NOTHING`/`ON CONFLICT DO UPDATE`; MySQL: `INSERT IGNORE`/`REPLACE INTO`
      * @param {string} _table - target table name
      * @param {object[]} _rows - array of column:value objects (all must share the same keys)
      * @param {string} [_conflict] - 'ignore' | 'replace'
@@ -199,6 +201,7 @@ class EngineAdapter {
      * UPSERT: insert if not exists, update on conflict.
      *
      * @abstract
+     * @engine-specific — SQLite/PostgreSQL: `ON CONFLICT(col) DO UPDATE SET ...`; MySQL: `ON DUPLICATE KEY UPDATE ...`
      * @param {string} _table - target table name
      * @param {object} _insertData - columns to insert (key:value)
      * @param {object} _updateData - columns to update on conflict (key:value)
@@ -231,7 +234,7 @@ class EngineAdapter {
      * @param {string} _table - source table name
      * @param {string[]} _columns - column names to select
      * @param {object} [_where] - equality conditions (key:value); omit for all rows
-     * @param {object} [_options] - { order?, limit? }
+     * @param {object} [_options] - { order?, limit?, distinct? }
      * @returns {Promise<Array<Array>>} rows as positional arrays
      */
     select(_table, _columns, _where, _options) {
@@ -244,9 +247,9 @@ class EngineAdapter {
      * @abstract
      * @param {string} _table - source table name
      * @param {string[]} _columns - column names to select
-     * @param {string} _whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {string} [_whereClause] - raw WHERE content (without the WHERE keyword); omit/null to skip WHERE
      * @param {object} [_params] - named parameters for the WHERE clause
-     * @param {object} [_options] - { order?, limit? }
+     * @param {object} [_options] - { order?, limit?, distinct? }
      * @returns {Promise<Array<Array>>} rows as positional arrays
      */
     selectWhere(_table, _columns, _whereClause, _params, _options) {
@@ -334,7 +337,7 @@ class EngineAdapter {
      *
      * @abstract
      * @param {string} _table - source table name
-     * @param {string} _whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {string} [_whereClause] - raw WHERE content (without the WHERE keyword); omit/null to COUNT all rows
      * @param {object} [_params] - named parameters for the WHERE clause
      * @returns {Promise<number>} row count
      */
@@ -503,7 +506,7 @@ class EngineAdapter {
      *
      * @abstract
      * @engine-specific — SQLite: sqlite_schema; MySQL: SHOW TABLES LIKE; PostgreSQL: pg_catalog.pg_tables
-     * @param {string} [_likePattern] - SQL LIKE pattern; omit for all user tables
+     * @param {string} _likePattern - SQL LIKE pattern for filtering table names
      * @returns {Promise<Array<string>>} table names
      */
     listTables(_likePattern) {
@@ -592,7 +595,7 @@ class EngineAdapter {
      * SQL expression: extract date part from an ISO datetime column.
      *
      * @abstract
-     * @engine-specific — SQLite/PostgreSQL: `date(col)`; MySQL: `DATE(col)`
+     * @engine-specific — SQLite: `date(col)`; PostgreSQL: `col::date`; MySQL: `DATE(col)`
      * @param {string} _column - column name containing ISO datetime
      * @returns {string} SQL expression
      */
@@ -608,7 +611,7 @@ class EngineAdapter {
      * that computes the enter timestamp for BETWEEN comparisons.
      *
      * @abstract
-     * @engine-specific — SQLite: `datetime(created_at, '-' || (time / 1000) || ' seconds')`; PostgreSQL/MySQL: `created_at - (time / 1000) * INTERVAL '1 second'`
+     * @engine-specific — SQLite: `strftime('%Y-%m-%dT%H:%M:%SZ', created_at, '-' || (time * 1.0 / 1000) || ' seconds')`; PostgreSQL: `created_at - (time / 1000) * INTERVAL '1 second'`; MySQL: `created_at - INTERVAL (time / 1000) SECOND`
      * @param {string} _tsColumn - timestamp column name (e.g. 'created_at')
      * @param {string} _msColumn - duration-in-milliseconds column name (e.g. 'time')
      * @returns {string} SQL expression producing an ISO timestamp
