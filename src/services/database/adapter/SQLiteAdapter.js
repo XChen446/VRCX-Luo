@@ -1,13 +1,11 @@
-import sqliteService from '../../sqlite.js';
 import { EngineAdapter } from './EngineAdapter.js';
 
 /**
  * SQLite dialect adapter.
  *
- * Wraps sqliteService with structured methods that encapsulate SQLite-specific
- * syntax (INSERT OR IGNORE/REPLACE, @-params, IF NOT EXISTS, etc.).
- * All SQLite dialect keywords are centralized here — when switching engines,
- * replace this adapter's implementation (param style, conflict clause, DDL syntax).
+ * Encapsulates SQLite-specific syntax (INSERT OR IGNORE/REPLACE, @-params,
+ * IF NOT EXISTS, etc.). All SQLite dialect keywords are centralized here —
+ * when switching engines, replace this adapter's implementation.
  *
  * Business logic modules (feed.js, gameLog.js, etc.) call these methods with
  * structured parameters and never construct SQL strings directly.
@@ -25,19 +23,103 @@ class SQLiteAdapter extends EngineAdapter {
         return args;
     }
 
+    /** @private */
+    async handleSQLiteError(e) {
+        if (typeof e.message === 'string') {
+            const [{ useModalStore }, { i18n }, { openExternalLink }] =
+                await Promise.all([
+                    import('../../../stores/modal'),
+                    import('../../../plugins/i18n'),
+                    import('../../../shared/utils/appActions')
+                ]);
+            const modalStore = useModalStore();
+            if (e.message.includes('database disk image is malformed')) {
+                modalStore
+                    .confirm({
+                        description:
+                            'Please repair or delete your database file by following these instructions.',
+                        title: 'Your database is corrupted'
+                    })
+                    .then(({ ok }) => {
+                        if (!ok) return;
+                        openExternalLink(
+                            'https://github.com/yixijun/VRCX-Luo/wiki#how-to-repair-vrcx-database'
+                        );
+                    })
+                    .catch(() => {});
+            }
+            if (e.message.includes('database or disk is full')) {
+                modalStore.alert({
+                    description: i18n.global.t('message.database.disk_space'),
+                    title: 'Disk containing database is full'
+                });
+            }
+            if (
+                e.message.includes('database is locked') ||
+                e.message.includes('attempt to write a readonly database')
+            ) {
+                modalStore.alert({
+                    description:
+                        'Please close other applications that might be using the database file.',
+                    title: 'Database is locked'
+                });
+            }
+            if (e.message.includes('disk I/O error')) {
+                modalStore.alert({
+                    description: i18n.global.t('message.database.disk_error'),
+                    title: 'Disk I/O error'
+                });
+            }
+        }
+        throw e;
+    }
+
     /** Execute raw SQL with row callback. Normalizes named-param keys. */
-    execute(callback, sql, args) {
-        return sqliteService.execute(callback, sql, this._normalizeArgs(args));
+    async execute(callback, sql, args) {
+        args = this._normalizeArgs(args);
+        try {
+            if (LINUX) {
+                if (args) {
+                    args = new Map(Object.entries(args));
+                }
+                var json = await SQLite.ExecuteJson(sql, args);
+                var items = JSON.parse(json);
+                items.forEach((item) => {
+                    callback(item);
+                });
+                return;
+            }
+            var data = await SQLite.Execute(sql, args);
+            data.forEach((row) => {
+                callback(row);
+            });
+        } catch (e) {
+            await this.handleSQLiteError(e);
+        }
     }
 
     /** Execute raw SQL without row callback. Normalizes named-param keys. */
-    executeNonQuery(sql, args) {
-        return sqliteService.executeNonQuery(sql, this._normalizeArgs(args));
+    async executeNonQuery(sql, args) {
+        args = this._normalizeArgs(args);
+        try {
+            if (LINUX && args) {
+                args = new Map(Object.entries(args));
+            }
+            return await SQLite.ExecuteNonQuery(sql, args);
+        } catch (e) {
+            await this.handleSQLiteError(e);
+        }
     }
 
     /** Execute read-only SQL on a separate SQLite connection. Normalizes named-param keys. */
-    executeReadOnly(path, sql, args) {
-        return sqliteService.executeReadOnly(path, sql, this._normalizeArgs(args));
+    async executeReadOnly(path, sql, args) {
+        args = this._normalizeArgs(args);
+        try {
+            const json = await SQLite.ExecuteReadOnlyJson(path, sql, args);
+            return JSON.parse(json);
+        } catch (e) {
+            await this.handleSQLiteError(e);
+        }
     }
 
     /** @private Map 'ignore'|'replace' to OR IGNORE|OR REPLACE clause. */
@@ -560,7 +642,7 @@ class SQLiteAdapter extends EngineAdapter {
             const constraints = col.constraints ? ` ${col.constraints}` : '';
             return `${col.name} ${col.type}${constraints}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs.join(', ')})`
         );
     }
@@ -569,28 +651,28 @@ class SQLiteAdapter extends EngineAdapter {
     createIndex(indexName, table, columns, unique = false) {
         const uniqueStr = unique ? 'UNIQUE ' : '';
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `CREATE ${uniqueStr}INDEX IF NOT EXISTS ${indexName} ON ${table} (${colStr})`
         );
     }
 
     /** ALTER TABLE ADD COLUMN. */
     alterTableAddColumn(table, columnDef) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} ADD COLUMN ${columnDef}`
         );
     }
 
     /** ALTER TABLE DROP COLUMN. */
     alterTableDropColumn(table, column) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} DROP COLUMN ${column}`
         );
     }
 
     /** ALTER TABLE RENAME TO. */
     alterTableRename(table, newName) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} RENAME TO ${newName}`
         );
     }
@@ -899,27 +981,27 @@ class SQLiteAdapter extends EngineAdapter {
 
     /** BEGIN transaction. */
     begin() {
-        return sqliteService.executeNonQuery('BEGIN');
+        return this.executeNonQuery('BEGIN');
     }
 
     /** COMMIT transaction. */
     commit() {
-        return sqliteService.executeNonQuery('COMMIT');
+        return this.executeNonQuery('COMMIT');
     }
 
     /** ROLLBACK transaction. */
     rollback() {
-        return sqliteService.executeNonQuery('ROLLBACK');
+        return this.executeNonQuery('ROLLBACK');
     }
 
     /** VACUUM — reclaim storage. */
     vacuum() {
-        return sqliteService.executeNonQuery('VACUUM');
+        return this.executeNonQuery('VACUUM');
     }
 
     /** PRAGMA optimize — maintenance hint. SQLite-specific; replace with ANALYZE on other engines. */
     optimize() {
-        return sqliteService.executeNonQuery('PRAGMA optimize');
+        return this.executeNonQuery('PRAGMA optimize');
     }
 }
 

@@ -28,7 +28,6 @@ declare global {
         database: any;
         gameLogService: any;
         crypto: any;
-        sqliteService: any;
         interopApi: {
             callDotNetMethod: (
                 className: any,
