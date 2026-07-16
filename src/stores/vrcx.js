@@ -43,7 +43,7 @@ import { clearVRCXCache } from '../coordinators/vrcxCoordinator';
 import { resetSearchIndexOnLogin } from '../coordinators/searchIndexCoordinator';
 import { watchState } from '../services/watchState';
 
-import { adapter } from '../services/database/adapter/index.js';
+import { adapter, createAdapter } from '../services/database/adapter/index.js';
 import configRepository from '../services/config';
 
 // 迁移系统开关: true=使用新的 .map 迁移系统, false=使用旧的 runFixes() 方式
@@ -417,11 +417,13 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
         databaseUpgradeState.value.toVersion = targetVersion;
 
+        const oldDb = createAdapter({ connection: `sqlite:///${oldPath}` });
+
         try {
             // 1) 读出旧库版本号
-            // TODO: 迁移模块版本号检测阶段需要重写，不能使用oldpath直接替代，配置参数有可能改变
-            const versionRows = await adapter.executeReadOnly(
-                oldPath,
+            const versionRows = [];
+            await oldDb.execute(
+                (row) => versionRows.push(row),
                 "SELECT value FROM configs WHERE key = @key",
                 { key: 'config:VRCX_databaseversion' }
             );
@@ -442,14 +444,14 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             await database.initTables();
 
             // 3) 枚举旧库所有表及其列信息，搬运数据
-            const tables = await adapter.listTablesTypes({ path: oldPath });
+            const tables = await oldDb.listTablesTypes();
 
             for (const { tableName, columns } of tables) {
-                await copyTableData(oldPath, tableName, columns);
+                await copyTableData(oldDb, tableName, columns);
             }
 
             // 4) 对新库跑迁移/修复
-            await runFixes(targetVersion, { oldDbPath: oldPath });
+            await runFixes(targetVersion, { oldDb });
 
             // 5) 设版本号 — 保留旧库和目标版本中的较高值，避免降级
             const finalVersion = Math.max(oldVersion, targetVersion);
@@ -479,15 +481,15 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      * 通过只读连接从旧库读出一个表的所有数据，写入当前库。
      * 使用 INSERT OR IGNORE 跳过主键冲突的行。
      */
-    async function copyTableData(oldPath, tableName, columns) {
+    async function copyTableData(oldDb, tableName, columns) {
         const visibleColumns = columns.filter((c) => !c.isHidden);
         if (visibleColumns.length === 0) return;
 
         const colList = visibleColumns.map((c) => c.name).join(', ');
 
-        // TODO: 迁移模块重写（同上
-        const dataRows = await adapter.executeReadOnly(
-            oldPath,
+        const dataRows = [];
+        await oldDb.execute(
+            (row) => dataRows.push(row),
             `SELECT ${colList} FROM \"${tableName}\"`
         );
         if (!dataRows || dataRows.length === 0) return;

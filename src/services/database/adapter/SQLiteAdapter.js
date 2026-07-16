@@ -11,6 +11,21 @@ import { EngineAdapter } from './EngineAdapter.js';
  * structured parameters and never construct SQL strings directly.
  */
 class SQLiteAdapter extends EngineAdapter {
+    /** @type {string|null} */
+    connectionString = null;
+
+    /**
+     * @param {object} [config]
+     * @param {string} [config.connection] - sqlite:/// URI 或连接字符串
+     * @param {...object} [config.params] - 额外连接参数（覆盖默认）
+     */
+    constructor({ connection, ...params } = {}) {
+        super();
+        if (connection) {
+            this.connectionString = this._buildConnectionString(connection, params);
+        }
+    }
+
     /** @override */
     _normalizeArgs(args) {
         if (args && typeof args === 'object' && !Array.isArray(args)) {
@@ -74,10 +89,43 @@ class SQLiteAdapter extends EngineAdapter {
         throw e;
     }
 
+    /** @private Build SQLite connection string from sqlite:// URI + custom params. */
+    _buildConnectionString(uri, params = {}) {
+        const url = new URL(uri);
+        let dataSource;
+
+        if (url.host) {
+            // TODO: 网络路径/UNC支持 — e.g. sqlite://example.com/share/example.sqlite3
+            dataSource = `\\\\${url.host}${url.pathname.replace(/\//g, '\\')}`;
+        } else {
+            dataSource = url.pathname;
+            if (WINDOWS && dataSource.startsWith('/')) {
+                dataSource = dataSource.slice(1);
+            }
+        }
+
+        const defaults = {
+            'Data Source': `"${dataSource}"`,
+            'Read Only': 'True',
+            'Version': '3'
+        };
+
+        const merged = { ...defaults, ...params };
+        return Object.entries(merged)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(';');
+    }
+
     /** Execute raw SQL with row callback. Normalizes named-param keys. */
     async execute(callback, sql, args) {
         args = this._normalizeArgs(args);
         try {
+            if (this.connectionString) {
+                let json = await SQLite.ExecuteJson(this.connectionString, sql, args);
+                let items = JSON.parse(json);
+                items.forEach((item) => { callback(item); });
+                return;
+            }
             if (LINUX) {
                 if (args) {
                     args = new Map(Object.entries(args));
@@ -102,21 +150,13 @@ class SQLiteAdapter extends EngineAdapter {
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
         try {
+            if (this.connectionString) {
+                return await SQLite.ExecuteNonQuery(this.connectionString, sql, args);
+            }
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
             }
             return await SQLite.ExecuteNonQuery(sql, args);
-        } catch (e) {
-            await this.handleSQLiteError(e);
-        }
-    }
-
-    /** Execute read-only SQL on a separate SQLite connection. Normalizes named-param keys. */
-    async executeReadOnly(path, sql, args) {
-        args = this._normalizeArgs(args);
-        try {
-            const json = await SQLite.ExecuteReadOnlyJson(path, sql, args);
-            return JSON.parse(json);
         } catch (e) {
             await this.handleSQLiteError(e);
         }
@@ -546,13 +586,9 @@ class SQLiteAdapter extends EngineAdapter {
      * PgSQL:  SELECT column_name, data_type, is_nullable FROM information_schema.columns
      * MySQL:  SHOW COLUMNS FROM table
      * @param {string} table - table name
-     * @param {string} [path] - database file path (for read-only queries on other databases)
      * @returns {Promise<Array<Array>>} rows as positional arrays
      */
-    async getTableColumns(table, path) {
-        if (path) {
-            return this.executeReadOnly(path, `PRAGMA table_xinfo("${table}")`);
-        }
+    async getTableColumns(table) {
         const rows = [];
         await this.execute(
             (row) => rows.push(row),
@@ -567,25 +603,22 @@ class SQLiteAdapter extends EngineAdapter {
      * Combines sqlite_schema enumeration with PRAGMA table_xinfo per table.
      * Returns structured objects instead of positional arrays.
      *
-     * @param {object} [options] - { path? }
      * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
      */
-    async listTablesTypes({ path } = {}) {
-        const exec = path
-            ? (sql) => this.executeReadOnly(path, sql)
-            : async (sql) => {
-                  const rows = [];
-                  await this.execute((r) => rows.push(r), sql);
-                  return rows;
-              };
-
-        const tableRows = await exec(
+    async listTablesTypes() {
+        const tableRows = [];
+        await this.execute(
+            (r) => tableRows.push(r),
             "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         );
 
         const result = [];
         for (const [tableName] of tableRows) {
-            const colRows = await exec(`PRAGMA table_xinfo("${tableName}")`);
+            const colRows = [];
+            await this.execute(
+                (r) => colRows.push(r),
+                `PRAGMA table_xinfo("${tableName}")`
+            );
             result.push({
                 tableName,
                 columns: colRows.map((c) => ({

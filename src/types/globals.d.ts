@@ -131,9 +131,8 @@ declare global {
 
     const SQLite: {
         Execute: (sql: string, args: string) => Promise<any[]>;
-        ExecuteJson: (sql: string, args: string) => Promise<string>;
-        ExecuteNonQuery: (sql: string, args: string) => Promise<Number>;
-        ExecuteReadOnlyJson: (path: string, sql: string, args: string) => Promise<string>;
+        ExecuteJson: (...args: any[]) => Promise<string>;
+        ExecuteNonQuery: (...args: any[]) => Promise<Number>;
     };
 
     const LogWatcher: {

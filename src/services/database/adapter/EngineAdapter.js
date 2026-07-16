@@ -62,11 +62,6 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
-    /** @abstract */
-    executeReadOnly(_path, _sql, _args) {
-        throw new Error('abstract');
-    }
-
     // ── CRUD ─────────────────────────────────────────────────────────
 
     /** @abstract */
@@ -296,17 +291,16 @@ class EngineAdapter {
     }
 
     /** @abstract */
-    getTableColumns(_table, _path) {
+    getTableColumns(_table) {
         throw new Error('abstract');
     }
 
     /**
      * Enumerate all user tables with their column metadata.
-     * @param {object} [options] - { path? }
      * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
      * @abstract
      */
-    listTablesTypes(_options) {
+    listTablesTypes() {
         throw new Error('abstract');
     }
 

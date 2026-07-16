@@ -22,7 +22,7 @@ import configRepository from '../../config.js';
  * @param {number} currentVersion - 当前数据库版本 (0 或正数)
  * @param {number} targetVersion - 目标版本
  * @param {object} [options] - 迁移选项
- * @param {string} [options.oldDbPath] - 旧数据库路径 (用于迁移)
+ * @param {object} [options.oldDb] - 旧数据库适配器实例 (用于迁移)
  * @returns {Promise<boolean>} - 全部成功返回 true
  */
 async function runMigrations(currentVersion, targetVersion, options = {}) {
@@ -772,12 +772,17 @@ async function resolveParam(paramName, params, options) {
 
     if (source === 'old_db') {
         // 在旧数据库上执行子查询 (用于迁移)
-        if (!options.oldDbPath) {
-            console.warn(`[迁移] 参数 ${paramName} 缺少 oldDbPath`);
+        if (!options.oldDb) {
+            console.warn(`[迁移] 参数 ${paramName} 缺少 oldDb 实例`);
             return null;
         }
 
-        const rows = await adapter.executeReadOnly(options.oldDbPath, sql, {});
+        const rows = [];
+        await options.oldDb.execute(
+            (row) => rows.push(row),
+            sql,
+            {}
+        );
         return rows && rows.length > 0 ? rows[0][0] : null;
     }
 
