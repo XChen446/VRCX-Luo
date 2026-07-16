@@ -441,12 +441,41 @@ async function executeSchemaOperation(op) {
 }
 
 /**
+ * 判断一个 "no such column" 错误是否指向 `columns` 中声明的某个列。
+ * SQLite 错误文本形如 `no such column: groupName` 或 `no such column: "groupName"`
+ * （标识符可能带双引号）。仅匹配声明的列名，避免宽泛吞掉其他列名拼写错误。
+ *
+ * @param {unknown} e - 捕获的错误
+ * @param {string[]} columns - 预期在重试时已不存在的列名
+ * @returns {boolean}
+ */
+function isMissingDeclaredColumn(e, columns) {
+    const msg = (e && e.toString()) || '';
+    if (!msg.includes('no such column')) return false;
+    return columns.some(
+        (c) =>
+            msg.includes(`no such column: ${c}`) ||
+            msg.includes(`no such column: "${c}"`)
+    );
+}
+
+/**
  * 执行原始 SQL 操作（用于 schema 迁移中的非 DDL 逻辑，如数据迁移）。
+ *
+ * 幂等性：「列重命名 + 数据回填」是一次性操作——首次运行回填旧列数据到
+ * 新列后 drop 旧列，重试时旧列已不存在，UPDATE 无法引用。为支持安全重试
+ * （issue Phase 10.5 幂等性要求），当 `op.idempotent` 为 true 且错误明确
+ * 指向 `op.idempotentColumns` 中声明的列时跳过；其他任何错误（含未来迁移
+ * 作者的列名拼写错误）仍严格抛错，防止静默数据丢失。
+ *
  * @param {string} tablePattern
  * @param {object} op
+ * @param {string} op.sql - 要执行的 SQL
+ * @param {boolean} [op.idempotent] - 为 true 时启用幂等跳过（须配合 idempotentColumns）
+ * @param {string[]} [op.idempotentColumns] - 预期重试时已不存在的列名白名单
  */
 async function executeRawSql(tablePattern, op) {
-    const { sql } = op;
+    const { sql, idempotent, idempotentColumns } = op;
     if (!sql) {
         console.warn('[迁移] execute_sql 操作缺少 sql 字段');
         return;
@@ -455,6 +484,16 @@ async function executeRawSql(tablePattern, op) {
         await adapter.executeNonQuery(sql);
         console.log(`[迁移] 已执行 SQL: ${sql.substring(0, 80)}...`);
     } catch (e) {
+        if (
+            idempotent &&
+            Array.isArray(idempotentColumns) &&
+            isMissingDeclaredColumn(e, idempotentColumns)
+        ) {
+            console.warn(
+                `[迁移] 幂等跳过（被引用列已不存在）: ${sql.substring(0, 80)}...`
+            );
+            return;
+        }
         console.error(`[迁移] 执行 SQL 失败:`, e);
         throw e;
     }
@@ -788,11 +827,7 @@ async function resolveParam(paramName, params, options) {
         }
 
         const rows = [];
-        await options.oldDb.execute(
-            (row) => rows.push(row),
-            sql,
-            {}
-        );
+        await options.oldDb.execute((row) => rows.push(row), sql, {});
         return rows && rows.length > 0 ? rows[0][0] : null;
     }
 

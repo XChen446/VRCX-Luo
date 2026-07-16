@@ -32,6 +32,8 @@
     {
       "table": "gamelog_location",
       "operation": "execute_sql",
+      "idempotent": true,
+      "idempotentColumns": ["groupName"],
       "sql": "UPDATE gamelog_location SET group_name = groupName WHERE groupName IS NOT NULL AND groupName != ''"
     },
     {
@@ -87,7 +89,6 @@
     {
       "table": "%_friend_log_history",
       "operation": "create_index",
-      "name": "user_id_idx",
       "columns": ["user_id"]
     }
   ]
