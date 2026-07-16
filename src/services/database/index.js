@@ -11,8 +11,6 @@ import { memos } from './memos.js';
 import { moderation } from './moderation.js';
 import { mutualGraph } from './mutualGraph.js';
 import { notifications } from './notifications.js';
-import { tableAlter } from './tableAlter.js';
-import { tableFixes } from './tableFixes.js';
 import { tableSize } from './tableSize.js';
 import { trackedNonFriends } from './trackedNonFriends.js';
 import { worldFavorites } from './worldFavorites.js';
@@ -40,8 +38,6 @@ const database = {
     ...avatarTags,
     ...friendFavorites,
     ...worldFavorites,
-    ...tableAlter,
-    ...tableFixes,
     ...tableSize,
     ...mutualGraph,
     ...trackedNonFriends,

@@ -46,10 +46,6 @@ import { watchState } from '../services/watchState';
 import { adapter, createAdapter } from '../services/database/adapter/index.js';
 import configRepository from '../services/config';
 
-// 迁移系统开关: true=使用新的 .map 迁移系统, false=使用旧的 runFixes() 方式
-// 阶段 A (验证期): 默认为 false，上线后改为 true
-const USE_NEW_MIGRATION = false;
-
 // 目标数据库版本
 const TARGET_DB_VERSION = 16;
 
@@ -267,27 +263,16 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
     /**
      * 运行所有数据修复和 schema 变更操作。
-     * 这些操作是幂等的 —— 可安全地在任何版本 >= 0 上调用。
+     * 委托给声明式 .map 迁移系统；操作幂等，可安全重复执行。
+     * @param {number} targetVersion
+     * @param {object} [options] - 透传给 runMigrations（如 { oldDb }）
      */
     async function runFixes(targetVersion, options = {}) {
-        if (USE_NEW_MIGRATION) {
-            // 新路径: 使用 .map 文件的声明式迁移系统
-            await database.runMigrations(state.databaseVersion, targetVersion, options);
-        } else {
-            // 旧路径: 调用遗留的 fix 函数
-            await database.cleanLegendFromFriendLog();
-            await database.fixGameLogTraveling();
-            await database.fixNegativeGPS();
-            await database.fixBrokenLeaveEntries();
-            await database.fixBrokenGroupInvites();
-            await database.fixBrokenNotifications();
-            await database.fixBrokenGroupChange();
-            await database.fixCancelFriendRequestTypo();
-            await database.fixBrokenGameLogDisplayNames();
-            await database.upgradeDatabaseVersion();
-            await database.vacuum();
-            await database.optimize();
-        }
+        await database.runMigrations(
+            state.databaseVersion,
+            targetVersion,
+            options
+        );
     }
 
     /**
@@ -1121,7 +1106,6 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         ipcEvent,
         dragEnterCef,
         backupVrcRegistry,
-        // updateDatabaseVersion was removed; callers should use upgradeInPlace
         upgradeInPlace,
         waitForDatabaseInit
     };
