@@ -174,7 +174,12 @@ class SQLiteAdapter extends EngineAdapter {
         }
     }
 
-    /** Execute raw SQL without row callback. Normalizes named-param keys. */
+    /**
+     * Execute raw SQL without row callback. Normalizes named-param keys.
+     * @param {string} sql - SQL statement
+     * @param {object|Array|null} [args] - named or positional parameters
+     * @returns {Promise<number>}
+     */
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
         try {
@@ -336,7 +341,7 @@ class SQLiteAdapter extends EngineAdapter {
 
     /**
      * SELECT one row with equality WHERE and LIMIT 1.
-     * @returns {Array|null} row as array, or null if not found
+     * @returns {Promise<Array|null>} row as array, or null if not found
      */
     async selectOne(table, columns, where) {
         const params = {};
@@ -360,7 +365,7 @@ class SQLiteAdapter extends EngineAdapter {
      * SELECT rows with equality conditions. Omit `where` to select all rows.
      * @param {object} [where] - equality conditions (AND-ed), omit for no WHERE clause
      * @param {object} [options] - { order, limit, distinct }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
     async select(table, columns, where, options = {}) {
         const { order, limit, distinct } = options;
@@ -387,7 +392,7 @@ class SQLiteAdapter extends EngineAdapter {
      * @param {string} [whereClause] - raw WHERE content (without the WHERE keyword), null to skip
      * @param {object} [params] - named parameters for the WHERE clause
      * @param {object} [options] - { order, limit, distinct }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
     async selectWhere(table, columns, whereClause, params, options = {}) {
         const { order, limit, distinct } = options;
@@ -447,7 +452,7 @@ class SQLiteAdapter extends EngineAdapter {
      * @param {string} [extraWhere] - additional AND conditions (raw SQL fragment)
      * @param {object} [extraParams] - named params for extraWhere
      * @param {object} [options] - { order, limit }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
     async selectWhereIn(
         table,
@@ -599,7 +604,7 @@ class SQLiteAdapter extends EngineAdapter {
      * Enumerate table names matching a LIKE pattern.
      * Wraps sqlite_schema query — dialect-specific, engine-dependent.
      * @param {string} likePattern - e.g. '%_feed_gps'
-     * @returns {string[]} matching table names
+     * @returns {Promise<string[]>} matching table names
      */
     async listTables(likePattern) {
         const tables = [];
