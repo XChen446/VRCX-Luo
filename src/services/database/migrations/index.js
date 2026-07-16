@@ -141,7 +141,7 @@ async function loadMapFile(version, type) {
         const data = JSON.parse(raw);
         return validateMapFile(data, type);
     } catch (e) {
-        // 文件不存在或解析失败
+        console.error(`[迁移] 加载 .map 文件失败 (${path}):`, e.message);
         return null;
     }
 }
