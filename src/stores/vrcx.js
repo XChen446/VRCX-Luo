@@ -490,7 +490,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         const dataRows = [];
         await oldDb.execute(
             (row) => dataRows.push(row),
-            `SELECT ${colList} FROM \"${tableName}\"`
+            `SELECT ${colList} FROM "${tableName}"`
         );
         if (!dataRows || dataRows.length === 0) return;
 

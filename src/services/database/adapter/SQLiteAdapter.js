@@ -40,72 +40,97 @@ class SQLiteAdapter extends EngineAdapter {
 
     /** @private */
     async handleSQLiteError(e) {
-        if (typeof e.message === 'string') {
-            const [{ useModalStore }, { i18n }, { openExternalLink }] =
-                await Promise.all([
-                    import('../../../stores/modal'),
-                    import('../../../plugins/i18n'),
-                    import('../../../shared/utils/appActions')
-                ]);
-            const modalStore = useModalStore();
-            if (e.message.includes('database disk image is malformed')) {
-                modalStore
-                    .confirm({
-                        description:
-                            'Please repair or delete your database file by following these instructions.',
-                        title: 'Your database is corrupted'
-                    })
-                    .then(({ ok }) => {
-                        if (!ok) return;
-                        openExternalLink(
-                            'https://github.com/yixijun/VRCX-Luo/wiki#how-to-repair-vrcx-database'
-                        );
-                    })
-                    .catch(() => {});
-            }
-            if (e.message.includes('database or disk is full')) {
-                modalStore.alert({
-                    description: i18n.global.t('message.database.disk_space'),
-                    title: 'Disk containing database is full'
-                });
-            }
-            if (
-                e.message.includes('database is locked') ||
-                e.message.includes('attempt to write a readonly database')
-            ) {
-                modalStore.alert({
+        if (typeof e.message !== 'string') throw e;
+        const msg = e.message;
+        const isMalformed = msg.includes('database disk image is malformed');
+        const isFull = msg.includes('database or disk is full');
+        const isLocked =
+            msg.includes('database is locked') ||
+            msg.includes('attempt to write a readonly database');
+        const isIO = msg.includes('disk I/O error');
+        if (!isMalformed && !isFull && !isLocked && !isIO) throw e;
+
+        const [{ useModalStore }, { i18n }, { openExternalLink }] = await Promise.all([
+            import('../../../stores/modal'),
+            import('../../../plugins/i18n'),
+            import('../../../shared/utils/appActions')
+        ]);
+        const modalStore = useModalStore();
+        if (isMalformed) {
+            modalStore
+                .confirm({
                     description:
-                        'Please close other applications that might be using the database file.',
-                    title: 'Database is locked'
-                });
-            }
-            if (e.message.includes('disk I/O error')) {
-                modalStore.alert({
-                    description: i18n.global.t('message.database.disk_error'),
-                    title: 'Disk I/O error'
-                });
-            }
+                        'Please repair or delete your database file by following these instructions.',
+                    title: 'Your database is corrupted'
+                })
+                .then(({ ok }) => {
+                    if (!ok) return;
+                    openExternalLink(
+                        'https://github.com/yixijun/VRCX-Luo/wiki#how-to-repair-vrcx-database'
+                    );
+                })
+                .catch(() => {});
+        }
+        if (isFull) {
+            modalStore.alert({
+                description: i18n.global.t('message.database.disk_space'),
+                title: 'Disk containing database is full'
+            });
+        }
+        if (isLocked) {
+            modalStore.alert({
+                description:
+                    'Please close other applications that might be using the database file.',
+                title: 'Database is locked'
+            });
+        }
+        if (isIO) {
+            modalStore.alert({
+                description: i18n.global.t('message.database.disk_error'),
+                title: 'Disk I/O error'
+            });
         }
         throw e;
     }
 
-    /** @private Build SQLite connection string from sqlite:// URI + custom params. */
+    /**
+     * @private Build SQLite connection string from sqlite:// URI + custom params.
+     *
+     * Uses manual prefix stripping instead of `new URL()` — file paths are not URLs,
+     * and URL parsing percent-encodes spaces/non-ASCII and truncates at `#`/`?`.
+     *
+     * URI forms accepted:
+     *   sqlite:///C:\path\db.sqlite   → Windows drive-letter path
+     *   sqlite:////home/user/db.sqlite → Linux absolute path (extra slash from caller)
+     *   sqlite://host/share/db.sqlite  → UNC path (\\host\share\db.sqlite)
+     */
     _buildConnectionString(uri, params = {}) {
-        const url = new URL(uri);
         let dataSource;
+        const rest = uri.slice('sqlite://'.length);
 
-        if (url.host) {
-            // TODO: 网络路径/UNC支持 — e.g. sqlite://example.com/share/example.sqlite3
-            dataSource = `\\\\${url.host}${url.pathname.replace(/\//g, '\\')}`;
+        if (rest.startsWith('/')) {
+            // Local path
+            if (WINDOWS) {
+                // /C:\path → C:\path (strip all leading slashes for drive-letter paths)
+                dataSource = rest.replace(/^\/+/, '');
+            } else {
+                // //home/path → /home/path (collapse multiple leading slashes to one)
+                dataSource = rest.replace(/^\/{2,}/, '/');
+            }
         } else {
-            dataSource = url.pathname;
-            if (WINDOWS && dataSource.startsWith('/')) {
-                dataSource = dataSource.slice(1);
+            // UNC path: host/share/path → \\host\share\path
+            const slashIdx = rest.indexOf('/');
+            if (slashIdx === -1) {
+                dataSource = `\\\\${rest}`;
+            } else {
+                const host = rest.slice(0, slashIdx);
+                const path = rest.slice(slashIdx).replace(/\//g, '\\');
+                dataSource = `\\\\${host}${path}`;
             }
         }
 
         const defaults = {
-            'Data Source': `"${dataSource}"`,
+            'Data Source': `"${dataSource.replace(/"/g, '""')}"`,
             'Read Only': 'True',
             'Version': '3'
         };
@@ -121,8 +146,11 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         try {
             if (this.connectionString) {
-                let json = await SQLite.ExecuteJson(this.connectionString, sql, args);
-                let items = JSON.parse(json);
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(this.connectionString, sql, args);
+                const items = JSON.parse(json);
                 items.forEach((item) => { callback(item); });
                 return;
             }
@@ -130,14 +158,14 @@ class SQLiteAdapter extends EngineAdapter {
                 if (args) {
                     args = new Map(Object.entries(args));
                 }
-                var json = await SQLite.ExecuteJson(sql, args);
-                var items = JSON.parse(json);
+                const json = await SQLite.ExecuteJson(sql, args);
+                const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
                 });
                 return;
             }
-            var data = await SQLite.Execute(sql, args);
+            const data = await SQLite.Execute(sql, args);
             data.forEach((row) => {
                 callback(row);
             });
@@ -151,6 +179,9 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         try {
             if (this.connectionString) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
                 return await SQLite.ExecuteNonQuery(this.connectionString, sql, args);
             }
             if (LINUX && args) {

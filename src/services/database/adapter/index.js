@@ -2,7 +2,7 @@ import { SQLiteAdapter } from './SQLiteAdapter.js';
 
 const ENGINE = 'sqlite';
 
-var adapter;
+let adapter;
 if (ENGINE === 'sqlite') {
     adapter = new SQLiteAdapter();
 } else {
@@ -24,6 +24,10 @@ function createAdapter(config) {
     }
     const scheme = connection.split('://')[0];
     if (scheme === 'sqlite') {
+        const rest = connection.slice('sqlite://'.length);
+        if (!rest || /^\/+$/.test(rest) || !rest.trim()) {
+            throw new Error('createAdapter: connection URI has empty path');
+        }
         return new SQLiteAdapter(config);
     }
     throw new Error(`Unsupported connection scheme: ${scheme} (expected sqlite://)`);
