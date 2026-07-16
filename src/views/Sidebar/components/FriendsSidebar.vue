@@ -198,8 +198,8 @@
                 </div>
             </div>
         </div>
-        <QuickLaunchButton :target="scrollViewportRef" />
-        <BackToTop :virtualizer="virtualizer" :target="scrollViewportRef" :tooltip="false" />
+        <QuickLaunchButton v-if="active" :target="scrollViewportRef" :teleport="false" />
+        <BackToTop v-if="active" :virtualizer="virtualizer" :target="scrollViewportRef" :tooltip="false" :teleport="false" />
 
 <!-- <div class="absolute bottom-5 right-[70px] z-10">
             <button
@@ -258,6 +258,10 @@
     import QuickLaunchButton from '../../../components/QuickLaunchButton.vue';
     import FriendItem from './FriendItem.vue';
     import Location from '../../../components/Location.vue';
+
+    defineProps({
+        active: { type: Boolean, default: true }
+    });
     import configRepository from '../../../services/config';
     import { useStatusPresets } from '../../../components/dialogs/UserDialog/composables/useStatusPresets';
     import { accountHub } from '../../../services/accountHub.js';

@@ -30,6 +30,18 @@ namespace VRCX
             MainForm.Instance.Browser.ShowDevTools();
         }
 
+        public void HandleClosePromptChoice(string action, bool dontAskAgain)
+        {
+            MainForm.Instance.BeginInvoke(
+                new Action(() =>
+                    MainForm.Instance.HandleClosePromptChoice(
+                        action,
+                        dontAskAgain
+                    )
+                )
+            );
+        }
+
         public override void SetVR(bool active, bool hmdOverlay, bool wristOverlay, bool menuButton, int overlayHand)
         {
             var updateVars = new OverlayVars

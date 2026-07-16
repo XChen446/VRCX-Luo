@@ -13,6 +13,7 @@
             <PromptDialogModal></PromptDialogModal>
             <OtpDialogModal></OtpDialogModal>
             <DatabaseUpgradeDialog></DatabaseUpgradeDialog>
+            <CloseBehaviorDialog></CloseBehaviorDialog>
 
             <VRCXUpdateDialog></VRCXUpdateDialog>
         </div>
@@ -36,6 +37,7 @@
 
     import AlertDialogModal from './components/ui/alert-dialog/AlertDialogModal.vue';
     import DatabaseUpgradeDialog from './components/dialogs/DatabaseUpgradeDialog.vue';
+    import CloseBehaviorDialog from './components/dialogs/CloseBehaviorDialog.vue';
     import MacOSTitleBar from './components/MacOSTitleBar.vue';
     import OtpDialogModal from './components/ui/dialog/OtpDialogModal.vue';
     import PromptDialogModal from './components/ui/dialog/PromptDialogModal.vue';

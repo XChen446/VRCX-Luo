@@ -8,6 +8,11 @@ import { useVRCXUpdaterStore } from '../vrcxUpdater';
 import { useVrcxStore } from '../vrcx';
 
 import configRepository from '../../services/config';
+import {
+    CLOSE_BEHAVIOR,
+    getCloseBehaviorSettings,
+    resolveCloseBehavior
+} from '../../shared/utils/closeBehavior';
 
 import * as workerTimers from 'worker-timers';
 
@@ -22,7 +27,7 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
     const isStartAtWindowsStartup = ref(false);
     const isStartAsMinimizedState = ref(false);
     const disableGpuAcceleration = ref(false);
-    const isCloseToTray = ref(false);
+    const closeButtonAction = ref(CLOSE_BEHAVIOR.ASK);
     const disableVrOverlayGpuAcceleration = ref(false);
     const localFavoriteFriendsGroups = ref([]);
     const udonExceptionLogging = ref(false);
@@ -50,6 +55,7 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
             isStartAtWindowsStartupConfig,
             isStartAsMinimizedStateConfig,
             isCloseToTrayConfig,
+            closeToTrayPromptConfig,
             isCloseToTrayConfigBoolConfig,
             disableGpuAccelerationStrConfig,
             disableVrOverlayGpuAccelerationStrConfig,
@@ -77,6 +83,7 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
             configRepository.getBool('VRCX_StartAtWindowsStartup', false),
             VRCXStorage.Get('VRCX_StartAsMinimizedState'),
             VRCXStorage.Get('VRCX_CloseToTray'),
+            VRCXStorage.Get('VRCX_CloseToTrayPrompt'),
             configRepository.getBool('VRCX_CloseToTray'),
             VRCXStorage.Get('VRCX_DisableGpuAcceleration'),
             VRCXStorage.Get('VRCX_DisableVrOverlayGpuAcceleration'),
@@ -121,17 +128,17 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
         isStartAsMinimizedState.value =
             isStartAsMinimizedStateConfig === 'true';
 
+        let closeToTray = isCloseToTrayConfig === 'true';
         if (isCloseToTrayConfigBoolConfig) {
-            isCloseToTray.value = isCloseToTrayConfigBoolConfig;
+            closeToTray = isCloseToTrayConfigBoolConfig;
 
-            await VRCXStorage.Set(
-                'VRCX_CloseToTray',
-                isCloseToTray.value.toString()
-            );
+            await VRCXStorage.Set('VRCX_CloseToTray', closeToTray.toString());
             await configRepository.remove('VRCX_CloseToTray');
-        } else {
-            isCloseToTray.value = isCloseToTrayConfig === 'true';
         }
+        closeButtonAction.value = resolveCloseBehavior(
+            closeToTray,
+            closeToTrayPromptConfig !== 'false'
+        );
 
         disableGpuAcceleration.value =
             disableGpuAccelerationStrConfig === 'true';
@@ -186,9 +193,29 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
             isStartAsMinimizedState.value.toString()
         );
     }
-    function setIsCloseToTray() {
-        isCloseToTray.value = !isCloseToTray.value;
-        VRCXStorage.Set('VRCX_CloseToTray', isCloseToTray.value.toString());
+    function setCloseButtonAction(value) {
+        if (!Object.values(CLOSE_BEHAVIOR).includes(value)) {
+            return;
+        }
+
+        const settings = getCloseBehaviorSettings(value);
+        closeButtonAction.value = value;
+        VRCXStorage.Set('VRCX_CloseToTray', settings.closeToTray.toString());
+        VRCXStorage.Set(
+            'VRCX_CloseToTrayPrompt',
+            settings.promptBeforeClosing.toString()
+        );
+    }
+
+    async function refreshCloseButtonAction() {
+        const [closeToTray, promptBeforeClosing] = await Promise.all([
+            VRCXStorage.Get('VRCX_CloseToTray'),
+            VRCXStorage.Get('VRCX_CloseToTrayPrompt')
+        ]);
+        closeButtonAction.value = resolveCloseBehavior(
+            closeToTray === 'true',
+            promptBeforeClosing !== 'false'
+        );
     }
     function setDisableGpuAcceleration() {
         disableGpuAcceleration.value = !disableGpuAcceleration.value;
@@ -444,7 +471,7 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
     return {
         isStartAtWindowsStartup,
         isStartAsMinimizedState,
-        isCloseToTray,
+        closeButtonAction,
         disableGpuAcceleration,
         disableVrOverlayGpuAcceleration,
         localFavoriteFriendsGroups,
@@ -470,7 +497,8 @@ export const useGeneralSettingsStore = defineStore('GeneralSettings', () => {
 
         setIsStartAtWindowsStartup,
         setIsStartAsMinimizedState,
-        setIsCloseToTray,
+        setCloseButtonAction,
+        refreshCloseButtonAction,
         setDisableGpuAcceleration,
         setDisableVrOverlayGpuAcceleration,
         setLocalFavoriteFriendsGroups,

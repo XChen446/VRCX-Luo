@@ -23,6 +23,8 @@ namespace VRCX
         private int LastLocationY;
         private int LastSizeWidth;
         private int LastSizeHeight;
+        private bool _allowClose;
+        private CloseToTrayPrompt _closeToTrayPrompt;
         private FormWindowState LastWindowStateToRestore = FormWindowState.Normal;
 
         public MainForm()
@@ -188,12 +190,119 @@ namespace VRCX
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (e.CloseReason == CloseReason.UserClosing &&
-                "true".Equals(VRCXStorage.Instance.Get("VRCX_CloseToTray")))
+            if (e.CloseReason != CloseReason.UserClosing || _allowClose)
             {
-                e.Cancel = true;
-                Hide();
+                return;
             }
+
+            if (IsCloseToTrayEnabled())
+            {
+                HideToTray(e);
+                return;
+            }
+
+            if (!ShouldPromptCloseToTray())
+            {
+                return;
+            }
+
+            e.Cancel = true;
+            ShowCloseToTrayPrompt();
+        }
+
+        private void ShowCloseToTrayPrompt()
+        {
+            if (
+                Browser != null &&
+                Browser.CanExecuteJavascriptInMainFrame
+            )
+            {
+                Browser.ExecuteScriptAsync(
+                    "window.dispatchEvent(new CustomEvent('vrcx-close-requested'));"
+                );
+                return;
+            }
+
+            if (_closeToTrayPrompt != null && !_closeToTrayPrompt.IsDisposed)
+            {
+                _closeToTrayPrompt.Activate();
+                return;
+            }
+
+            var prompt = new CloseToTrayPrompt();
+            _closeToTrayPrompt = prompt;
+            prompt.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_closeToTrayPrompt, prompt))
+                {
+                    _closeToTrayPrompt = null;
+                }
+            };
+            prompt.ChoiceSelected += ApplyCloseToTrayChoice;
+            prompt.Show(this);
+            prompt.Activate();
+        }
+
+        public void HandleClosePromptChoice(string action, bool dontAskAgain)
+        {
+            var result = action switch
+            {
+                "tray" => CloseToTrayPromptResult.MinimizeToTray,
+                "exit" => CloseToTrayPromptResult.Exit,
+                _ => CloseToTrayPromptResult.Cancel
+            };
+
+            if (result == CloseToTrayPromptResult.Cancel)
+            {
+                return;
+            }
+
+            ApplyCloseToTrayChoice(result, dontAskAgain);
+        }
+
+        private void ApplyCloseToTrayChoice(
+            CloseToTrayPromptResult promptResult,
+            bool dontAskAgain
+        )
+        {
+            var decision = CloseToTrayDecision.Resolve(
+                promptResult,
+                dontAskAgain
+            );
+
+            if (decision.ShouldPersistPreference)
+            {
+                VRCXStorage.Instance.Set("VRCX_CloseToTrayPrompt", "false");
+                VRCXStorage.Instance.Set(
+                    "VRCX_CloseToTray",
+                    decision.CloseToTrayEnabled.ToString().ToLowerInvariant()
+                );
+            }
+
+            if (decision.MinimizeToTray)
+            {
+                Hide();
+                return;
+            }
+
+            _allowClose = true;
+            Close();
+        }
+
+        private static bool IsCloseToTrayEnabled()
+        {
+            return VRCXStorage.Instance.Get("VRCX_CloseToTray") == "true";
+        }
+
+        private static bool ShouldPromptCloseToTray()
+        {
+            return VRCXStorage.Instance.Get("VRCX_CloseToTrayPrompt") != "false";
+        }
+
+        private void HideToTray(FormClosingEventArgs e)
+        {
+            e.Cancel = true;
+            Hide();
         }
 
         private void SaveWindowState()

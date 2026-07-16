@@ -904,6 +904,18 @@
                 },
                 "lists_tables": {
                     "header": "Lists & Tables"
+                },
+                "window_behavior": {
+                    "header": "Window Behavior",
+                    "close_button": "When Clicking the Close Button",
+                    "close_button_description": "Choose what happens when the main window close button is clicked.",
+                    "ask": "Ask Every Time",
+                    "tray": "Minimize to System Tray",
+                    "exit": "Exit Immediately",
+                    "dialog_title": "Close VRCX-Luo",
+                    "dialog_description": "When minimized, VRCX-Luo keeps running in the background and can be reopened from the system tray.",
+                    "dont_ask_again": "Don't ask again",
+                    "cancel": "Cancel"
                 }
             },
             "integrations": {
@@ -950,6 +962,8 @@
                     "startup": "Start at Windows Startup",
                     "minimized": "Start Minimized at System Startup",
                     "tray": "Minimize to Tray When Closing",
+                    "close_to_tray_prompt": "Ask Whether to Minimize to Tray When Closing",
+                    "close_to_tray_prompt_tooltip": "When enabled, closing VRCX asks whether to minimize to the tray. You can also disable the prompt directly from the confirmation window.",
                     "disable_gpu_acceleration": "Disable GPU Acceleration",
                     "disable_gpu_acceleration_tooltip": "Only change this option if you know what you're doing, may fix issues with UI, requires restarting VRCX",
                     "disable_vr_overlay_gpu_acceleration": "Disable VR Overlay GPU Acceleration",
@@ -3343,6 +3357,28 @@
                 "support": "Support VRCX"
             },
             "releases": {
+                "2026_07_16": {
+                    "title": "Window and Sidebar Improvements",
+                    "subtitle": "This update focuses on close behavior, floating controls, and player list layout.",
+                    "items": {
+                        "close_button_behavior": {
+                            "title": "Configurable Close Button",
+                            "description": "The Interface settings page now lets you choose whether closing asks first, minimizes to tray, or exits immediately."
+                        },
+                        "close_to_tray_prompt": {
+                            "title": "Close Confirmation Dialog",
+                            "description": "Clicking the top-right close button can now show an app-styled confirmation dialog with cancel and don't ask again options."
+                        },
+                        "sidebar_floating_controls": {
+                            "title": "Sidebar Floating Controls",
+                            "description": "Quick launch and back-to-top controls now only render for the active friends or groups sidebar tab."
+                        },
+                        "player_list_layout": {
+                            "title": "Player List Layout",
+                            "description": "Adjusted the instance details and player list scroll layout to reduce hidden content at larger zoom levels."
+                        }
+                    }
+                },
                 "2026_04_05": {
                     "title": "Explore New Features",
                     "subtitle": "A few useful features you might not notice",

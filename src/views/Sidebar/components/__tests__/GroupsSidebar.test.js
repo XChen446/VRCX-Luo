@@ -106,11 +106,17 @@ vi.mock('../../../../components/ui/context-menu', () => ({
 }));
 
 vi.mock('../../../../components/BackToTop.vue', () => ({
-    default: { template: '<div data-testid="back-to-top" />' }
+    default: {
+        props: ['teleport'],
+        template: '<div data-testid="back-to-top" :data-teleport="String(teleport)" />'
+    }
 }));
 
 vi.mock('../../../../components/QuickLaunchButton.vue', () => ({
-    default: { template: '<div data-testid="quick-launch-button" />' }
+    default: {
+        props: ['teleport'],
+        template: '<div data-testid="quick-launch-button" :data-teleport="String(teleport)" />'
+    }
 }));
 
 vi.mock('../../../../components/Location.vue', () => ({
@@ -156,5 +162,21 @@ describe('GroupsSidebar.vue', () => {
         expect(mocks.toastSuccess).toHaveBeenCalledWith(
             'message.invite.self_sent'
         );
+    });
+
+    it('keeps floating controls inside the visible sidebar tab', () => {
+        const wrapper = mount(GroupsSidebar);
+
+        expect(wrapper.get('[data-testid="quick-launch-button"]').attributes('data-teleport')).toBe('false');
+        expect(wrapper.get('[data-testid="back-to-top"]').attributes('data-teleport')).toBe('false');
+    });
+
+    it('does not render floating controls while the tab is inactive', () => {
+        const wrapper = mount(GroupsSidebar, {
+            props: { active: false }
+        });
+
+        expect(wrapper.find('[data-testid="quick-launch-button"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="back-to-top"]').exists()).toBe(false);
     });
 });

@@ -107,6 +107,7 @@
 # 开发者文档
 - [数据库架构预览 (DATABASE_SCHEMA.md)](./docs/DATABASE_SCHEMA.md)
 - [数据刷新机制说明 (DATA_REFRESH.md)](./docs/DATA_REFRESH.md)
+- [Windows CEF 本地测试与安全重启](./docs/CEF_LOCAL_TESTING.md)
 
 # 从源码构建
 
