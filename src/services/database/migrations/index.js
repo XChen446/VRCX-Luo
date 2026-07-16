@@ -17,6 +17,24 @@ import { adapter } from '../adapter/index.js';
 import configRepository from '../../config.js';
 
 /**
+ * Build-time glob of all .map files in version subdirectories.
+ *
+ * Vite statically analyzes this `import.meta.glob` call and bundles matching
+ * files into the build output as raw strings. Without this, the old
+ * dynamic `import()` with `@vite-ignore` was invisible to Vite — files were
+ * missing from the production bundle and 404'd at runtime.
+ *
+ * Pattern matches `./16/schema.map`, `./16/data.map`, etc. but excludes
+ * `./_template.map` (root-level, not in a version directory).
+ *
+ * @type {Record<string, () => Promise<string>>}
+ */
+const mapGlob = import.meta.glob('./*/*.map', {
+    query: '?raw',
+    import: 'default'
+});
+
+/**
  * 从 currentVersion 迁移到 targetVersion，执行所有迁移。
  *
  * @param {number} currentVersion - 当前数据库版本 (0 或正数)
@@ -87,29 +105,20 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 async function scanMigrationDir(maxVersion) {
     const migrations = [];
 
-    // 动态导入 map 文件，由调用者传入 maxVersion 控制扫描范围
-    // 结构: /migrations/{version}/{schema,data}.map
-    for (let version = 1; version <= maxVersion; version++) {
-        try {
-            const schemaData = await loadMapFile(version, 'schema');
-            if (schemaData) {
-                migrations.push({
-                    version,
-                    type: 'schema',
-                    data: schemaData
-                });
-            }
+    // 遍历 import.meta.glob 收集到的文件列表
+    // 结构: ./16/schema.map → version=16, type='schema'
+    for (const [path] of Object.entries(mapGlob)) {
+        const match = path.match(/^\.\/(\d+)\/(schema|data)\.map$/);
+        if (!match) continue;
 
-            const dataData = await loadMapFile(version, 'data');
-            if (dataData) {
-                migrations.push({
-                    version,
-                    type: 'data',
-                    data: dataData
-                });
-            }
-        } catch (e) {
-            // 该版本迁移文件不存在，跳过
+        const version = parseInt(match[1], 10);
+        const type = match[2];
+
+        if (version > maxVersion) continue;
+
+        const data = await loadMapFile(version, type);
+        if (data) {
+            migrations.push({ version, type, data });
         }
     }
 
@@ -123,15 +132,16 @@ async function scanMigrationDir(maxVersion) {
  * @returns {Promise<object|null>}
  */
 async function loadMapFile(version, type) {
-    // 动态导入 map 文件
-    // 允许 Vite 将文件打包到 bundle 中
+    const path = `./${version}/${type}.map`;
+    const loader = mapGlob[path];
+    if (!loader) return null;
+
     try {
-        const path = `./${version}/${type}.map`;
-        const module = await import(/* @vite-ignore */ path);
-        const data = module.default || module;
+        const raw = await loader();
+        const data = JSON.parse(raw);
         return validateMapFile(data, type);
     } catch (e) {
-        // 文件不存在
+        // 文件不存在或解析失败
         return null;
     }
 }
