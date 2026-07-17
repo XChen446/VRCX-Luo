@@ -328,19 +328,35 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             console.warn('Failed to read backup config:', err);
         }
 
-        const bakDbName = bakConfig?.['VRCX_Database.name'];
+        const bakDbName = bakConfig?.['VRCX_Database.name']
+            || bakConfig?.['VRCX_Database.location']
+            || bakConfig?.['VRCX_DatabaseLocation'];
         const currentDbName = await VRCXStorage.Get(
             'VRCX_Database.name'
         );
 
-        // 解析为规范化路径再进行对比，确保空串/相对路径/绝对路径不会误判
-        const [bakIdentity, currentIdentity] = await Promise.all([
-            AppApi.ResolveDatabaseName(bakDbName || ''),
-            AppApi.ResolveDatabaseName(currentDbName || '')
-        ]);
+        // Resolve both names to canonical paths for robust identity comparison.
+        // Wrapped in try/catch because ResolveDatabaseName now validates paths
+        // (traversal, null bytes, etc.) and may throw InvalidOperationException.
+        // On validation failure, fall back to in-place init.
+        let bakIdentity, currentIdentity;
+        try {
+            [bakIdentity, currentIdentity] = await Promise.all([
+                AppApi.ResolveDatabaseName(bakDbName || ''),
+                AppApi.ResolveDatabaseName(currentDbName || '')
+            ]);
+        } catch (err) {
+            console.warn(
+                'Path validation failed for database name — falling back to in-place init:',
+                err.message || String(err)
+            );
+            return await initAndFixInPlace(targetVersion);
+        }
 
         // ── Self-reference 去重 ──
-        // TODO 需要额外验证此处去重提取逻辑，目标是识别同一“连接的库”而非“路径/库名”
+        // Both paths are now canonicalized via ValidateAndCanonicalizeDatabasePath
+        // (Path.GetFullPath + boundary checks), so string equality reliably
+        // detects the same database file regardless of path form.
         // bak 指向当前已连上的数据库 → 环境不可信 → 跳过 bak
         if (bakDbName && bakIdentity === currentIdentity) {
             console.warn(

@@ -22,6 +22,63 @@ namespace VRCX
             { "optimize", "0x10002" },
         };
 
+        /// <summary>
+        /// PRAGMA keys related to SQLite database encryption.
+        /// These MUST NOT be settable via VRCX_Database.options.* to prevent
+        /// unauthorized keying/re-keying of the database through config injection.
+        /// Covers SEE (SQLite Encryption Extension) pragmas + the System.Data.SQLite
+        /// built-in `key`/`rekey` aliases.
+        /// </summary>
+        private static readonly HashSet<string> ForbiddenPragmaKeys = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "key", "rekey", "hexkey", "hexrekey",
+            "textkey", "textrekey",
+            "hexdbkey", "hexrekey_md5", "hexkey_md5",
+        };
+
+        /// <summary>
+        /// Characters forbidden in PRAGMA values because they can alter the
+        /// SQLite connection string structure when concatenated directly.
+        /// ';' delimits connection parameters, quotes alter parsing, newlines
+        /// can cause line-injection, and '\0' can truncate the native string
+        /// at the P/Invoke boundary.
+        /// </summary>
+        private static readonly char[] ForbiddenPragmaChars = { ';', '\'', '"', '\n', '\r', '\0' };
+
+        /// <summary>
+        /// Allowlist pattern for PRAGMA key names. Keys must consist only of
+        /// ASCII letters, digits, and underscores — this prevents any
+        /// connection-string-injection via the key (e.g. "foo;PRAGMA rekey").
+        /// Applied in SanitizePragmaValue BEFORE the ForbiddenPragmaKeys
+        /// blacklist so that crafted keys like " key" or "key;x" are rejected
+        /// before the blacklist lookup.
+        /// </summary>
+        private static readonly System.Text.RegularExpressions.Regex AllowedPragmaKeyPattern =
+            new System.Text.RegularExpressions.Regex("^[A-Za-z0-9_]+$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// File extensions permitted for the SQLite database file.
+        /// Case-insensitive. Kept static to avoid per-call allocation.
+        /// </summary>
+        private static readonly HashSet<string> AllowedDatabaseExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".db", ".db3", ".sqlite3"
+        };
+
+        /// <summary>
+        /// Windows reserved device names that must never be used as a filename.
+        /// Case-insensitive. Kept static to avoid per-call allocation.
+        /// </summary>
+        private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5",
+            "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+            "LPT6", "LPT7", "LPT8", "LPT9"
+        };
+
         static SQLite()
         {
             Instance = new SQLite();
@@ -37,9 +94,8 @@ namespace VRCX
 #if LINUX
             Instance = this;
 #endif
-            var name = VRCXStorage.Instance.Get("VRCX_Database.name").Trim();
-            var dataSource = ResolveDatabasePath(name);
-            ValidateDatabaseFile(dataSource);
+            var name = VRCXStorage.Instance.Get("VRCX_Database.name");
+            var dataSource = ValidateAndCanonicalizeDatabasePath(name);
 
             var dir = Path.GetDirectoryName(dataSource);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -55,7 +111,8 @@ namespace VRCX
             };
             foreach (var (key, val) in mergedOptions)
             {
-                parts.Add($"PRAGMA {key}={val}");
+                var sanitized = SanitizePragmaValue(key, val);
+                parts.Add($"PRAGMA {key}={sanitized}");
             }
             var connStr = string.Join(";", parts);
 
@@ -84,18 +141,108 @@ namespace VRCX
         }
 
         /// <summary>
+        /// Centralized path validation + canonicalization for VRCX_Database.name.
+        /// This is the SINGLE entry point for path resolution — called by both
+        /// Init() (C# backend) and AppApiCommon.ResolveDatabaseName (JS bridge).
+        ///
+        /// Validation order (deliberate):
+        ///   1. Null byte rejection (before any string processing)
+        ///   2. Null/whitespace → default ConfigLocation
+        ///   3. Path resolution (ResolveDatabasePath)
+        ///   4. Canonicalization (Path.GetFullPath)
+        ///   5. Boundary check (traversal detection)
+        ///   6. Filename-level checks (extension, colon, reserved name, directory)
+        ///
+        /// Returns the canonicalized absolute path on success.
+        /// Throws InvalidOperationException on any validation failure.
+        /// </summary>
+        public static string ValidateAndCanonicalizeDatabasePath(string name)
+        {
+            // ── 0. Null-byte rejection (H-1) — MUST happen before ANY processing ──
+            if (name != null && name.Contains('\0'))
+            {
+                throw new InvalidOperationException(
+                    "VRCX_Database.name contains null (\\0) bytes — this is not allowed.");
+            }
+
+            // ── 1. Null/whitespace → default path ──
+            name = name?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(name))
+                return Path.GetFullPath(Program.ConfigLocation);
+
+            // ── 2. Resolve raw path (delegate to existing private helper) ──
+            var resolved = ResolveDatabasePath(name);
+
+            // ── 3. Canonicalize (resolves ../, ./, redundant separators, relative paths) ──
+            var canonical = Path.GetFullPath(resolved);
+
+            // ── 4. Boundary check (traversal detection — C-1) ──
+            var hasSeparators = name.Contains('/') || name.Contains('\\');
+            var isBareDrive = name.Length == 2 && name[1] == ':' && char.IsLetter(name[0]);
+
+            if (!hasSeparators && !isBareDrive)
+            {
+                // Plain filename resolved against AppDataDirectory: verify it stays within
+                var appDataCanonical = Path.GetFullPath(Program.AppDataDirectory);
+                var appDataWithSep = appDataCanonical.TrimEnd(Path.DirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar;
+                if (!canonical.StartsWith(appDataWithSep, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"VRCX_Database.name resolves to '{canonical}' which is outside " +
+                        $"the allowed data directory ('{appDataCanonical}').");
+                }
+            }
+            else
+            {
+                // Path with separators or bare drive: the ORIGINAL input must already be
+                // an absolute path. Checking IsPathRooted on `resolved` (before GetFullPath)
+                // is critical — GetFullPath makes ANY relative path absolute relative to CWD,
+                // so checking IsPathRooted(canonical) would always be true and provide no
+                // security. This rejects relative paths like "../../evil.db".
+                if (!Path.IsPathRooted(resolved))
+                {
+                    throw new InvalidOperationException(
+                        $"VRCX_Database.name contains path separators but is not an absolute " +
+                        $"path. Relative paths with separators are not allowed. Received: '{name}'");
+                }
+            }
+
+            // ── 5. Filename-level checks (extension, colon, reserved name, directory) ──
+            ValidateDatabaseFile(canonical);
+
+            return canonical;
+        }
+
+        /// <summary>
         /// Validates that the resolved database file path is usable.
         /// Throws InvalidOperationException with a clear message on any violation.
         /// </summary>
         private static void ValidateDatabaseFile(string path)
         {
+            // ── 0. Null-byte trap (defense-in-depth; primary gate is ValidateAndCanonicalizeDatabasePath) ──
+            if (path.Contains('\0'))
+            {
+                throw new InvalidOperationException(
+                    "Database path contains null (\\0) bytes — this is not allowed.");
+            }
+
+            // ── 0b. Reject embedded double-quote (prematurely closes the
+            //      "Data Source" quoted value in the connection string on
+            //      platforms where " is a valid filename char, e.g. Linux).
+            //      On Windows the OS already forbids " in filenames, but this
+            //      guard is defense-in-depth and keeps the C# side consistent
+            //      with the JS adapter (which escapes " as "").
+            if (path.Contains('"'))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.name resolves to '{path}' which contains " +
+                    "the character '\"' — this is not allowed in a database path.");
+            }
+
             // ── 1. Check extension ──
             var ext = Path.GetExtension(path);
-            var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ".db", ".db3", ".sqlite3"
-            };
-            if (string.IsNullOrEmpty(ext) || !allowedExtensions.Contains(ext))
+            if (string.IsNullOrEmpty(ext) || !AllowedDatabaseExtensions.Contains(ext))
             {
                 throw new InvalidOperationException(
                     $"VRCX_Database.name resolves to '{path}' which does not have a valid " +
@@ -113,15 +260,7 @@ namespace VRCX
 
             // ── 3. Check Windows reserved device names ──
             var nameWithoutExt = Path.GetFileNameWithoutExtension(path);
-            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "CON", "PRN", "AUX", "NUL",
-                "COM1", "COM2", "COM3", "COM4", "COM5",
-                "COM6", "COM7", "COM8", "COM9",
-                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
-                "LPT6", "LPT7", "LPT8", "LPT9"
-            };
-            if (reserved.Contains(nameWithoutExt))
+            if (ReservedDeviceNames.Contains(nameWithoutExt))
             {
                 throw new InvalidOperationException(
                     $"VRCX_Database.name resolves to '{path}' which uses the reserved " +
@@ -154,6 +293,48 @@ namespace VRCX
                 merged[key] = val;
             }
             return merged;
+        }
+
+        /// <summary>
+        /// Validates a single PRAGMA key/value pair for connection string safety.
+        /// Layer 1: blacklists encryption-related PRAGMA keys (key, rekey, hexkey, etc.).
+        /// Layer 2: rejects values containing connection-string-injection characters
+        ///          (;, ", ', or newlines).
+        /// Returns the trimmed value on success.
+        /// </summary>
+        private static string SanitizePragmaValue(string key, string val)
+        {
+            // Layer 0: enforce strict key allowlist (prevents connection-string
+            // injection via the KEY, e.g. "foo;PRAGMA rekey"). Must run BEFORE
+            // the ForbiddenPragmaKeys blacklist so that crafted keys like
+            // " key" (leading space) or "key;x" cannot bypass the blacklist
+            // lookup (which is a full-string match).
+            if (string.IsNullOrEmpty(key) || !AllowedPragmaKeyPattern.IsMatch(key))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.options key '{key}' is invalid — " +
+                    "PRAGMA key names must consist only of ASCII letters, digits, " +
+                    "and underscores (no spaces, ';', '=', or other special characters).");
+            }
+
+            // Layer 1: blacklist forbidden keys (encryption-related)
+            if (ForbiddenPragmaKeys.Contains(key))
+            {
+                throw new InvalidOperationException(
+                    $"PRAGMA '{key}' is forbidden for security reasons. " +
+                    "This key cannot be configured via VRCX_Database.options.");
+            }
+
+            // Layer 2: reject dangerous characters in values (including null bytes
+            // which can truncate the native SQLite connection string).
+            if (val != null && val.IndexOfAny(ForbiddenPragmaChars) >= 0)
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.options.{key} contains forbidden characters " +
+                    "(;, \", ', newlines, or null bytes) which are not allowed.");
+            }
+
+            return (val ?? string.Empty).Trim();
         }
 
         public void Exit()

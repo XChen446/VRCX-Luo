@@ -221,6 +221,7 @@ declare global {
         ): Promise<void>;
         GetFileBase64(path: string): Promise<string | null>;
         TryOpenInstanceInVrc(launchUrl: string): Promise<boolean>;
+        ResolveDatabaseName(name: string): Promise<string>;
 
         // Image Upload (Cef Only)
         MD5File(blob: string): Promise<string>;
