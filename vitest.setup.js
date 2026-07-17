@@ -89,3 +89,16 @@ i18n.global.setLocaleMessage('en', en);
 vi.mock('@/components/dialogs/InviteDialog/sendInviteColumns.jsx', () => ({
     createColumns: () => []
 }));
+
+// === Phase 10.9: test adapter helper (opt-in, does NOT replace production adapter) ===
+// Lazy-loaded so the 200+ workers that don't use it pay zero import cost.
+// First call dynamically imports `node:sqlite` + `MemorySQLiteAdapter`; subsequent
+// calls reuse the cached classes. Caller MUST call db.close() in afterEach.
+globalThis.createTestAdapter = async function createTestAdapter() {
+    const { DatabaseSync } = await import('node:sqlite');
+    const { MemorySQLiteAdapter } =
+        await import('./src/services/database/migrations/__tests__/memoryAdapter.js');
+    const db = new DatabaseSync(':memory:');
+    const adapter = new MemorySQLiteAdapter(db);
+    return { adapter, db };
+};
