@@ -16,6 +16,23 @@
 import { adapter } from '../adapter/index.js';
 import configRepository from '../../config.js';
 
+/**
+ * Build-time glob of all .map files in version subdirectories.
+ *
+ * Vite statically analyzes this `import.meta.glob` call and bundles matching
+ * files into the build output as raw strings. Without this, the old
+ * dynamic `import()` with `@vite-ignore` was invisible to Vite — files were
+ * missing from the production bundle and 404'd at runtime.
+ *
+ * Pattern matches `./16/schema.map`, `./16/data.map`, etc. but excludes
+ * `./_template.map` (root-level, not in a version directory).
+ *
+ * @type {Record<string, () => Promise<string>>}
+ */
+const mapGlob = import.meta.glob('./*/*.map', {
+    query: '?raw',
+    import: 'default'
+});
 
 /**
  * 从 currentVersion 迁移到 targetVersion，执行所有迁移。
@@ -23,7 +40,7 @@ import configRepository from '../../config.js';
  * @param {number} currentVersion - 当前数据库版本 (0 或正数)
  * @param {number} targetVersion - 目标版本
  * @param {object} [options] - 迁移选项
- * @param {string} [options.oldDbPath] - 旧数据库路径 (用于迁移)
+ * @param {object} [options.oldDb] - 旧数据库适配器实例 (用于迁移)
  * @returns {Promise<boolean>} - 全部成功返回 true
  */
 async function runMigrations(currentVersion, targetVersion, options = {}) {
@@ -43,15 +60,21 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 
     // 阶段 2: 筛选并排序迁移
     const sortedMigrations = topologicalSort(
-        migrations.filter(m => m.version > currentVersion && m.version <= targetVersion)
+        migrations.filter(
+            (m) => m.version > currentVersion && m.version <= targetVersion
+        )
     );
 
     if (sortedMigrations.length === 0) {
-        console.log(`[迁移] 范围内无迁移版本 (${currentVersion}, ${targetVersion}]`);
+        console.log(
+            `[迁移] 范围内无迁移版本 (${currentVersion}, ${targetVersion}]`
+        );
         return true;
     }
 
-    console.log(`[迁移] 已选中 ${sortedMigrations.length} 个迁移: ${sortedMigrations.map(m => m.version).join(' -> ')}`);
+    console.log(
+        `[迁移] 已选中 ${sortedMigrations.length} 个迁移: ${sortedMigrations.map((m) => m.version).join(' -> ')}`
+    );
 
     // 获取当前数据库引擎（全局统一，避免重复调用）
     const currentEngine = getDatabaseEngine();
@@ -82,29 +105,20 @@ async function runMigrations(currentVersion, targetVersion, options = {}) {
 async function scanMigrationDir(maxVersion) {
     const migrations = [];
 
-    // 动态导入 map 文件，由调用者传入 maxVersion 控制扫描范围
-    // 结构: /migrations/{version}/{schema,data}.map
-    for (let version = 1; version <= maxVersion; version++) {
-        try {
-            const schemaData = await loadMapFile(version, 'schema');
-            if (schemaData) {
-                migrations.push({
-                    version,
-                    type: 'schema',
-                    data: schemaData
-                });
-            }
+    // 遍历 import.meta.glob 收集到的文件列表
+    // 结构: ./16/schema.map → version=16, type='schema'
+    for (const [path] of Object.entries(mapGlob)) {
+        const match = path.match(/^\.\/(\d+)\/(schema|data)\.map$/);
+        if (!match) continue;
 
-            const dataData = await loadMapFile(version, 'data');
-            if (dataData) {
-                migrations.push({
-                    version,
-                    type: 'data',
-                    data: dataData
-                });
-            }
-        } catch (e) {
-            // 该版本迁移文件不存在，跳过
+        const version = parseInt(match[1], 10);
+        const type = match[2];
+
+        if (version > maxVersion) continue;
+
+        const data = await loadMapFile(version, type);
+        if (data) {
+            migrations.push({ version, type, data });
         }
     }
 
@@ -118,15 +132,16 @@ async function scanMigrationDir(maxVersion) {
  * @returns {Promise<object|null>}
  */
 async function loadMapFile(version, type) {
-    // 动态导入 map 文件
-    // 允许 Vite 将文件打包到 bundle 中
+    const path = `./${version}/${type}.map`;
+    const loader = mapGlob[path];
+    if (!loader) return null;
+
     try {
-        const path = `./${version}/${type}.map`;
-        const module = await import(/* @vite-ignore */ path);
-        const data = module.default || module;
+        const raw = await loader();
+        const data = JSON.parse(raw);
         return validateMapFile(data, type);
     } catch (e) {
-        // 文件不存在
+        console.error(`[迁移] 加载 .map 文件失败 (${path}):`, e.message);
         return null;
     }
 }
@@ -147,7 +162,9 @@ function validateMapFile(data, type) {
     }
 
     if (data.type !== type) {
-        throw new Error(`无效的 .map 文件: 期望类型 "${type}", 实际为 "${data.type}"`);
+        throw new Error(
+            `无效的 .map 文件: 期望类型 "${type}", 实际为 "${data.type}"`
+        );
     }
 
     if (type === 'schema') {
@@ -204,7 +221,11 @@ function checkDatabaseCompatibility(database, engine) {
 
     const check = (key, label) => {
         const val = database[key];
-        if (val && typeof val === 'string' && val.toLowerCase() !== engine.toLowerCase()) {
+        if (
+            val &&
+            typeof val === 'string' &&
+            val.toLowerCase() !== engine.toLowerCase()
+        ) {
             throw new Error(
                 `数据库引擎不匹配: 迁移要求 ${label} = "${val}", 当前引擎为 "${engine}"`
             );
@@ -255,7 +276,10 @@ function topologicalSort(migrations) {
             const schemaKey = `${m.version}-schema`;
             if (nodeMap.has(schemaKey)) {
                 adj.get(schemaKey).push(`${m.version}-data`);
-                inDegree.set(`${m.version}-data`, inDegree.get(`${m.version}-data`) + 1);
+                inDegree.set(
+                    `${m.version}-data`,
+                    inDegree.get(`${m.version}-data`) + 1
+                );
             }
         }
     }
@@ -288,7 +312,10 @@ function topologicalSort(migrations) {
         const [vNext] = sortedNodes[i + 1].split('-');
         if (Number(vNext) > Number(vCurr)) {
             adj.get(sortedNodes[i]).push(sortedNodes[i + 1]);
-            inDegree.set(sortedNodes[i + 1], inDegree.get(sortedNodes[i + 1]) + 1);
+            inDegree.set(
+                sortedNodes[i + 1],
+                inDegree.get(sortedNodes[i + 1]) + 1
+            );
         }
     }
 
@@ -310,10 +337,12 @@ function topologicalSort(migrations) {
 
         const id = queue.shift();
         const [verStr, type] = id.split('-');
-        const match = migrations.find(m => m.version === parseInt(verStr) && m.type === type);
+        const match = migrations.find(
+            (m) => m.version === parseInt(verStr) && m.type === type
+        );
         if (match) result.push(match);
 
-        for (const next of (adj.get(id) || [])) {
+        for (const next of adj.get(id) || []) {
             const newDeg = inDegree.get(next) - 1;
             inDegree.set(next, newDeg);
             if (newDeg === 0) queue.push(next);
@@ -324,7 +353,7 @@ function topologicalSort(migrations) {
     if (result.length !== migrations.length) {
         throw new Error(
             `[迁移] DAG 拓扑排序检测到循环引用：已解析 ${result.length}/${migrations.length} 个节点，` +
-            `剩余节点存在无法满足的依赖关系，终止迁移`
+                `剩余节点存在无法满足的依赖关系，终止迁移`
         );
     }
 
@@ -343,7 +372,9 @@ async function executeMigration(migration, options, engine) {
     // 检查 database 引擎兼容性
     checkDatabaseCompatibility(data.database, engine);
 
-    console.log(`[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`);
+    console.log(
+        `[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`
+    );
 
     // 每个版本包一层事务
     // 注意：同版本内 schema.map 和 data.map 是分开的两个事务（各自执行一次 executeMigration）
@@ -410,12 +441,41 @@ async function executeSchemaOperation(op) {
 }
 
 /**
+ * 判断一个 "no such column" 错误是否指向 `columns` 中声明的某个列。
+ * SQLite 错误文本形如 `no such column: groupName` 或 `no such column: "groupName"`
+ * （标识符可能带双引号）。仅匹配声明的列名，避免宽泛吞掉其他列名拼写错误。
+ *
+ * @param {unknown} e - 捕获的错误
+ * @param {string[]} columns - 预期在重试时已不存在的列名
+ * @returns {boolean}
+ */
+function isMissingDeclaredColumn(e, columns) {
+    const msg = (e && e.toString()) || '';
+    if (!msg.includes('no such column')) return false;
+    return columns.some(
+        (c) =>
+            msg.includes(`no such column: ${c}`) ||
+            msg.includes(`no such column: "${c}"`)
+    );
+}
+
+/**
  * 执行原始 SQL 操作（用于 schema 迁移中的非 DDL 逻辑，如数据迁移）。
+ *
+ * 幂等性：「列重命名 + 数据回填」是一次性操作——首次运行回填旧列数据到
+ * 新列后 drop 旧列，重试时旧列已不存在，UPDATE 无法引用。为支持安全重试
+ * （issue Phase 10.5 幂等性要求），当 `op.idempotent` 为 true 且错误明确
+ * 指向 `op.idempotentColumns` 中声明的列时跳过；其他任何错误（含未来迁移
+ * 作者的列名拼写错误）仍严格抛错，防止静默数据丢失。
+ *
  * @param {string} tablePattern
  * @param {object} op
+ * @param {string} op.sql - 要执行的 SQL
+ * @param {boolean} [op.idempotent] - 为 true 时启用幂等跳过（须配合 idempotentColumns）
+ * @param {string[]} [op.idempotentColumns] - 预期重试时已不存在的列名白名单
  */
 async function executeRawSql(tablePattern, op) {
-    const { sql } = op;
+    const { sql, idempotent, idempotentColumns } = op;
     if (!sql) {
         console.warn('[迁移] execute_sql 操作缺少 sql 字段');
         return;
@@ -424,6 +484,16 @@ async function executeRawSql(tablePattern, op) {
         await adapter.executeNonQuery(sql);
         console.log(`[迁移] 已执行 SQL: ${sql.substring(0, 80)}...`);
     } catch (e) {
+        if (
+            idempotent &&
+            Array.isArray(idempotentColumns) &&
+            isMissingDeclaredColumn(e, idempotentColumns)
+        ) {
+            console.warn(
+                `[迁移] 幂等跳过（被引用列已不存在）: ${sql.substring(0, 80)}...`
+            );
+            return;
+        }
         console.error(`[迁移] 执行 SQL 失败:`, e);
         throw e;
     }
@@ -440,8 +510,8 @@ async function executeAddColumn(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} ADD COLUMN ${column} ${type} DEFAULT ${defaultValue}`;
-            await adapter.executeNonQuery(sql);
+            const columnDef = `${column} ${type} DEFAULT ${defaultValue}`;
+            await adapter.alterTableAddColumn(table, columnDef);
             console.log(`[迁移] 已添加列 ${column} 到 ${table}`);
         } catch (e) {
             const errStr = e.toString();
@@ -471,8 +541,7 @@ async function executeCreateIndex(tablePattern, op) {
         const columnsStr = columns.join(', ');
 
         try {
-            const sql = `CREATE INDEX IF NOT EXISTS ${indexName} ON ${table} (${columnsStr})`;
-            await adapter.executeNonQuery(sql);
+            await adapter.createIndex(indexName, table, columns);
             console.log(`[迁移] 已在 ${table} 上创建索引 ${indexName}`);
         } catch (e) {
             console.error(`[迁移] 创建索引 ${indexName} 失败:`, e);
@@ -492,8 +561,7 @@ async function executeDropColumn(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} DROP COLUMN ${column}`;
-            await adapter.executeNonQuery(sql);
+            await adapter.alterTableDropColumn(table, column);
             console.log(`[迁移] 已删除 ${table} 的列 ${column}`);
         } catch (e) {
             const errStr = e.toString();
@@ -518,14 +586,15 @@ async function executeRenameTable(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `ALTER TABLE ${table} RENAME TO ${newName}`;
-            await adapter.executeNonQuery(sql);
+            await adapter.alterTableRename(table, newName);
             console.log(`[迁移] 已重命名 ${table} 为 ${newName}`);
         } catch (e) {
             const errStr = e.toString();
             // 幂等处理: 表已被重命名或不存在，跳过
             if (errStr.includes('no such table')) {
-                console.log(`[迁移] 表 ${table} 不存在（可能已被重命名），跳过`);
+                console.log(
+                    `[迁移] 表 ${table} 不存在（可能已被重命名），跳过`
+                );
             } else if (errStr.includes('already exists')) {
                 console.log(`[迁移] 目标表 ${newName} 已存在，跳过`);
             } else {
@@ -582,8 +651,7 @@ async function executeDelete(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const sql = `DELETE FROM ${table} WHERE ${where}`;
-            const result = await adapter.executeNonQuery(sql);
+            const result = await adapter.deleteWhere(table, where);
             if (Number(result) > 0) {
                 console.log(`[迁移] 从 ${table} 删除了 ${Number(result)} 行`);
             }
@@ -611,7 +679,10 @@ async function executeUpdate(tablePattern, op, params, options) {
 
         try {
             const sql = `UPDATE ${table} SET ${setClause} WHERE ${where}`;
-            const result = await adapter.executeNonQuery(sql, flattenArgs(resolvedSet));
+            const result = await adapter.executeNonQuery(
+                sql,
+                flattenArgs(resolvedSet)
+            );
             if (Number(result) > 0) {
                 console.log(`[迁移] 更新了 ${table} 的 ${Number(result)} 行`);
             }
@@ -632,16 +703,11 @@ async function executeInsert(tablePattern, op) {
 
     for (const table of tables) {
         try {
-            const colList = columns.join(', ');
-            const placeholders = columns.map((_, i) => `@p${i}`).join(', ');
-            const sql = `INSERT OR IGNORE INTO ${table} (${colList}) VALUES (${placeholders})`;
-
-            const args = {};
+            const data = {};
             columns.forEach((col, i) => {
-                args[`@p${i}`] = values[i];
+                data[col] = values[i];
             });
-
-            const result = await adapter.executeNonQuery(sql, args);
+            const result = await adapter.insert(table, data, 'ignore');
             if (Number(result) > 0) {
                 console.log(`[迁移] 插入到 ${table} ${Number(result)} 行`);
             }
@@ -663,16 +729,8 @@ async function expandWildcard(tablePattern) {
     }
 
     // 通配符模式: %_suffix
-    // 匹配以 suffix 结尾的任何表
-    const suffix = tablePattern.substring(1); // 移除开头的 %
-
-    const tables = [];
-    await adapter.execute((row) => {
-        tables.push(row[0]);
-    },
-        `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern ESCAPE '\\'`,
-        { '@pattern': `%${suffix}` }
-    );
+    // adapter.listTables 等价查询但不含 ESCAPE '\\'（通配符模式不含反斜杠，可忽略）
+    const tables = await adapter.listTables(tablePattern);
 
     return tables;
 }
@@ -733,7 +791,7 @@ async function resolveParam(paramName, params, options) {
         if (Array.isArray(bind) && bind.length > 0) {
             for (const key of bind) {
                 if (paramDef[key] !== undefined) {
-                    queryArgs[`@${key}`] = paramDef[key];
+                    queryArgs[key] = paramDef[key];
                 }
             }
         }
@@ -752,7 +810,9 @@ async function resolveParam(paramName, params, options) {
         // 基本安全校验：确保嵌入内容是 SQL 子查询（以 ( 开头）
         const trimmed = sql.trim();
         if (!trimmed.startsWith('(')) {
-            console.warn(`[迁移] sql_embed 参数 ${paramName} 应以 ( 开头，实际: ${trimmed.slice(0, 40)}`);
+            console.warn(
+                `[迁移] sql_embed 参数 ${paramName} 应以 ( 开头，实际: ${trimmed.slice(0, 40)}`
+            );
             return null;
         }
         // 特殊标记，表示这不是一个值而是要嵌入的 SQL 片段
@@ -761,12 +821,13 @@ async function resolveParam(paramName, params, options) {
 
     if (source === 'old_db') {
         // 在旧数据库上执行子查询 (用于迁移)
-        if (!options.oldDbPath) {
-            console.warn(`[迁移] 参数 ${paramName} 缺少 oldDbPath`);
+        if (!options.oldDb) {
+            console.warn(`[迁移] 参数 ${paramName} 缺少 oldDb 实例`);
             return null;
         }
 
-        const rows = await adapter.executeReadOnly(options.oldDbPath, sql, {});
+        const rows = [];
+        await options.oldDb.execute((row) => rows.push(row), sql, {});
         return rows && rows.length > 0 ? rows[0][0] : null;
     }
 
@@ -782,9 +843,13 @@ async function resolveParam(paramName, params, options) {
 async function executeWithParams(sql, args) {
     const results = [];
     try {
-        await adapter.execute((row) => {
-            results.push(Array.from(row));
-        }, sql, args);
+        await adapter.execute(
+            (row) => {
+                results.push(Array.from(row));
+            },
+            sql,
+            args
+        );
         return results;
     } catch (e) {
         console.error('[迁移] 子查询执行失败:', e);
@@ -801,13 +866,15 @@ async function executeWithParams(sql, args) {
  * @returns {string} - "col1 = @col1, col2 = (SELECT ...), ..."
  */
 function buildSetClause(setObj) {
-    return Object.keys(setObj).map(key => {
-        const val = setObj[key];
-        if (val && typeof val === 'object' && val.__sqlEmbed) {
-            return `${key} = ${val.sql}`;
-        }
-        return `${key} = @${key}`;
-    }).join(', ');
+    return Object.keys(setObj)
+        .map((key) => {
+            const val = setObj[key];
+            if (val && typeof val === 'object' && val.__sqlEmbed) {
+                return `${key} = ${val.sql}`;
+            }
+            return `${key} = @${key}`;
+        })
+        .join(', ');
 }
 
 /**
@@ -820,7 +887,7 @@ function flattenArgs(obj) {
     const args = {};
     for (const [key, value] of Object.entries(obj)) {
         if (value && typeof value === 'object' && value.__sqlEmbed) continue;
-        args[`@${key}`] = value;
+        args[key] = value;
     }
     return args;
 }
@@ -834,6 +901,4 @@ async function recordCheckpoint(version) {
     console.log(`[迁移] 检查点已记录: VRCX_databaseVersion = ${version}`);
 }
 
-export {
-    runMigrations
-};
+export { runMigrations };

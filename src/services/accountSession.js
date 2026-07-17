@@ -8,8 +8,9 @@
  *  - Write GPS / Online / Offline feed events to the secondary account's DB tables
  *  - Run a lightweight periodic poll for friends list refresh
  *
- * Intentionally does NOT touch the global Stores (friendStore, userStore, etc.),
+ * Intentionally does NOT touch the global data Stores (friendStore, userStore, etc.),
  * so the primary account's UI is completely unaffected.
+ * The only exception is useModalStore, used solely for 2FA verification dialogs.
  */
 
 import { reactive } from 'vue';
@@ -21,10 +22,6 @@ import * as workerTimers from 'worker-timers';
 import { useModalStore } from '../stores/modal';
 
 // ── Utility ────────────────────────────────────────────────────────────────────
-
-function isVagueLoc(loc) {
-    return !loc || loc === 'private' || (typeof loc === 'string' && loc.startsWith('offline'));
-}
 
 function isDetailedLoc(loc) {
     return loc && loc !== 'private' && !(typeof loc === 'string' && loc.startsWith('offline')) && loc !== ':';
@@ -44,13 +41,15 @@ export class AccountSession {
         this.userInfo = reactive({ id: userId, displayName: '' });
         this.label = '?';
         /**
-         * @type {Map<string, {id: string, state: string, ref?: object, $accountIds?: string[]}>}
+         * @type {Map<string, {id: string, name?: string, state: string, ref?: any, $accountIds?: string[], isVIP?: boolean, memo?: string, pendingOffline?: boolean, $nickName?: string}>}
          */
         this.friendsCache = new Map();
 
         this._ws = null;
         this._pollTimer = null;
         this._destroyed = false;
+        this._apiEndpoint = null;
+        this._wsEndpoint = null;
     }
 
     // ── Session lifecycle ──────────────────────────────────────────────────────
@@ -82,7 +81,9 @@ export class AccountSession {
                 // We should clear the bad cookies from the secondary client
                 try {
                     webApiService.setSecondaryCookies(this.userId, '');
-                } catch {}
+                } catch {
+                    // secondary cookies not available
+                }
             }
         } catch {
             currentUser = null;
@@ -97,6 +98,10 @@ export class AccountSession {
             const endpointToUse = endpoint || AppDebug.endpointDomainVrchat;
             const wsToUse = websocket || AppDebug.websocketDomainVrchat;
 
+            // Set endpoints before login requests so _requestRaw uses the correct base
+            this._apiEndpoint = endpointToUse;
+            this._wsEndpoint = wsToUse;
+
             const auth = btoa(
                 `${encodeURIComponent(username)}:${encodeURIComponent(password)}`
             );
@@ -107,9 +112,6 @@ export class AccountSession {
             if (currentUser?.requiresTwoFactorAuth) {
                 currentUser = await this._completeTwoFactorAuth(currentUser, savedEntry);
             }
-
-            this._wsEndpoint = wsToUse;
-            this._apiEndpoint = endpointToUse;
         } else {
             this._apiEndpoint = savedEntry.loginParams?.endpoint || AppDebug.endpointDomainVrchat;
             this._wsEndpoint = savedEntry.loginParams?.websocket || AppDebug.websocketDomainVrchat;
@@ -121,7 +123,6 @@ export class AccountSession {
 
         this.userInfo = currentUser;
         this.label = currentUser.displayName || this.userId;
-        this._initialized = true;
 
         // Initialise DB tables for this account
         await this._initTables();
@@ -157,12 +158,15 @@ export class AccountSession {
     /**
      * Makes an API request using this account's secondary HTTP client.
      * Returns the parsed JSON response body.
+     * @param {string} endpoint
+     * @param {{ method?: string, params?: object, uploadImage?: boolean, headers?: object }} [options]
      */
     async _requestRaw(endpoint, options = {}) {
         const apiBase = this._apiEndpoint || AppDebug.endpointDomain;
         const init = {
             url: `${apiBase}/${endpoint}`,
             method: options.method || 'GET',
+            body: undefined,
             ...options
         };
 
@@ -260,30 +264,83 @@ export class AccountSession {
 
     async _initTables() {
         const p = this.userPrefix;
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
-        );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_feed_status (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
-        );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_feed_bio (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
-        );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_feed_avatar (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
-        );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
-        );
+        await adapter.createTable(`${p}_feed_gps`, [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'location', type: 'TEXT' },
+            { name: 'world_name', type: 'TEXT' },
+            { name: 'previous_location', type: 'TEXT' },
+            { name: 'time', type: 'INTEGER' },
+            { name: 'group_name', type: 'TEXT' }
+        ]);
+        await adapter.createTable(`${p}_feed_status`, [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'status', type: 'TEXT' },
+            { name: 'status_description', type: 'TEXT' },
+            { name: 'previous_status', type: 'TEXT' },
+            { name: 'previous_status_description', type: 'TEXT' }
+        ]);
+        await adapter.createTable(`${p}_feed_bio`, [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'bio', type: 'TEXT' },
+            { name: 'previous_bio', type: 'TEXT' }
+        ]);
+        await adapter.createTable(`${p}_feed_avatar`, [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'owner_id', type: 'TEXT' },
+            { name: 'avatar_name', type: 'TEXT' },
+            { name: 'current_avatar_image_url', type: 'TEXT' },
+            { name: 'current_avatar_thumbnail_image_url', type: 'TEXT' },
+            { name: 'previous_current_avatar_image_url', type: 'TEXT' },
+            { name: 'previous_current_avatar_thumbnail_image_url', type: 'TEXT' }
+        ]);
+        await adapter.createTable(`${p}_feed_online_offline`, [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'user_id', type: 'TEXT' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'type', type: 'TEXT' },
+            { name: 'location', type: 'TEXT' },
+            { name: 'world_name', type: 'TEXT' },
+            { name: 'time', type: 'INTEGER' },
+            { name: 'group_name', type: 'TEXT' }
+        ]);
         await adapter.createIndex(
             `${p}_feed_online_offline_user_created_idx`, `${p}_feed_online_offline`, ['user_id', 'created_at']
         );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_friend_log_current (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
-        );
-        await adapter.createTableRaw(
-            `CREATE TABLE IF NOT EXISTS ${p}_notifications (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
-        );
+        await adapter.createTable(`${p}_friend_log_current`, [
+            { name: 'user_id', type: 'TEXT', constraints: 'PRIMARY KEY' },
+            { name: 'display_name', type: 'TEXT' },
+            { name: 'trust_level', type: 'TEXT' },
+            { name: 'friend_number', type: 'INTEGER' }
+        ]);
+        await adapter.createTable(`${p}_notifications`, [
+            { name: 'id', type: 'TEXT', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'type', type: 'TEXT' },
+            { name: 'sender_user_id', type: 'TEXT' },
+            { name: 'sender_username', type: 'TEXT' },
+            { name: 'receiver_user_id', type: 'TEXT' },
+            { name: 'message', type: 'TEXT' },
+            { name: 'world_id', type: 'TEXT' },
+            { name: 'world_name', type: 'TEXT' },
+            { name: 'image_url', type: 'TEXT' },
+            { name: 'invite_message', type: 'TEXT' },
+            { name: 'request_message', type: 'TEXT' },
+            { name: 'response_message', type: 'TEXT' },
+            { name: 'expired', type: 'INTEGER' }
+        ]);
     }
 
     _writeGPS(userId, displayName, location, worldName, previousLocation, groupName) {

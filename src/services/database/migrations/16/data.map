@@ -14,7 +14,7 @@
     },
     "strip_name_sql": {
       "source": "sql_embed",
-      "sql": "(TRIM(SUBSTR(display_name, 1, INSTR(display_name, ' (') - 1)))"
+      "sql": "(SUBSTR(display_name, 1, INSTR(display_name, ' (') - 1))"
     }
   },
   "fixes": [
@@ -47,7 +47,7 @@
     {
       "table": "%_friend_log_history",
       "operation": "update",
-      "set": { "type": "'CancelFriendRequest'" },
+      "set": { "type": "CancelFriendRequest" },
       "where": "type = 'CancelFriendRequst'"
     },
     {
@@ -60,7 +60,7 @@
       "table": "gamelog_join_leave",
       "operation": "update",
       "set": { "time": 0 },
-      "where": "type = 'OnPlayerLeft' AND time > 0 AND time > (SELECT COALESCE(SUM(time), 0) FROM gamelog_location WHERE gamelog_location.location = gamelog_join_leave.location)"
+      "where": "type = 'OnPlayerLeft' AND time > 0 AND EXISTS (SELECT 1 FROM gamelog_location WHERE gamelog_location.location = gamelog_join_leave.location) AND time > (SELECT COALESCE(SUM(time), 0) FROM gamelog_location WHERE gamelog_location.location = gamelog_join_leave.location)"
     },
     {
       "table": "gamelog_join_leave",

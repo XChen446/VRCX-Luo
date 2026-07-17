@@ -4,31 +4,19 @@ import { adapter } from './adapter/index.js';
 
 const moderation = {
     async getModeration(userId) {
-        var row = {};
-        await adapter.execute(
-            (dbRow) => {
-                var block = false;
-                var mute = false;
-                if (dbRow[3] === 1) {
-                    block = true;
-                }
-                if (dbRow[4] === 1) {
-                    mute = true;
-                }
-                row = {
-                    userId: dbRow[0],
-                    updatedAt: dbRow[1],
-                    displayName: dbRow[2],
-                    block,
-                    mute
-                };
-            },
-            `SELECT * FROM ${adapter.userTable(dbVars.userPrefix, 'moderation')} WHERE user_id = @userId`,
-            {
-                '@userId': userId
-            }
+        const dbRow = await adapter.selectOne(
+            adapter.userTable(dbVars.userPrefix, 'moderation'),
+            '*',
+            { user_id: userId }
         );
-        return row;
+        if (!dbRow) return {};
+        return {
+            userId: dbRow[0],
+            updatedAt: dbRow[1],
+            displayName: dbRow[2],
+            block: dbRow[3] === 1,
+            mute: dbRow[4] === 1
+        };
     },
 
     setModeration(entry) {
@@ -40,17 +28,24 @@ const moderation = {
         if (entry.mute) {
             mute = 1;
         }
-        adapter.insert(`${adapter.userTable(dbVars.userPrefix, 'moderation')}`, {
-            user_id: entry.userId,
-            updated_at: entry.updatedAt,
-            display_name: entry.displayName,
-            block: block,
-            mute: mute
-        }, 'replace');
+        adapter.insert(
+            `${adapter.userTable(dbVars.userPrefix, 'moderation')}`,
+            {
+                user_id: entry.userId,
+                updated_at: entry.updatedAt,
+                display_name: entry.displayName,
+                block: block,
+                mute: mute
+            },
+            'replace'
+        );
     },
 
     deleteModeration(userId) {
-        adapter.delete(`${adapter.userTable(dbVars.userPrefix, 'moderation')}`, { user_id: userId });
+        adapter.delete(
+            `${adapter.userTable(dbVars.userPrefix, 'moderation')}`,
+            { user_id: userId }
+        );
     }
 };
 

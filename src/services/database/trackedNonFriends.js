@@ -42,7 +42,7 @@ const trackedNonFriends = {
             `${adapter.userTable(dbVars.userPrefix, 'tracked_nonfriends')}`,
             ['1'],
             'user_id = @userId',
-            { '@userId': userId },
+            { userId },
             { limit: 1 }
         );
         return rows.length > 0;

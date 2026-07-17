@@ -102,6 +102,21 @@ namespace VRCX
             return string.Empty;
         }
 
+        /// <summary>
+        /// Resolves and validates a VRCX_Database.name value to an absolute,
+        /// canonicalized database file path. Delegates to the centralized
+        /// SQLite.ValidateAndCanonicalizeDatabasePath to ensure identical
+        /// validation for both the C# backend and JS bridge callers.
+        ///
+        /// Throws InvalidOperationException if the path fails any validation
+        /// check (null bytes, path traversal, invalid extension, etc.).
+        /// JS callers MUST wrap in try/catch and handle gracefully.
+        /// </summary>
+        public string ResolveDatabaseName(string name)
+        {
+            return SQLite.ValidateAndCanonicalizeDatabasePath(name);
+        }
+
         public string CurrentCulture()
         {
             var culture = CultureInfo.CurrentCulture.ToString();

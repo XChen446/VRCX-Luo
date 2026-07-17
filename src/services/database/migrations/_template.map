@@ -109,8 +109,8 @@
 //       "value": "literal"
 //     },
 //     "old_db_value": {
-//       "source": "old_db",                  // 在旧数据库上执行（需要运行时传入 oldDbPath）
-//                                           // Execute on old database (needs oldDbPath option)
+//       "source": "old_db",                  // 在旧数据库上执行（需要运行时传入 oldDb 实例）
+//                                           // Execute on old database (needs oldDb instance option)
 //       "sql": "SELECT value FROM configs WHERE key = @key LIMIT 1"
 //     }
 //   },
@@ -228,8 +228,8 @@
 //
 //   "source": "fixed"      - Use literal value from "value" field / 使用 value 字段字面值
 //
-//   "source": "old_db"     - Execute SQL on old database (needs oldDbPath runtime option)
-//                            在旧数据库上执行 SQL（需要运行时传入 oldDbPath 选项）
+//   "source": "old_db"     - Execute SQL on old database (needs oldDb instance option)
+//                            在旧数据库上执行 SQL（需要运行时传入 oldDb 实例）
 //                            Returns first column of first result row / 返回首行首列。
 //
 //   "source": "sql_embed"  - Embed raw SQL directly into SET clause

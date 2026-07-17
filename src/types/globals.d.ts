@@ -28,7 +28,6 @@ declare global {
         database: any;
         gameLogService: any;
         crypto: any;
-        sqliteService: any;
         interopApi: {
             callDotNetMethod: (
                 className: any,
@@ -132,9 +131,8 @@ declare global {
 
     const SQLite: {
         Execute: (sql: string, args: string) => Promise<any[]>;
-        ExecuteJson: (sql: string, args: string) => Promise<string>;
-        ExecuteNonQuery: (sql: string, args: string) => Promise<Number>;
-        ExecuteReadOnlyJson: (path: string, sql: string, args: string) => Promise<string>;
+        ExecuteJson: (...args: any[]) => Promise<string>;
+        ExecuteNonQuery: (...args: any[]) => Promise<number>;
     };
 
     const LogWatcher: {
@@ -223,6 +221,7 @@ declare global {
         ): Promise<void>;
         GetFileBase64(path: string): Promise<string | null>;
         TryOpenInstanceInVrc(launchUrl: string): Promise<boolean>;
+        ResolveDatabaseName(name: string): Promise<string>;
 
         // Image Upload (Cef Only)
         MD5File(blob: string): Promise<string>;

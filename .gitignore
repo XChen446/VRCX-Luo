@@ -17,3 +17,7 @@ AI_GUIDE.md
 CLAUDE.md
 coverage/
 .agent/
+.kilo/
+.kilocode/
+TempLogs/
+*.bak

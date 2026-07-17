@@ -15,6 +15,8 @@ namespace VRCX
 {
     public static class Program
     {
+        public const string DefaultDatabaseFile = "VRCX.sqlite3";
+
         public static string BaseDirectory { get; private set; }
         public static string AppDataDirectory;
         public static string ConfigLocation { get; private set; }
@@ -30,7 +32,7 @@ namespace VRCX
                     "VRCX");
 
             BaseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-            ConfigLocation = Path.Join(AppDataDirectory, "VRCX.sqlite3");
+            ConfigLocation = Path.Join(AppDataDirectory, DefaultDatabaseFile);
 
             if (!Directory.Exists(AppDataDirectory))
             {
@@ -44,11 +46,11 @@ namespace VRCX
                         Path.Join(AppDataDirectory, "VRCX-backup.json"));
                 }
 
-                if (File.Exists(Path.Join(BaseDirectory, "VRCX.sqlite3")))
+                if (File.Exists(Path.Join(BaseDirectory, DefaultDatabaseFile)))
                 {
-                    File.Move(Path.Join(BaseDirectory, "VRCX.sqlite3"),
-                        Path.Join(AppDataDirectory, "VRCX.sqlite3"));
-                    File.Copy(Path.Join(AppDataDirectory, "VRCX.sqlite3"),
+                    File.Move(Path.Join(BaseDirectory, DefaultDatabaseFile),
+                        Path.Join(AppDataDirectory, DefaultDatabaseFile));
+                    File.Copy(Path.Join(AppDataDirectory, DefaultDatabaseFile),
                         Path.Join(AppDataDirectory, "VRCX-backup.sqlite3"));
                 }
             }
@@ -236,7 +238,10 @@ namespace VRCX
             logger.Debug("Wine detection: {0}", Wine.GetIfWine());
 
             IPCServer.Instance.Init();
-            SQLite.Instance.Init();
+            if (VRCXStorage.Instance.Get("VRCX_Database.mode") == "sqlite")
+            {
+                SQLite.Instance.Init();
+            }
             AppApiInstance = new AppApiCef();
 
             ProcessMonitor.Instance.Init();

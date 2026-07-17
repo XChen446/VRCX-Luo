@@ -11,8 +11,6 @@ import { memos } from './memos.js';
 import { moderation } from './moderation.js';
 import { mutualGraph } from './mutualGraph.js';
 import { notifications } from './notifications.js';
-import { tableAlter } from './tableAlter.js';
-import { tableFixes } from './tableFixes.js';
 import { tableSize } from './tableSize.js';
 import { trackedNonFriends } from './trackedNonFriends.js';
 import { worldFavorites } from './worldFavorites.js';
@@ -40,8 +38,6 @@ const database = {
     ...avatarTags,
     ...friendFavorites,
     ...worldFavorites,
-    ...tableAlter,
-    ...tableFixes,
     ...tableSize,
     ...mutualGraph,
     ...trackedNonFriends,
@@ -89,7 +85,7 @@ const database = {
      * @param {number} currentVersion - 当前版本
      * @param {number} targetVersion - 目标版本
      * @param {object} [options] - 选项
-     * @param {string} [options.oldDbPath] - 旧数据库路径
+     * @param {object} [options.oldDb] - 旧数据库适配器实例
      * @returns {Promise<boolean>}
      */
     async runMigrations(currentVersion, targetVersion, options = {}) {

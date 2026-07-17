@@ -1,15 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({
-    execute: vi.fn()
-}));
-
-vi.mock('../../sqlite.js', () => ({
-    default: {
-        execute: mocks.execute,
-        executeNonQuery: vi.fn()
-    }
-}));
 vi.mock('../index.js', () => ({
     dbVars: {
         maxTableSize: 500,
@@ -18,15 +8,26 @@ vi.mock('../index.js', () => ({
 }));
 
 import { gameLog } from '../gameLog.js';
+import { adapter } from '../adapter/index.js';
 
 describe('gameLog.getSelfPresenceForLocations', () => {
+    let executeMock;
+
     beforeEach(() => {
-        mocks.execute.mockReset();
+        executeMock = vi.spyOn(adapter, 'execute').mockImplementation(async () => {});
+    });
+
+    afterEach(() => {
+        executeMock.mockRestore();
     });
 
     test('filters out zero-duration records with AND time > 0', async () => {
-        mocks.execute.mockImplementation(async (callback, sql, params) => {
-            callback(['wrld_1:123~region(us)', '2024-01-15T10:00:00Z', 3600000]);
+        executeMock.mockImplementation(async (callback, sql, params) => {
+            callback([
+                'wrld_1:123~region(us)',
+                '2024-01-15T10:00:00Z',
+                3600000
+            ]);
             return undefined;
         });
 
@@ -37,40 +38,63 @@ describe('gameLog.getSelfPresenceForLocations', () => {
         expect(result.get('wrld_1:123~region(us)')).toEqual([
             { selfLeave: '2024-01-15T10:00:00Z', selfTime: 3600000 }
         ]);
-        expect(mocks.execute).toHaveBeenCalledTimes(1);
-        expect(mocks.execute.mock.calls[0][1]).toContain('AND time > 0');
+        expect(executeMock).toHaveBeenCalledTimes(1);
+        expect(executeMock.mock.calls[0][1]).toContain('AND time > 0');
     });
 
     test('returns empty map when locations array is empty', async () => {
         const result = await gameLog.getSelfPresenceForLocations('usr_abc', []);
         expect(result.size).toBe(0);
-        expect(mocks.execute).not.toHaveBeenCalled();
+        expect(executeMock).not.toHaveBeenCalled();
     });
 });
 
 describe('gameLog.getCoInstanceHistoryBetweenFriends', () => {
+    let executeMock;
+
     beforeEach(() => {
-        mocks.execute.mockReset();
+        executeMock = vi.spyOn(adapter, 'execute').mockImplementation(async () => {});
+    });
+
+    afterEach(() => {
+        executeMock.mockRestore();
     });
 
     test('includes inferred co-instance sessions from feed GPS/offline history', async () => {
-        mocks.execute.mockImplementation(async (callback, sql, params) => {
-            if (sql.includes('FROM gamelog_join_leave a')) {
-                callback([
-                    'wrld_logged:123~region(us)',
-                    '2025-01-01T12:00:00Z',
-                    3600000,
-                    '2025-01-01T12:30:00Z',
-                    3600000
-                ]);
+        executeMock.mockImplementation(async (callback, sql, params) => {
+            // selectWhere for gamelog_join_leave (friend A and B)
+            if (
+                sql.includes('FROM gamelog_join_leave') &&
+                !sql.includes('previous_location')
+            ) {
+                if (params['uid'] === 'usr_a') {
+                    callback([
+                        'wrld_logged:123~region(us)',
+                        '2025-01-01T12:00:00Z',
+                        3600000
+                    ]);
+                } else if (params['uid'] === 'usr_b') {
+                    callback([
+                        'wrld_logged:123~region(us)',
+                        '2025-01-01T12:30:00Z',
+                        3600000
+                    ]);
+                }
                 return undefined;
             }
-            if (sql.includes('FROM _feed_gps') || sql.includes('FROM _feed_online_offline')) {
-                if (params['@userId'] === 'usr_a') {
-                    callback(['wrld_inferred:55~region(us)', '2025-01-01T10:00:00Z', 3600000]);
-                } else if (params['@userId'] === 'usr_b') {
-                    callback(['wrld_inferred:55~region(us)', '2025-01-01T10:20:00Z', 3600000]);
-                }
+            // selectUnion for feed tables (friend A and B)
+            if (params['uid'] === 'usr_a') {
+                callback([
+                    'wrld_inferred:55~region(us)',
+                    '2025-01-01T10:00:00Z',
+                    3600000
+                ]);
+            } else if (params['uid'] === 'usr_b') {
+                callback([
+                    'wrld_inferred:55~region(us)',
+                    '2025-01-01T10:20:00Z',
+                    3600000
+                ]);
             }
             return undefined;
         });
@@ -93,23 +117,40 @@ describe('gameLog.getCoInstanceHistoryBetweenFriends', () => {
     });
 
     test('deduplicates duplicate rows coming from multiple sources', async () => {
-        mocks.execute.mockImplementation(async (callback, sql, params) => {
-            if (sql.includes('FROM gamelog_join_leave a')) {
+        executeMock.mockImplementation(async (callback, sql, params) => {
+            // selectWhere for gamelog_join_leave
+            if (
+                sql.includes('FROM gamelog_join_leave') &&
+                !sql.includes('previous_location')
+            ) {
+                if (params['uid'] === 'usr_a') {
+                    callback([
+                        'wrld_same:1~region(us)',
+                        '2025-01-01T10:00:00Z',
+                        3600000
+                    ]);
+                } else if (params['uid'] === 'usr_b') {
+                    callback([
+                        'wrld_same:1~region(us)',
+                        '2025-01-01T10:20:00Z',
+                        3600000
+                    ]);
+                }
+                return undefined;
+            }
+            // selectUnion for feed tables
+            if (params['uid'] === 'usr_a') {
                 callback([
                     'wrld_same:1~region(us)',
                     '2025-01-01T10:00:00Z',
-                    3600000,
+                    3600000
+                ]);
+            } else if (params['uid'] === 'usr_b') {
+                callback([
+                    'wrld_same:1~region(us)',
                     '2025-01-01T10:20:00Z',
                     3600000
                 ]);
-                return undefined;
-            }
-            if (sql.includes('FROM _feed_gps') || sql.includes('FROM _feed_online_offline')) {
-                if (params['@userId'] === 'usr_a') {
-                    callback(['wrld_same:1~region(us)', '2025-01-01T10:00:00Z', 3600000]);
-                } else if (params['@userId'] === 'usr_b') {
-                    callback(['wrld_same:1~region(us)', '2025-01-01T10:20:00Z', 3600000]);
-                }
             }
             return undefined;
         });
@@ -130,12 +171,18 @@ describe('gameLog.getCoInstanceHistoryBetweenFriends', () => {
 });
 
 describe('gameLog.getMyTopWorlds', () => {
+    let executeMock;
+
     beforeEach(() => {
-        mocks.execute.mockReset();
+        executeMock = vi.spyOn(adapter, 'execute').mockImplementation(async () => {});
+    });
+
+    afterEach(() => {
+        executeMock.mockRestore();
     });
 
     test('adds an exclude clause when a home world id is provided', async () => {
-        mocks.execute.mockImplementation(async (callback, sql, params) => {
+        executeMock.mockImplementation(async (callback, sql, params) => {
             callback(['wrld_1', 'World One', 3, 9000]);
             return undefined;
         });
@@ -150,15 +197,15 @@ describe('gameLog.getMyTopWorlds', () => {
                 totalTime: 9000
             }
         ]);
-        expect(mocks.execute).toHaveBeenCalledTimes(1);
-        expect(mocks.execute.mock.calls[0][1]).toContain(
+        expect(executeMock).toHaveBeenCalledTimes(1);
+        expect(executeMock.mock.calls[0][1]).toContain(
             'AND world_id != @excludeWorldId'
         );
-        expect(mocks.execute.mock.calls[0][2]).toMatchObject({
-            '@limit': 5,
-            '@excludeWorldId': 'wrld_home'
+        expect(executeMock.mock.calls[0][1]).toContain('LIMIT 5');
+        expect(executeMock.mock.calls[0][2]).toMatchObject({
+            excludeWorldId: 'wrld_home'
         });
         // @cutoff is computed via adapter.daysAgoISO(30), skip exact value assertion
-        expect(mocks.execute.mock.calls[0][2]).toHaveProperty('@cutoff');
+        expect(executeMock.mock.calls[0][2]).toHaveProperty('cutoff');
     });
 });

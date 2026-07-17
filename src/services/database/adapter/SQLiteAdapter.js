@@ -1,35 +1,210 @@
-import sqliteService from '../../sqlite.js';
+import { EngineAdapter } from './EngineAdapter.js';
 
 /**
  * SQLite dialect adapter.
  *
- * Wraps sqliteService with structured methods that encapsulate SQLite-specific
- * syntax (INSERT OR IGNORE/REPLACE, @-params, IF NOT EXISTS, etc.).
- * All SQLite dialect keywords are centralized here — when switching engines,
- * replace this adapter's implementation (param style, conflict clause, DDL syntax).
+ * Encapsulates SQLite-specific syntax (INSERT OR IGNORE/REPLACE, @-params,
+ * IF NOT EXISTS, etc.). All SQLite dialect keywords are centralized here —
+ * when switching engines, replace this adapter's implementation.
  *
  * Business logic modules (feed.js, gameLog.js, etc.) call these methods with
  * structured parameters and never construct SQL strings directly.
  */
-class SQLiteAdapter {
-    /** Execute raw SQL with row callback. For complex queries (UNION ALL, subqueries). */
-    execute(callback, sql, args) {
-        return sqliteService.execute(callback, sql, args);
+class SQLiteAdapter extends EngineAdapter {
+    /** @type {string|null} */
+    connectionString = null;
+
+    /**
+     * @param {object} [config]
+     * @param {string} [config.connection] - sqlite:/// URI 或连接字符串
+     * @param {...object} [config.params] - 额外连接参数（覆盖默认）
+     */
+    constructor({ connection, ...params } = {}) {
+        super();
+        if (connection) {
+            this.connectionString = this._buildConnectionString(connection, params);
+        }
     }
 
-    /** Execute raw SQL without row callback. */
-    executeNonQuery(sql, args) {
-        return sqliteService.executeNonQuery(sql, args);
+    /** @override */
+    _normalizeArgs(args) {
+        if (args && typeof args === 'object' && !Array.isArray(args)) {
+            const prefixed = {};
+            for (const [k, v] of Object.entries(args)) {
+                prefixed[k.startsWith('@') ? k : `@${k}`] = v;
+            }
+            return prefixed;
+        }
+        return args;
     }
 
-    /** Execute read-only SQL on a separate SQLite connection. */
-    executeReadOnly(path, sql, args) {
-        return sqliteService.executeReadOnly(path, sql, args);
+    /** @private */
+    async handleSQLiteError(e) {
+        if (typeof e.message !== 'string') throw e;
+        const msg = e.message;
+        const isMalformed = msg.includes('database disk image is malformed');
+        const isFull = msg.includes('database or disk is full');
+        const isLocked =
+            msg.includes('database is locked') ||
+            msg.includes('attempt to write a readonly database');
+        const isIO = msg.includes('disk I/O error');
+        if (!isMalformed && !isFull && !isLocked && !isIO) throw e;
+
+        const [{ useModalStore }, { i18n }, { openExternalLink }] = await Promise.all([
+            import('../../../stores/modal'),
+            import('../../../plugins/i18n'),
+            import('../../../shared/utils/appActions')
+        ]);
+        const modalStore = useModalStore();
+        if (isMalformed) {
+            modalStore
+                .confirm({
+                    description:
+                        'Please repair or delete your database file by following these instructions.',
+                    title: 'Your database is corrupted'
+                })
+                .then(({ ok }) => {
+                    if (!ok) return;
+                    openExternalLink(
+                        'https://github.com/yixijun/VRCX-Luo/wiki#how-to-repair-vrcx-database'
+                    );
+                })
+                .catch(() => {});
+        }
+        if (isFull) {
+            modalStore.alert({
+                description: i18n.global.t('message.database.disk_space'),
+                title: 'Disk containing database is full'
+            });
+        }
+        if (isLocked) {
+            modalStore.alert({
+                description:
+                    'Please close other applications that might be using the database file.',
+                title: 'Database is locked'
+            });
+        }
+        if (isIO) {
+            modalStore.alert({
+                description: i18n.global.t('message.database.disk_error'),
+                title: 'Disk I/O error'
+            });
+        }
+        throw e;
+    }
+
+    /**
+     * @private Build SQLite connection string from sqlite:// URI + custom params.
+     *
+     * Uses manual prefix stripping instead of `new URL()` — file paths are not URLs,
+     * and URL parsing percent-encodes spaces/non-ASCII and truncates at `#`/`?`.
+     *
+     * URI forms accepted:
+     *   sqlite:///C:\path\db.sqlite   → Windows drive-letter path
+     *   sqlite:////home/user/db.sqlite → Linux absolute path (extra slash from caller)
+     *   sqlite://host/share/db.sqlite  → UNC path (\\host\share\db.sqlite)
+     */
+    _buildConnectionString(uri, params = {}) {
+        let dataSource;
+        const rest = uri.slice('sqlite://'.length);
+
+        if (rest.startsWith('/')) {
+            // Local path
+            if (WINDOWS) {
+                // /C:\path → C:\path (strip all leading slashes for drive-letter paths)
+                dataSource = rest.replace(/^\/+/, '');
+            } else {
+                // //home/path → /home/path (collapse multiple leading slashes to one)
+                dataSource = rest.replace(/^\/{2,}/, '/');
+            }
+        } else {
+            // UNC path: host/share/path → \\host\share\path
+            const slashIdx = rest.indexOf('/');
+            if (slashIdx === -1) {
+                dataSource = `\\\\${rest}`;
+            } else {
+                const host = rest.slice(0, slashIdx);
+                const path = rest.slice(slashIdx).replace(/\//g, '\\');
+                dataSource = `\\\\${host}${path}`;
+            }
+        }
+
+        const defaults = {
+            'Data Source': `"${dataSource.replace(/"/g, '""')}"`,
+            'Read Only': 'True',
+            'Version': '3'
+        };
+
+        const merged = { ...defaults, ...params };
+        return Object.entries(merged)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(';');
+    }
+
+    /** Execute raw SQL with row callback. Normalizes named-param keys. */
+    async execute(callback, sql, args) {
+        args = this._normalizeArgs(args);
+        try {
+            if (this.connectionString) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(this.connectionString, sql, args);
+                const items = JSON.parse(json);
+                items.forEach((item) => { callback(item); });
+                return;
+            }
+            if (LINUX) {
+                if (args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(sql, args);
+                const items = JSON.parse(json);
+                items.forEach((item) => {
+                    callback(item);
+                });
+                return;
+            }
+            const data = await SQLite.Execute(sql, args);
+            data.forEach((row) => {
+                callback(row);
+            });
+        } catch (e) {
+            await this.handleSQLiteError(e);
+        }
+    }
+
+    /**
+     * Execute raw SQL without row callback. Normalizes named-param keys.
+     * @param {string} sql - SQL statement
+     * @param {object|Array|null} [args] - named or positional parameters
+     * @returns {Promise<number>}
+     */
+    async executeNonQuery(sql, args) {
+        args = this._normalizeArgs(args);
+        try {
+            if (this.connectionString) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                return await SQLite.ExecuteNonQuery(this.connectionString, sql, args);
+            }
+            if (LINUX && args) {
+                args = new Map(Object.entries(args));
+            }
+            return await SQLite.ExecuteNonQuery(sql, args);
+        } catch (e) {
+            await this.handleSQLiteError(e);
+        }
     }
 
     /** @private Map 'ignore'|'replace' to OR IGNORE|OR REPLACE clause. */
     _insertClause(conflict) {
-        return conflict === 'ignore' ? 'OR IGNORE' : conflict === 'replace' ? 'OR REPLACE' : '';
+        return conflict === 'ignore'
+            ? 'OR IGNORE'
+            : conflict === 'replace'
+              ? 'OR REPLACE'
+              : '';
     }
 
     /**
@@ -43,10 +218,10 @@ class SQLiteAdapter {
         const columns = Object.keys(data);
         const params = {};
         const values = columns.map((col) => {
-            params[`@${col}`] = data[col];
+            params[col] = data[col];
             return `@${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `INSERT ${clause} INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
             params
         );
@@ -64,12 +239,18 @@ class SQLiteAdapter {
         const columns = Object.keys(rows[0]);
         const params = {};
         const values = rows.map((row, i) => {
-            return '(' + columns.map((col) => {
-                params[`@${col}_${i}`] = row[col];
-                return `@${col}_${i}`;
-            }).join(', ') + ')';
+            return (
+                '(' +
+                columns
+                    .map((col) => {
+                        params[`${col}_${i}`] = row[col];
+                        return `@${col}_${i}`;
+                    })
+                    .join(', ') +
+                ')'
+            );
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `INSERT ${clause} INTO ${table} (${columns.join(', ')}) VALUES ${values.join(', ')}`,
             params
         );
@@ -84,15 +265,33 @@ class SQLiteAdapter {
     update(table, data, where) {
         const params = {};
         const setClauses = Object.keys(data).map((col) => {
-            params[`@set_${col}`] = data[col];
+            params[`set_${col}`] = data[col];
             return `${col} = @set_${col}`;
         });
         const whereClauses = Object.keys(where).map((col) => {
-            params[`@where_${col}`] = where[col];
+            params[`where_${col}`] = where[col];
             return `${col} = @where_${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    /**
+     * UPDATE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {object} data - columns to SET (key:value)
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters
+     */
+    updateWhere(table, data, whereClause, params = {}) {
+        const setClauses = Object.keys(data).map((col) => {
+            params[`set_${col}`] = data[col];
+            return `${col} = @set_${col}`;
+        });
+        return this.executeNonQuery(
+            `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClause}`,
             params
         );
     }
@@ -105,29 +304,57 @@ class SQLiteAdapter {
     delete(table, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `DELETE FROM ${table} WHERE ${clauses.join(' AND ')}`,
             params
         );
     }
 
     /**
+     * DELETE all rows from a table.
+     * @param {string} table - target table name
+     */
+    deleteAll(table) {
+        return this.executeNonQuery(`DELETE FROM ${table}`);
+    }
+
+    /** DROP TABLE IF EXISTS. */
+    dropTable(table) {
+        return this.executeNonQuery(`DROP TABLE IF EXISTS ${table}`);
+    }
+
+    /**
+     * DELETE with raw WHERE clause (non-equality conditions).
+     * @param {string} table - target table name
+     * @param {string} whereClause - raw WHERE content (without the WHERE keyword)
+     * @param {object} [params] - named parameters
+     */
+    deleteWhere(table, whereClause, params = {}) {
+        return this.executeNonQuery(
+            `DELETE FROM ${table} WHERE ${whereClause}`,
+            params
+        );
+    }
+
+    /**
      * SELECT one row with equality WHERE and LIMIT 1.
-     * @returns {Array|null} row as array, or null if not found
+     * @returns {Promise<Array|null>} row as array, or null if not found
      */
     async selectOne(table, columns, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         let result = null;
-        await sqliteService.execute(
-            (row) => { result = row; },
+        await this.execute(
+            (row) => {
+                result = row;
+            },
             `SELECT ${colStr} FROM ${table} WHERE ${clauses.join(' AND ')} LIMIT 1`,
             params
         );
@@ -135,24 +362,28 @@ class SQLiteAdapter {
     }
 
     /**
-     * SELECT rows with equality conditions.
+     * SELECT rows with equality conditions. Omit `where` to select all rows.
+     * @param {object} [where] - equality conditions (AND-ed), omit for no WHERE clause
      * @param {object} [options] - { order, limit, distinct }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
     async select(table, columns, where, options = {}) {
         const { order, limit, distinct } = options;
-        const params = {};
-        const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
-            return `${col} = @${col}`;
-        });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         const distinctStr = distinct ? 'DISTINCT ' : '';
-        let sql = `SELECT ${distinctStr}${colStr} FROM ${table} WHERE ${clauses.join(' AND ')}`;
+        let sql = `SELECT ${distinctStr}${colStr} FROM ${table}`;
+        const params = {};
+        if (where && Object.keys(where).length > 0) {
+            const clauses = Object.keys(where).map((col) => {
+                params[col] = where[col];
+                return `${col} = @${col}`;
+            });
+            sql += ` WHERE ${clauses.join(' AND ')}`;
+        }
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -161,7 +392,7 @@ class SQLiteAdapter {
      * @param {string} [whereClause] - raw WHERE content (without the WHERE keyword), null to skip
      * @param {object} [params] - named parameters for the WHERE clause
      * @param {object} [options] - { order, limit, distinct }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
     async selectWhere(table, columns, whereClause, params, options = {}) {
         const { order, limit, distinct } = options;
@@ -172,7 +403,44 @@ class SQLiteAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /**
+     * SELECT with JOIN(s), raw WHERE, ORDER BY, LIMIT.
+     *
+     * JOIN 语法跨引擎高度一致，方言差异仅限于 LIMIT/ORDER BY 位置（已由 options 处理）。
+     * 接受完整的表别名和 ON 子句，由调用方保证列歧义消除。
+     *
+     * @param {object} spec
+     * @param {string}   spec.from       - 主表名
+     * @param {string}   [spec.alias]    - 主表别名
+     * @param {Array<{type:string, table:string, alias?:string, on:string}>} [spec.joins] - JOIN 描述
+     * @param {string[]|string} spec.columns - SELECT 列
+     * @param {string}   [spec.where]    - WHERE 子句（raw）
+     * @param {object}   [spec.params]   - 命名参数
+     * @param {string}   [spec.order]    - ORDER BY
+     * @param {number}   [spec.limit]    - LIMIT
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectJoin(spec) {
+        const { from, alias, joins, columns, where, params, order, limit } =
+            spec;
+        let sql = `SELECT ${Array.isArray(columns) ? columns.join(', ') : columns} FROM ${from}`;
+        if (alias) sql += ` ${alias}`;
+        if (joins) {
+            for (const j of joins) {
+                sql += ` ${j.type} JOIN ${j.table}`;
+                if (j.alias) sql += ` ${j.alias}`;
+                sql += ` ON ${j.on}`;
+            }
+        }
+        if (where) sql += ` WHERE ${where}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -184,14 +452,22 @@ class SQLiteAdapter {
      * @param {string} [extraWhere] - additional AND conditions (raw SQL fragment)
      * @param {object} [extraParams] - named params for extraWhere
      * @param {object} [options] - { order, limit }
-     * @returns {Array<Array>} array of row arrays
+     * @returns {Promise<Array<Array>>} array of row arrays
      */
-    async selectWhereIn(table, columns, inColumn, inValues, extraWhere, extraParams, options = {}) {
+    async selectWhereIn(
+        table,
+        columns,
+        inColumn,
+        inValues,
+        extraWhere,
+        extraParams,
+        options = {}
+    ) {
         if (!inValues || inValues.length === 0) return [];
         const { order, limit } = options;
         const params = { ...(extraParams || {}) };
         const placeholders = inValues.map((v, i) => {
-            params[`@in_${i}`] = v;
+            params[`in_${i}`] = v;
             return `@in_${i}`;
         });
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
@@ -200,7 +476,127 @@ class SQLiteAdapter {
         if (order) sql += ` ORDER BY ${order}`;
         if (limit) sql += ` LIMIT ${limit}`;
         const rows = [];
-        await sqliteService.execute((row) => rows.push(row), sql, params);
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /**
+     * UNION ALL across multiple sources with optional outer ORDER BY + LIMIT.
+     *
+     * Each source defines a sub-SELECT. `columns` are real columns for that table;
+     * `nulls` are columns that should appear as NULL in this branch (for column alignment).
+     * Pass `columns` as a raw SQL string (with `'Literal' AS type`, `NULL AS col`)
+     * and omit `nulls` to handle complex interleaved column layouts.
+     * All sources' params are merged together (they should use distinct or shared keys).
+     *
+     * SQLite compound-select 语法限制：
+     * 1. 分支内不允许 ORDER BY / LIMIT（只能出现在整个 compound select 末尾）
+     * 2. 不支持 `(SELECT ...) UNION ALL (SELECT ...)` 分支括号语法
+     * 解决：每个分支包装成 `SELECT * FROM (branch)` 派生表，分支内的
+     * ORDER BY/LIMIT 在派生表内部合法，UNION ALL 分支本身无外层括号。
+     *
+     * @param {object[]} sources - Array of { table, columns?, nulls?, where?, params?, order?, limit? }
+     * @param {object}   [options] - { schema?, order?, limit? }
+     *   schema: outer column list (default '*'), order: outer ORDER BY, limit: outer LIMIT
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectUnion(sources, options = {}) {
+        if (!sources || sources.length === 0) return [];
+        const { schema, order, limit } = options;
+        const allParams = {};
+        const parts = sources.map((source) => {
+            const {
+                table,
+                columns,
+                nulls,
+                where,
+                params,
+                order: srcOrder,
+                limit: srcLimit
+            } = source;
+            if (params) Object.assign(allParams, params);
+            let colStr = Array.isArray(columns)
+                ? columns.join(', ')
+                : columns || '*';
+            if (nulls && nulls.length > 0) {
+                colStr +=
+                    ', ' + nulls.map((col) => `NULL AS ${col}`).join(', ');
+            }
+            let sql = `SELECT ${colStr} FROM ${table}`;
+            if (where) sql += ` WHERE ${where}`;
+            if (srcOrder) sql += ` ORDER BY ${srcOrder}`;
+            if (srcLimit) sql += ` LIMIT ${srcLimit}`;
+            // Wrap each branch as a derived table so that per-branch
+            // ORDER BY/LIMIT is legal inside, while the UNION ALL branches
+            // themselves stay unparenthesised (SQLite requirement).
+            return `SELECT * FROM (${sql})`;
+        });
+        const outerSchema = schema
+            ? Array.isArray(schema)
+                ? schema.join(', ')
+                : schema
+            : '*';
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        if (order) finalSql += ` ORDER BY ${order}`;
+        if (limit) finalSql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute(
+            (row) => rows.push(row),
+            finalSql,
+            allParams
+        );
+        return rows;
+    }
+
+    /**
+     * SELECT with GROUP BY and aggregate expressions.
+     *
+     * @param {string} table
+     * @param {object} spec
+     * @param {string[]|string} [spec.columns] - non-aggregate SELECT columns (GROUP BY columns)
+     * @param {Array<{expr:string, alias:string}>} [spec.aggregates] - aggregate expressions
+     * @param {string[]|string} [spec.groupBy] - GROUP BY columns
+     * @param {string} [spec.where] - raw WHERE clause
+     * @param {object} [spec.params] - named params for WHERE
+     * @param {string} [spec.order] - ORDER BY clause
+     * @param {number} [spec.limit] - LIMIT
+     * @param {string} [spec.having] - HAVING clause
+     * @returns {Promise<Array<Array>>}
+     */
+    async selectGroupBy(table, spec) {
+        // 这一坨参数叠叠乐是 GROUP BY 查询本身所需的复杂度，不是设计失误。
+        // 总比让调用方手写 SELECT COUNT(*) FROM ... GROUP BY ... 然后每个引擎重写一遍好。
+        const {
+            columns,
+            aggregates,
+            groupBy,
+            where,
+            params,
+            order,
+            limit,
+            having
+        } = spec;
+        const colParts = [];
+        if (columns) {
+            colParts.push(
+                Array.isArray(columns) ? columns.join(', ') : columns
+            );
+        }
+        if (aggregates) {
+            for (const agg of aggregates) {
+                colParts.push(`${agg.expr} AS ${agg.alias}`);
+            }
+        }
+        let sql = `SELECT ${colParts.join(', ')} FROM ${table}`;
+        if (where) sql += ` WHERE ${where}`;
+        if (groupBy) {
+            sql += ` GROUP BY ${Array.isArray(groupBy) ? groupBy.join(', ') : groupBy}`;
+        }
+        if (having) sql += ` HAVING ${having}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
         return rows;
     }
 
@@ -208,14 +604,14 @@ class SQLiteAdapter {
      * Enumerate table names matching a LIKE pattern.
      * Wraps sqlite_schema query — dialect-specific, engine-dependent.
      * @param {string} likePattern - e.g. '%_feed_gps'
-     * @returns {string[]} matching table names
+     * @returns {Promise<string[]>} matching table names
      */
     async listTables(likePattern) {
         const tables = [];
-        await sqliteService.execute(
+        await this.execute(
             (row) => tables.push(row[0]),
             `SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE @pattern`,
-            { '@pattern': likePattern }
+            { pattern: likePattern }
         );
         return tables;
     }
@@ -226,31 +622,66 @@ class SQLiteAdapter {
      * PgSQL:  SELECT column_name, data_type, is_nullable FROM information_schema.columns
      * MySQL:  SHOW COLUMNS FROM table
      * @param {string} table - table name
-     * @param {string} [path] - database file path (for read-only queries on other databases)
      * @returns {Promise<Array<Array>>} rows as positional arrays
      */
-    async getTableColumns(table, path) {
-        if (path) {
-            return this.executeReadOnly(path, `PRAGMA table_xinfo("${table}")`);
-        }
+    async getTableColumns(table) {
         const rows = [];
-        await sqliteService.execute(
+        await this.execute(
             (row) => rows.push(row),
             `PRAGMA table_xinfo("${table}")`
         );
         return rows;
     }
 
+    /**
+     * Enumerate all user tables with their column metadata.
+     *
+     * Combines sqlite_schema enumeration with PRAGMA table_xinfo per table.
+     * Returns structured objects instead of positional arrays.
+     *
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
+     */
+    async listTablesTypes() {
+        const tableRows = [];
+        await this.execute(
+            (r) => tableRows.push(r),
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        );
+
+        const result = [];
+        for (const [tableName] of tableRows) {
+            const colRows = [];
+            await this.execute(
+                (r) => colRows.push(r),
+                `PRAGMA table_xinfo("${tableName}")`
+            );
+            result.push({
+                tableName,
+                columns: colRows.map((c) => ({
+                    name: c[1],
+                    type: c[2],
+                    notNull: !!c[3],
+                    defaultValue: c[4],
+                    isPK: !!c[5],
+                    isHidden: !!c[6]
+                }))
+            });
+        }
+        return result;
+    }
+
     /** COUNT with equality conditions. */
     async count(table, where) {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
-            params[`@${col}`] = where[col];
+            params[col] = where[col];
             return `${col} = @${col}`;
         });
         let result = 0;
-        await sqliteService.execute(
-            (row) => { result = row[0]; },
+        await this.execute(
+            (row) => {
+                result = row[0];
+            },
             `SELECT COUNT(*) FROM ${table} WHERE ${clauses.join(' AND ')}`,
             params
         );
@@ -260,8 +691,10 @@ class SQLiteAdapter {
     /** COUNT with raw WHERE clause. Omit whereClause to COUNT all rows. */
     async countWhere(table, whereClause, params) {
         let result = 0;
-        await sqliteService.execute(
-            (row) => { result = row[0]; },
+        await this.execute(
+            (row) => {
+                result = row[0];
+            },
             `SELECT COUNT(*) FROM ${table}${whereClause ? ` WHERE ${whereClause}` : ''}`,
             params
         );
@@ -278,42 +711,37 @@ class SQLiteAdapter {
             const constraints = col.constraints ? ` ${col.constraints}` : '';
             return `${col.name} ${col.type}${constraints}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs.join(', ')})`
         );
-    }
-
-    /** CREATE TABLE IF NOT EXISTS from raw SQL string. */
-    createTableRaw(sql) {
-        return sqliteService.executeNonQuery(sql);
     }
 
     /** CREATE INDEX IF NOT EXISTS. */
     createIndex(indexName, table, columns, unique = false) {
         const uniqueStr = unique ? 'UNIQUE ' : '';
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `CREATE ${uniqueStr}INDEX IF NOT EXISTS ${indexName} ON ${table} (${colStr})`
         );
     }
 
     /** ALTER TABLE ADD COLUMN. */
     alterTableAddColumn(table, columnDef) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} ADD COLUMN ${columnDef}`
         );
     }
 
     /** ALTER TABLE DROP COLUMN. */
     alterTableDropColumn(table, column) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} DROP COLUMN ${column}`
         );
     }
 
     /** ALTER TABLE RENAME TO. */
     alterTableRename(table, newName) {
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `ALTER TABLE ${table} RENAME TO ${newName}`
         );
     }
@@ -407,29 +835,15 @@ class SQLiteAdapter {
      * @param {object} where - equality conditions (AND-ed)
      */
     increment(table, column, amount, where) {
-        const params = { '@amount': amount };
+        const params = { amount };
         const whereClauses = Object.keys(where).map((col) => {
-            params[`@where_${col}`] = where[col];
+            params[`where_${col}`] = where[col];
             return `${col} = @where_${col}`;
         });
-        return sqliteService.executeNonQuery(
+        return this.executeNonQuery(
             `UPDATE ${table} SET ${column} = ${column} + @amount WHERE ${whereClauses.join(' AND ')}`,
             params
         );
-    }
-
-    /**
-     * Resolve user-specific table name for the current engine.
-     *
-     * SQLite/MySQL:  prefix_name
-     * PostgreSQL:    account_prefix.name
-     *
-     * @param {string} prefix - user prefix (e.g. "usr123")
-     * @param {string} name   - table base name (e.g. "feed_gps")
-     * @returns {string} engine-specific full table name
-     */
-    userTable(prefix, name) {
-        return `${prefix}_${name}`;
     }
 
     /**
@@ -450,15 +864,29 @@ class SQLiteAdapter {
         const columns = Object.keys(insertData);
         const params = {};
         const values = columns.map((col) => {
-            params[`@${col}`] = insertData[col];
+            params[col] = insertData[col];
             return `@${col}`;
         });
         const updateClauses = Object.keys(updateData).map((col) => {
-            params[`@up_${col}`] = updateData[col];
+            params[`up_${col}`] = updateData[col];
             return `${col} = @up_${col}`;
         });
         const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON CONFLICT(${conflictColumn}) DO UPDATE SET ${updateClauses.join(', ')}`;
-        return sqliteService.executeNonQuery(sql, params);
+        return this.executeNonQuery(sql, params);
+    }
+
+    /**
+     * Resolve user-specific table name.
+     * SQLite/MySQL:  prefix_name
+     * PgSQL:         account_prefix.name
+     * Respects _prefixOverride (set by withPrefix) for cross-account queries.
+     * @param {string} prefix
+     * @param {string} name
+     * @returns {string}
+     */
+    userTable(prefix, name) {
+        const p = this._prefixOverride ?? prefix;
+        return `${p}_${name}`;
     }
 
     /**
@@ -470,32 +898,84 @@ class SQLiteAdapter {
      * @param {string} prefix - user table prefix
      */
     async initUserSchema(prefix) {
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_status')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')}_user_created_idx ON ${this.userTable(prefix, 'feed_online_offline')} (user_id, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT '', is_self INTEGER NOT NULL DEFAULT 0, source_last_created_at TEXT NOT NULL DEFAULT '', pending_session_start_at INTEGER, cached_range_days INTEGER NOT NULL DEFAULT 0)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL, is_open_tail INTEGER NOT NULL DEFAULT 0, source_revision TEXT NOT NULL DEFAULT '')`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, start_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, end_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id TEXT NOT NULL, target_user_id TEXT NOT NULL DEFAULT '', range_days INTEGER NOT NULL, view_kind TEXT NOT NULL, exclude_key TEXT NOT NULL DEFAULT '', bucket_version INTEGER NOT NULL DEFAULT 1, raw_buckets_json TEXT NOT NULL DEFAULT '[]', normalized_buckets_json TEXT NOT NULL DEFAULT '[]', built_from_cursor TEXT NOT NULL DEFAULT '', summary_json TEXT NOT NULL DEFAULT '{}', built_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')}_user_id_idx ON ${this.userTable(prefix, 'friend_log_history')} (user_id)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications')} (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications_v2')} (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'moderation')} (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'avatar_history')} (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notes')} (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends')} (friend_id TEXT PRIMARY KEY)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links_old')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends_old')} (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_meta')} (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'tracked_nonfriends')} (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`);
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_status')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, bio TEXT, previous_bio TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')}_user_created_idx ON ${this.userTable(prefix, 'feed_online_offline')} (user_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT '', is_self INTEGER NOT NULL DEFAULT 0, source_last_created_at TEXT NOT NULL DEFAULT '', pending_session_start_at INTEGER, cached_range_days INTEGER NOT NULL DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, start_at INTEGER NOT NULL, end_at INTEGER NOT NULL, is_open_tail INTEGER NOT NULL DEFAULT 0, source_revision TEXT NOT NULL DEFAULT '')`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, start_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx ON ${this.userTable(prefix, 'activity_sessions_v2')} (user_id, end_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id TEXT NOT NULL, target_user_id TEXT NOT NULL DEFAULT '', range_days INTEGER NOT NULL, view_kind TEXT NOT NULL, exclude_key TEXT NOT NULL DEFAULT '', bucket_version INTEGER NOT NULL DEFAULT 1, raw_buckets_json TEXT NOT NULL DEFAULT '[]', normalized_buckets_json TEXT NOT NULL DEFAULT '[]', built_from_cursor TEXT NOT NULL DEFAULT '', summary_json TEXT NOT NULL DEFAULT '{}', built_at TEXT NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id TEXT PRIMARY KEY, display_name TEXT, trust_level TEXT, friend_number INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')}_user_id_idx ON ${this.userTable(prefix, 'friend_log_history')} (user_id)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications')} (id TEXT PRIMARY KEY, created_at TEXT, type TEXT, sender_user_id TEXT, sender_username TEXT, receiver_user_id TEXT, message TEXT, world_id TEXT, world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications_v2')} (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, expires_at TEXT, type TEXT, link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INTEGER, sender_user_id TEXT, sender_username TEXT, data TEXT, responses TEXT, details TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'moderation')} (user_id TEXT PRIMARY KEY, updated_at TEXT, display_name TEXT, block INTEGER, mute INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'avatar_history')} (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notes')} (user_id TEXT PRIMARY KEY, display_name TEXT, note TEXT, created_at TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends')} (friend_id TEXT PRIMARY KEY)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links_old')} (friend_id TEXT NOT NULL, mutual_id TEXT NOT NULL, date TEXT NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends_old')} (friend_id TEXT PRIMARY KEY, last_updated TEXT NOT NULL)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_meta')} (friend_id TEXT PRIMARY KEY, last_fetched_at TEXT, opted_out INTEGER DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'tracked_nonfriends')} (user_id TEXT PRIMARY KEY, display_name TEXT, added_at TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a TEXT NOT NULL, user_id_b TEXT NOT NULL, relation_type TEXT NOT NULL DEFAULT 'friend', added_at TEXT, PRIMARY KEY(user_id_a, user_id_b))`
+        );
     }
 
     /**
@@ -503,52 +983,94 @@ class SQLiteAdapter {
      * Called once during app startup (initTables).
      */
     async initGlobalSchema() {
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT, UNIQUE(created_at, location))`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS gamelog_location_created_at_idx ON gamelog_location (created_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_location_world_created ON gamelog_location (world_id, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER, UNIQUE(created_at, type, display_name))`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_location ON gamelog_join_leave (location)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_user_created ON gamelog_join_leave (user_id, created_at)`);
-        await this.executeNonQuery(`CREATE INDEX IF NOT EXISTS idx_gamelog_jl_display_created ON gamelog_join_leave (display_name, created_at)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_portal_spawn (id INTEGER PRIMARY KEY, created_at TEXT, display_name TEXT, location TEXT, user_id TEXT, instance_id TEXT, world_name TEXT, UNIQUE(created_at, display_name))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_video_play (id INTEGER PRIMARY KEY, created_at TEXT, video_url TEXT, video_name TEXT, video_id TEXT, location TEXT, display_name TEXT, user_id TEXT, UNIQUE(created_at, video_url))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_resource_load (id INTEGER PRIMARY KEY, created_at TEXT, resource_url TEXT, resource_type TEXT, location TEXT, UNIQUE(created_at, resource_url))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_event (id INTEGER PRIMARY KEY, created_at TEXT, data TEXT, UNIQUE(created_at, data))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS gamelog_external (id INTEGER PRIMARY KEY, created_at TEXT, message TEXT, display_name TEXT, user_id TEXT, location TEXT, UNIQUE(created_at, message))`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS cache_avatar (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS cache_world (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_avatar (id INTEGER PRIMARY KEY, created_at TEXT, avatar_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS favorite_friend (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, group_name TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS world_memos (world_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS avatar_memos (avatar_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`);
-        await this.executeNonQuery(`CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`);
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT, UNIQUE(created_at, location))`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS gamelog_location_created_at_idx ON gamelog_location (created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_location_world_created ON gamelog_location (world_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER, UNIQUE(created_at, type, display_name))`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_location ON gamelog_join_leave (location)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_user_created ON gamelog_join_leave (user_id, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS idx_gamelog_jl_display_created ON gamelog_join_leave (display_name, created_at)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_portal_spawn (id INTEGER PRIMARY KEY, created_at TEXT, display_name TEXT, location TEXT, user_id TEXT, instance_id TEXT, world_name TEXT, UNIQUE(created_at, display_name))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_video_play (id INTEGER PRIMARY KEY, created_at TEXT, video_url TEXT, video_name TEXT, video_id TEXT, location TEXT, display_name TEXT, user_id TEXT, UNIQUE(created_at, video_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_resource_load (id INTEGER PRIMARY KEY, created_at TEXT, resource_url TEXT, resource_type TEXT, location TEXT, UNIQUE(created_at, resource_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_event (id INTEGER PRIMARY KEY, created_at TEXT, data TEXT, UNIQUE(created_at, data))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_external (id INTEGER PRIMARY KEY, created_at TEXT, message TEXT, display_name TEXT, user_id TEXT, location TEXT, UNIQUE(created_at, message))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_avatar (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_world (id TEXT PRIMARY KEY, added_at TEXT, author_id TEXT, author_name TEXT, created_at TEXT, description TEXT, image_url TEXT, name TEXT, release_status TEXT, thumbnail_image_url TEXT, updated_at TEXT, version INTEGER)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_avatar (id INTEGER PRIMARY KEY, created_at TEXT, avatar_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_friend (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS world_memos (world_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_memos (avatar_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`
+        );
     }
 
     /** BEGIN transaction. */
     begin() {
-        return sqliteService.executeNonQuery('BEGIN');
+        return this.executeNonQuery('BEGIN');
     }
 
     /** COMMIT transaction. */
     commit() {
-        return sqliteService.executeNonQuery('COMMIT');
+        return this.executeNonQuery('COMMIT');
     }
 
     /** ROLLBACK transaction. */
     rollback() {
-        return sqliteService.executeNonQuery('ROLLBACK');
+        return this.executeNonQuery('ROLLBACK');
     }
 
     /** VACUUM — reclaim storage. */
     vacuum() {
-        return sqliteService.executeNonQuery('VACUUM');
+        return this.executeNonQuery('VACUUM');
     }
 
     /** PRAGMA optimize — maintenance hint. SQLite-specific; replace with ANALYZE on other engines. */
     optimize() {
-        return sqliteService.executeNonQuery('PRAGMA optimize');
+        return this.executeNonQuery('PRAGMA optimize');
     }
 }
 

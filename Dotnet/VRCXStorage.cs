@@ -47,24 +47,42 @@ namespace VRCX
 
             tmp ??= new Dictionary<string, string>();
 
-            // Migrate old flat key VRCX_DatabaseLocation → VRCX_Database.* structure
+            // ── Migration: 旧 flat key VRCX_DatabaseLocation → VRCX_Database.name ──
             if (tmp.TryGetValue("VRCX_DatabaseLocation", out var oldLocation))
             {
-                // Only migrate if new key doesn't already exist (data consistency)
-                if (!tmp.ContainsKey("VRCX_Database.location"))
+                if (!tmp.ContainsKey("VRCX_Database.name"))
                 {
-                    tmp["VRCX_Database.mode"] = "sqlite";
-                    tmp["VRCX_Database.location"] = oldLocation;
+                    tmp["VRCX_Database.name"] = oldLocation;
                 }
                 tmp.Remove("VRCX_DatabaseLocation");
             }
 
-            // First-run / fresh config: ensure VRCX_Database.* namespace exists
-            // so that Set() with dot-path validation won't reject writes.
+            // ── Migration: 旧 VRCX_Database.location → VRCX_Database.name ──
+            if (tmp.TryGetValue("VRCX_Database.location", out var oldNestedLocation))
+            {
+                if (!tmp.ContainsKey("VRCX_Database.name"))
+                {
+                    tmp["VRCX_Database.name"] = oldNestedLocation;
+                }
+                tmp.Remove("VRCX_Database.location");
+            }
+
+            // ── First-run bootstrap: 确保命名空间存在，避免 Set() dot-path guard 报错 ──
             if (!tmp.Keys.Any(k => k.StartsWith("VRCX_Database.")))
             {
                 tmp["VRCX_Database.mode"] = "sqlite";
-                tmp["VRCX_Database.location"] = string.Empty;
+                tmp["VRCX_Database.name"] = "";
+                tmp["VRCX_Database.host"] = "";
+                tmp["VRCX_Database.port"] = "";
+                tmp["VRCX_Database.username"] = "";
+                tmp["VRCX_Database.password"] = "";
+                tmp["VRCX_Database.options._example_journal_mode"] = "WAL";
+            }
+
+            // 确保不论迁移还是首次运行，mode 始终存在
+            if (!tmp.ContainsKey("VRCX_Database.mode"))
+            {
+                tmp["VRCX_Database.mode"] = "sqlite";
             }
 
             _storage = new ConcurrentDictionary<string, string>(tmp);
@@ -181,6 +199,24 @@ namespace VRCX
         public string GetAll()
         {
             return JsonSerializer.Serialize(new Dictionary<string, string>(_storage));
+        }
+
+        /// <summary>
+        /// Returns all key-value pairs whose key starts with the given prefix,
+        /// with the prefix stripped from the result keys.
+        /// Used for scanning sub-key namespaces like VRCX_Database.options.*
+        /// </summary>
+        public Dictionary<string, string> GetWithPrefix(string prefix)
+        {
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in _storage)
+            {
+                if (kvp.Key.StartsWith(prefix))
+                {
+                    result[kvp.Key[prefix.Length..]] = kvp.Value;
+                }
+            }
+            return result;
         }
 
         /// <summary>

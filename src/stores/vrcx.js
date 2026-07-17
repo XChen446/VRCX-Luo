@@ -43,12 +43,8 @@ import { clearVRCXCache } from '../coordinators/vrcxCoordinator';
 import { resetSearchIndexOnLogin } from '../coordinators/searchIndexCoordinator';
 import { watchState } from '../services/watchState';
 
-import { adapter } from '../services/database/adapter/index.js';
+import { adapter, createAdapter } from '../services/database/adapter/index.js';
 import configRepository from '../services/config';
-
-// 迁移系统开关: true=使用新的 .map 迁移系统, false=使用旧的 runFixes() 方式
-// 阶段 A (验证期): 默认为 false，上线后改为 true
-const USE_NEW_MIGRATION = false;
 
 // 目标数据库版本
 const TARGET_DB_VERSION = 16;
@@ -267,27 +263,16 @@ export const useVrcxStore = defineStore('Vrcx', () => {
 
     /**
      * 运行所有数据修复和 schema 变更操作。
-     * 这些操作是幂等的 —— 可安全地在任何版本 >= 0 上调用。
+     * 委托给声明式 .map 迁移系统；操作幂等，可安全重复执行。
+     * @param {number} targetVersion
+     * @param {object} [options] - 透传给 runMigrations（如 { oldDb }）
      */
     async function runFixes(targetVersion, options = {}) {
-        if (USE_NEW_MIGRATION) {
-            // 新路径: 使用 .map 文件的声明式迁移系统
-            await database.runMigrations(state.databaseVersion, targetVersion, options);
-        } else {
-            // 旧路径: 调用遗留的 fix 函数
-            await database.cleanLegendFromFriendLog();
-            await database.fixGameLogTraveling();
-            await database.fixNegativeGPS();
-            await database.fixBrokenLeaveEntries();
-            await database.fixBrokenGroupInvites();
-            await database.fixBrokenNotifications();
-            await database.fixBrokenGroupChange();
-            await database.fixCancelFriendRequestTypo();
-            await database.fixBrokenGameLogDisplayNames();
-            await database.upgradeDatabaseVersion();
-            await database.vacuum();
-            await database.optimize();
-        }
+        await database.runMigrations(
+            state.databaseVersion,
+            targetVersion,
+            options
+        );
     }
 
     /**
@@ -343,14 +328,37 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             console.warn('Failed to read backup config:', err);
         }
 
-        const bakDbPath = bakConfig?.['VRCX_Database.location'];
-        const currentDbPath = await VRCXStorage.Get(
-            'VRCX_Database.location'
+        const bakDbName = bakConfig?.['VRCX_Database.name']
+            || bakConfig?.['VRCX_Database.location']
+            || bakConfig?.['VRCX_DatabaseLocation'];
+        const currentDbName = await VRCXStorage.Get(
+            'VRCX_Database.name'
         );
 
+        // Resolve both names to canonical paths for robust identity comparison.
+        // Wrapped in try/catch because ResolveDatabaseName now validates paths
+        // (traversal, null bytes, etc.) and may throw InvalidOperationException.
+        // On validation failure, fall back to in-place init.
+        let bakIdentity, currentIdentity;
+        try {
+            [bakIdentity, currentIdentity] = await Promise.all([
+                AppApi.ResolveDatabaseName(bakDbName || ''),
+                AppApi.ResolveDatabaseName(currentDbName || '')
+            ]);
+        } catch (err) {
+            console.warn(
+                'Path validation failed for database name — falling back to in-place init:',
+                err.message || String(err)
+            );
+            return await initAndFixInPlace(targetVersion);
+        }
+
         // ── Self-reference 去重 ──
+        // Both paths are now canonicalized via ValidateAndCanonicalizeDatabasePath
+        // (Path.GetFullPath + boundary checks), so string equality reliably
+        // detects the same database file regardless of path form.
         // bak 指向当前已连上的数据库 → 环境不可信 → 跳过 bak
-        if (bakDbPath && currentDbPath && bakDbPath === currentDbPath) {
+        if (bakDbName && bakIdentity === currentIdentity) {
             console.warn(
                 'Backup refers to the current database file — environment untrustworthy. ' +
                     'Falling back to in-place init + fix.'
@@ -359,8 +367,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         }
 
         // ── bak 指向不同的旧库 → 搬迁迁移 ──
-        if (bakDbPath && bakDbPath !== currentDbPath) {
-            return await migrateFromOldDb(bakDbPath, targetVersion);
+        if (bakDbName && bakIdentity !== currentIdentity) {
+            return await migrateFromOldDb(bakIdentity, targetVersion);
         }
 
         // ── 无 bak / 无 DB 配置 → 当前库 init + fix ──
@@ -417,12 +425,15 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
         databaseUpgradeState.value.toVersion = targetVersion;
 
+        const oldDb = createAdapter({ connection: `sqlite:///${oldPath}` });
+
         try {
             // 1) 读出旧库版本号
-            const versionRows = await adapter.executeReadOnly(
-                oldPath,
+            const versionRows = [];
+            await oldDb.execute(
+                (row) => versionRows.push(row),
                 "SELECT value FROM configs WHERE key = @key",
-                { '@key': 'config:VRCX_databaseversion' }
+                { key: 'config:VRCX_databaseversion' }
             );
             const oldVersion =
                 versionRows && versionRows.length > 0
@@ -440,28 +451,23 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             // 2) 确保新库有完整的表结构
             await database.initTables();
 
-            // 3) 枚举旧库所有表，搬运数据
-            const tableRows = await adapter.executeReadOnly(
-                oldPath,
-                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            );
+            // 3) 枚举旧库所有表及其列信息，搬运数据
+            const tables = await oldDb.listTablesTypes();
 
-            if (tableRows) {
-                for (const row of tableRows) {
-                    const tableName = row[0];
-                    await copyTableData(oldPath, tableName);
-                }
+            for (const { tableName, columns } of tables) {
+                await copyTableData(oldDb, tableName, columns);
             }
 
             // 4) 对新库跑迁移/修复
-            await runFixes(targetVersion, { oldDbPath: oldPath });
+            await runFixes(targetVersion, { oldDb });
 
-            // 5) 设版本号
+            // 5) 设版本号 — 保留旧库和目标版本中的较高值，避免降级
+            const finalVersion = Math.max(oldVersion, targetVersion);
             await configRepository.setInt(
                 'VRCX_databaseVersion',
-                targetVersion
+                finalVersion
             );
-            state.databaseVersion = targetVersion;
+            state.databaseVersion = finalVersion;
             console.log('数据库迁移完成。');
             return true;
         } catch (err) {
@@ -483,56 +489,28 @@ export const useVrcxStore = defineStore('Vrcx', () => {
      * 通过只读连接从旧库读出一个表的所有数据，写入当前库。
      * 使用 INSERT OR IGNORE 跳过主键冲突的行。
      */
-    async function copyTableData(oldPath, tableName) {
-        // 读列信息（构造占位符用）
-        const colRows = await adapter.getTableColumns(tableName, oldPath);
-        if (!colRows || colRows.length === 0) return;
+    async function copyTableData(oldDb, tableName, columns) {
+        const visibleColumns = columns.filter((c) => !c.isHidden);
+        if (visibleColumns.length === 0) return;
 
-        // 过滤掉隐藏列 (colRows[i][5] = hidden flag)
-        const columns = colRows
-            .filter((c) => !c[5])
-            .map((c) => c[1]);
-        if (columns.length === 0) return;
+        const colList = visibleColumns.map((c) => c.name).join(', ');
 
-        const colList = columns.join(', ');
-
-        // 读数据
-        const dataRows = await adapter.executeReadOnly(
-            oldPath,
-            `SELECT ${colList} FROM \"${tableName}\"`
+        const dataRows = [];
+        await oldDb.execute(
+            (row) => dataRows.push(row),
+            `SELECT ${colList} FROM "${tableName}"`
         );
         if (!dataRows || dataRows.length === 0) return;
 
-        // 分批写入（每批 500 行）
-        const BATCH = 500;
-        const colCount = columns.length;
-        for (let i = 0; i < dataRows.length; i += BATCH) {
-            const batch = dataRows.slice(i, i + BATCH);
+        const rowsAsObjects = dataRows.map((row) => {
+            const obj = {};
+            visibleColumns.forEach((col, i) => {
+                obj[col.name] = row[i];
+            });
+            return obj;
+        });
 
-            // 构造 @p0..@pN 参数化批量 INSERT
-            const paramKeys = [];
-            const args = {};
-            for (let ri = 0; ri < batch.length; ri++) {
-                for (let ci = 0; ci < colCount; ci++) {
-                    const pk = `@p${ri * colCount + ci}`;
-                    paramKeys.push(pk);
-                    args[pk] = batch[ri][ci];
-                }
-            }
-
-            const valueGroups = [];
-            for (let ri = 0; ri < batch.length; ri++) {
-                const start = ri * colCount;
-                valueGroups.push(
-                    `(${paramKeys.slice(start, start + colCount).join(', ')})`
-                );
-            }
-
-            await adapter.executeNonQuery(
-                `INSERT OR IGNORE INTO \"${tableName}\" (${colList}) VALUES ${valueGroups.join(', ')}`,
-                args
-            );
-        }
+        await adapter.bulkInsert(tableName, rowsAsObjects, 'ignore');
     }
 
     async function waitForDatabaseInit() {
@@ -1151,7 +1129,6 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         ipcEvent,
         dragEnterCef,
         backupVrcRegistry,
-        // updateDatabaseVersion was removed; callers should use upgradeInPlace
         upgradeInPlace,
         waitForDatabaseInit
     };
