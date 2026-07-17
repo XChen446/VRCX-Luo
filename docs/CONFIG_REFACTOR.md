@@ -89,6 +89,22 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 
 `_` 前缀 key 永远不进入连接字符串，仅作注释/占位用。
 
+## Name 字段验证规则
+
+`SQLite.Init()` 在 `ResolveDatabasePath` 之后、构建连接字符串之前执行 `ValidateDatabaseFile`：
+
+| # | 检查项 | 处理 |
+|---|---|---|
+| 1 | `name` 首尾空白 | `Trim()` 净化 |
+| 2 | 后缀不是 `.db` / `.db3` / `.sqlite3`（大小写不敏感） | `InvalidOperationException` |
+| 3 | 文件（名）中含有 `:`（ADS / 明显填错） | `InvalidOperationException` |
+| 4 | 文件名（不含后缀）是保留设备名（`CON` `PRN` `AUX` `NUL` `COM*` `LPT*`） | `InvalidOperationException` |
+| 5 | 解析结果是已存在的目录 | `InvalidOperationException` |
+| 6 | 父目录不存在 | `Directory.CreateDirectory` 递归创建 |
+| 7 | 其他错误（权限、磁盘满等） | 由 `Open()` 抛异常，阻止启动 |
+
+以上检查全平台统一，不分支。
+
 ## 写策略 (CORE RULE)
 
 **初始化代码只读不写。写回 VRCXStorage 的唯一触发条件是用户操作。**
@@ -132,5 +148,8 @@ VRCX_Database.location (旧版 nested) →  VRCX_Database.name
 | OPT-3 | merge 策略：用户值覆写内置默认，有则改无则增 |
 | OPT-4 | `_` 前缀过滤仅在 C# SQLite.cs::Init() 执行，上层 adapter 不做此过滤 |
 | NAME-1 | `name` 在 SQLite 下是文件路径解析，在 MySQL 下是 schema 名 |
+| NAME-2 | SQLite 下 `name` 字段必须解析为 `.db` / `.db3` / `.sqlite3` 后缀的文件 |
+| NAME-3 | `name` 全平台统一检查：拒绝 `:`、拒绝保留设备名、拒绝已存在的目录 |
+| NAME-4 | 父目录不存在时 `Init` 递归创建，不报错 |
 | MIG-1 | `VRCX_DatabaseLocation` → `VRCX_Database.name` |
 | MIG-2 | `VRCX_Database.location` → `VRCX_Database.name` |

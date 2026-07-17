@@ -108,6 +108,7 @@ namespace VRCX
         /// </summary>
         public string ResolveDatabaseName(string name)
         {
+            name = name?.Trim() ?? string.Empty;
             if (string.IsNullOrEmpty(name))
                 return Program.ConfigLocation;
 

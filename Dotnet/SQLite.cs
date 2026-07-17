@@ -37,8 +37,15 @@ namespace VRCX
 #if LINUX
             Instance = this;
 #endif
-            var name = VRCXStorage.Instance.Get("VRCX_Database.name");
+            var name = VRCXStorage.Instance.Get("VRCX_Database.name").Trim();
             var dataSource = ResolveDatabasePath(name);
+            ValidateDatabaseFile(dataSource);
+
+            var dir = Path.GetDirectoryName(dataSource);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
 
             var mergedOptions = CollectOptions();
             var parts = new List<string>
@@ -74,6 +81,60 @@ namespace VRCX
 
             // Plain filename → resolve against AppDataDirectory
             return Path.Join(Program.AppDataDirectory, name);
+        }
+
+        /// <summary>
+        /// Validates that the resolved database file path is usable.
+        /// Throws InvalidOperationException with a clear message on any violation.
+        /// </summary>
+        private static void ValidateDatabaseFile(string path)
+        {
+            // ── 1. Check extension ──
+            var ext = Path.GetExtension(path);
+            var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".db", ".db3", ".sqlite3"
+            };
+            if (string.IsNullOrEmpty(ext) || !allowedExtensions.Contains(ext))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.name resolves to '{path}' which does not have a valid " +
+                    "SQLite database extension. Allowed extensions: .db, .db3, .sqlite3");
+            }
+
+            // ── 2. Check colon in filename (Windows ADS risk / obvious misconfiguration) ──
+            var fileName = Path.GetFileName(path);
+            if (fileName.Contains(':'))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.name resolves to '{path}' which contains " +
+                    "the character ':' in the filename — this is not allowed.");
+            }
+
+            // ── 3. Check Windows reserved device names ──
+            var nameWithoutExt = Path.GetFileNameWithoutExtension(path);
+            var reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "CON", "PRN", "AUX", "NUL",
+                "COM1", "COM2", "COM3", "COM4", "COM5",
+                "COM6", "COM7", "COM8", "COM9",
+                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+                "LPT6", "LPT7", "LPT8", "LPT9"
+            };
+            if (reserved.Contains(nameWithoutExt))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.name resolves to '{path}' which uses the reserved " +
+                    $"system name '{nameWithoutExt}' — this is not allowed.");
+            }
+
+            // ── 4. Check path is not an existing directory ──
+            if (Directory.Exists(path))
+            {
+                throw new InvalidOperationException(
+                    $"VRCX_Database.name resolves to '{path}' which is an existing " +
+                    "directory. Please specify a file path.");
+            }
         }
 
         /// <summary>
