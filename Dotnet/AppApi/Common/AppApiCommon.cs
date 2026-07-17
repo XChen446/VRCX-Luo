@@ -102,6 +102,24 @@ namespace VRCX
             return string.Empty;
         }
 
+        /// <summary>
+        /// Resolves a VRCX_Database.name value to an absolute database file path.
+        /// Mirrors SQLite.ResolveDatabasePath logic so JS can compare connection identity.
+        /// </summary>
+        public string ResolveDatabaseName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return Program.ConfigLocation;
+
+            if (name.Contains('/') || name.Contains('\\'))
+                return name;
+
+            if (name.Length == 2 && name[1] == ':' && char.IsLetter(name[0]))
+                return name + '\\';
+
+            return Path.Join(Program.AppDataDirectory, name);
+        }
+
         public string CurrentCulture()
         {
             var culture = CultureInfo.CurrentCulture.ToString();

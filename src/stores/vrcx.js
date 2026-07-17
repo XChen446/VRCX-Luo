@@ -328,14 +328,21 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             console.warn('Failed to read backup config:', err);
         }
 
-        const bakDbPath = bakConfig?.['VRCX_Database.location'];
-        const currentDbPath = await VRCXStorage.Get(
-            'VRCX_Database.location'
+        const bakDbName = bakConfig?.['VRCX_Database.name'];
+        const currentDbName = await VRCXStorage.Get(
+            'VRCX_Database.name'
         );
 
+        // 解析为规范化路径再进行对比，确保空串/相对路径/绝对路径不会误判
+        const [bakIdentity, currentIdentity] = await Promise.all([
+            AppApi.ResolveDatabaseName(bakDbName || ''),
+            AppApi.ResolveDatabaseName(currentDbName || '')
+        ]);
+
         // ── Self-reference 去重 ──
+        // TODO 需要额外验证此处去重提取逻辑，目标是识别同一“连接的库”而非“路径/库名”
         // bak 指向当前已连上的数据库 → 环境不可信 → 跳过 bak
-        if (bakDbPath && currentDbPath && bakDbPath === currentDbPath) {
+        if (bakDbName && bakIdentity === currentIdentity) {
             console.warn(
                 'Backup refers to the current database file — environment untrustworthy. ' +
                     'Falling back to in-place init + fix.'
@@ -344,8 +351,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         }
 
         // ── bak 指向不同的旧库 → 搬迁迁移 ──
-        if (bakDbPath && bakDbPath !== currentDbPath) {
-            return await migrateFromOldDb(bakDbPath, targetVersion);
+        if (bakDbName && bakIdentity !== currentIdentity) {
+            return await migrateFromOldDb(bakIdentity, targetVersion);
         }
 
         // ── 无 bak / 无 DB 配置 → 当前库 init + fix ──

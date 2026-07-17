@@ -14,6 +14,14 @@ namespace VRCX
         private readonly ReaderWriterLockSlim m_ConnectionLock;
         private SQLiteConnection m_Connection;
 
+        private static readonly Dictionary<string, string> DefaultOptions = new()
+        {
+            { "locking_mode", "NORMAL" },
+            { "busy_timeout", "5000" },
+            { "journal_mode", "WAL" },
+            { "optimize", "0x10002" },
+        };
+
         static SQLite()
         {
             Instance = new SQLite();
@@ -29,16 +37,62 @@ namespace VRCX
 #if LINUX
             Instance = this;
 #endif
-            var dataSource = VRCXStorage.Instance.Get("VRCX_Database.location");
-            if (string.IsNullOrEmpty(dataSource))
+            var name = VRCXStorage.Instance.Get("VRCX_Database.name");
+            var dataSource = ResolveDatabasePath(name);
+
+            var mergedOptions = CollectOptions();
+            var parts = new List<string>
             {
-                dataSource = Program.ConfigLocation;
-                VRCXStorage.Instance.Set("VRCX_Database.location", dataSource);
+                $"Data Source=\"{dataSource}\"",
+                "Version=3"
+            };
+            foreach (var (key, val) in mergedOptions)
+            {
+                parts.Add($"PRAGMA {key}={val}");
             }
+            var connStr = string.Join(";", parts);
 
-            m_Connection = new SQLiteConnection($"Data Source=\"{dataSource}\";Version=3;PRAGMA locking_mode=NORMAL;PRAGMA busy_timeout=5000;PRAGMA journal_mode=WAL;PRAGMA optimize=0x10002;", true);
-
+            m_Connection = new SQLiteConnection(connStr, true);
             m_Connection.Open();
+        }
+
+        /// <summary>
+        /// Resolves the database file path from VRCX_Database.name.
+        /// </summary>
+        private static string ResolveDatabasePath(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return Program.ConfigLocation;
+
+            // Has path separators → treat as absolute or relative path
+            if (name.Contains('/') || name.Contains('\\'))
+                return name;
+
+            // Bare drive letter (e.g. "C:") → treat as root of that drive
+            if (name.Length == 2 && name[1] == ':' && char.IsLetter(name[0]))
+                return name + '\\';
+
+            // Plain filename → resolve against AppDataDirectory
+            return Path.Join(Program.AppDataDirectory, name);
+        }
+
+        /// <summary>
+        /// Collects user options from VRCX_Database.options.* prefix,
+        /// merges them over DefaultOptions. Keys starting with '_' are
+        /// treated as comments/placeholders and never passed to SQLite.
+        /// </summary>
+        private static Dictionary<string, string> CollectOptions()
+        {
+            const string prefix = "VRCX_Database.options.";
+            var userOptions = VRCXStorage.Instance.GetWithPrefix(prefix);
+
+            var merged = new Dictionary<string, string>(DefaultOptions);
+            foreach (var (key, val) in userOptions)
+            {
+                if (key.StartsWith("_")) continue;
+                merged[key] = val;
+            }
+            return merged;
         }
 
         public void Exit()
