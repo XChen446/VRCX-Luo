@@ -325,7 +325,8 @@ describe('v16 migration — holistic dump + idempotency', () => {
             return; // do not assert on the write path
         }
         const expected = readFileSync(GOLDEN_PATH, 'utf8');
-        expect(actual).toBe(expected);
+        // Normalize line endings — golden file may have CRLF on Windows checkout
+        expect(actual.replace(/\r\n/g, '\n')).toBe(expected.replace(/\r\n/g, '\n'));
     });
 
     test('idempotent: running runMigrations(0,16) twice yields an identical dump', async () => {
