@@ -238,7 +238,10 @@ namespace VRCX
             logger.Debug("Wine detection: {0}", Wine.GetIfWine());
 
             IPCServer.Instance.Init();
-            SQLite.Instance.Init();
+            if (VRCXStorage.Instance.Get("VRCX_Database.mode") == "sqlite")
+            {
+                SQLite.Instance.Init();
+            }
             AppApiInstance = new AppApiCef();
 
             ProcessMonitor.Instance.Init();

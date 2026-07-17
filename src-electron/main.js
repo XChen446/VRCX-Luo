@@ -117,7 +117,11 @@ function createOverlayWindowShm() {
 interopApi.getDotNetObject('ProgramElectron').PreInit(version, args);
 interopApi.getDotNetObject('VRCXStorage').Load();
 interopApi.getDotNetObject('ProgramElectron').Init();
-interopApi.getDotNetObject('SQLite').Init();
+var mode = interopApi.getDotNetObject('VRCXStorage').Get('VRCX_Database.mode');
+if (mode === 'sqlite')
+{
+    interopApi.getDotNetObject('SQLite').Init();
+}
 interopApi.getDotNetObject('AppApiElectron').Init();
 interopApi.getDotNetObject('Discord').Init();
 interopApi.getDotNetObject('WebApi').Init();
