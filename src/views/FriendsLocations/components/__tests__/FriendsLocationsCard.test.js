@@ -198,7 +198,7 @@ const i18n = createI18n({
 
 vi.mock('lucide-vue-next', () => {
     const icon = { template: '<span />' };
-    return { Pencil: icon, User: icon, Clock: icon, ExternalLink: icon, LogIn: icon, Mail: icon, MessageSquare: icon, MousePointer: icon };
+    return { Pencil: icon, User: { template: '<span class="user-icon" />' }, Clock: icon, ExternalLink: icon, LogIn: icon, Mail: icon, MessageSquare: icon, MousePointer: icon };
 });
 
 // Stub all complex UI components — render slots transparently
@@ -474,8 +474,8 @@ describe('FriendsLocationsCard.vue', () => {
                 })
             });
             expect(
-                wrapper.find('[data-testid="context-menu-separator"]').exists()
-            ).toBe(false);
+                wrapper.findAll('[data-testid="context-menu-separator"]').length
+            ).toBe(1);
         });
 
         test('shows Invite but disabled when cannot invite to my location', () => {
@@ -605,14 +605,15 @@ describe('FriendsLocationsCard.vue', () => {
             const wrapper = mountCard();
             expect(
                 wrapper.find('.friend-card__status-dot').classes()
-            ).toContain('friend-card__status-dot--join');
+            ).toContain('friend-card__status-dot--joinme');
         });
 
         test('shows active busy status class when active + busy', () => {
             mockUserStatusClass.mockReturnValue({
+                'active-busy': true,
                 joinme: false,
                 online: false,
-                active: true
+                active: false
             });
             const wrapper = mountCard({
                 friend: makeFriend({ status: 'busy' })

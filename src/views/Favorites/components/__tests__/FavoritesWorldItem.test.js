@@ -152,8 +152,18 @@ vi.mock('../../../../coordinators/favoriteCoordinator', () => ({
         mocks.removeLocalWorldFavorite(...args)
 }));
 
-vi.mock('../../../../components/WorldActionMenuItems.vue', () => ({
-    default: { template: '<div><slot /><slot name="actions" /></div>' }
+vi.mock('../../../../components/dialogs/NewInstanceDialog/NewInstanceDialog.vue', () => ({
+    default: {
+        props: ['newInstanceDialogLocationTag', 'lastLocation'],
+        watch: {
+            newInstanceDialogLocationTag(val) {
+                if (val) {
+                    mocks.createNewInstance(val);
+                }
+            }
+        },
+        template: '<div />'
+    }
 }));
 
 
@@ -181,13 +191,6 @@ function mountItem(props = {}) {
             editMode: false,
             selected: false,
             ...props
-        },
-        global: {
-            stubs: {
-                WorldActionMenuItems: {
-                    template: '<div><slot /><slot name="actions" /></div>'
-                }
-            }
         }
     });
 }
