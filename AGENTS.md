@@ -73,3 +73,31 @@ build/            → build output (gitignored)
 ## VRCX_Database Config Refactoring (Jul 2026)
 
 See `docs/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` prefix convention, options merge strategy, name resolution rules).
+
+## GitHub Issue/PR Editing (UTF-8 中文)
+
+**问题**：PowerShell 5.1 的 `gh issue edit --body-file` / `gh pr edit --body-file` 读取 UTF-8 中文文件时会发生编码转换错误，上传到 GitHub 的内容变为乱码。
+
+**正确做法**：用 Node.js 生成 JSON + `gh api --method PATCH` 上传，绕开 PowerShell 的编码层。
+
+```bash
+# 1. 用 Node.js 读取当前 body（正确 UTF-8）
+node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/XChen446/VRCX-Luo/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});require('fs').writeFileSync('issue3.md',out,'utf8');"
+
+# 2. 编辑 issue3.md（edit 工具或手动），插入/修改内容
+
+# 3. 用 Node.js 生成 JSON patch（确保中文字符正确编码）
+node -e "const fs=require('fs');const body=fs.readFileSync('issue3.md','utf8');fs.writeFileSync('issue3.json',JSON.stringify({body:body}),'utf8');"
+
+# 4. 通过 gh api PATCH 上传
+gh api --method PATCH repos/XChen446/VRCX-Luo/issues/3 --input issue3.json --jq '.title'
+
+# 5. 用 Node.js 验证（避免 PowerShell 重定向编码问题）
+node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/XChen446/VRCX-Luo/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});console.log('Length:',out.length);console.log(out.split('\n')[0]);"
+```
+
+**要点**：
+- 全程使用 Node.js 读写文件和捕获 `gh` 输出（`{encoding:'utf8'}`），不经过 PowerShell 的编码层
+- `gh api --input` 接受 JSON 文件，比 `gh issue edit --body-file` 更可靠
+- 验证时也用 Node.js `execSync`，避免 PowerShell `>` 重定向导致 UTF-8 变 GBK
+- 同样适用于 PR 编辑：`gh api --method PATCH repos/XChen446/VRCX-Luo/pulls/{n}`
