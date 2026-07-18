@@ -197,6 +197,80 @@ class MySQLAdapter extends EngineAdapter {
             await this.handleMySqlError(e);
         }
     }
+
+    // ── INSERT with conflict handling ────────────────────────────────
+
+    /**
+     * Map 'ignore'|'replace' to MySQL conflict clause.
+     *
+     * Unlike SQLite's `INSERT OR IGNORE` / `INSERT OR REPLACE`, MySQL uses:
+     *   - ignore  → `INSERT IGNORE INTO`
+     *   - replace → `REPLACE INTO` (standalone statement, not INSERT variant)
+     *
+     * Returns the full keyword prefix so the SQL template uses `${clause} INTO`.
+     *
+     * @private
+     * @param {string} [conflict] - 'ignore' | 'replace' | undefined
+     * @returns {string} 'INSERT IGNORE' | 'REPLACE' | 'INSERT'
+     */
+    _insertClause(conflict) {
+        if (conflict === 'ignore') return 'INSERT IGNORE';
+        if (conflict === 'replace') return 'REPLACE';
+        return 'INSERT';
+    }
+
+    /**
+     * Single-row INSERT with optional conflict handling.
+     * @override
+     * @param {string} table - target table name (with prefix if applicable)
+     * @param {object} data - column:value mapping
+     * @param {string} [conflict] - 'ignore' → INSERT IGNORE, 'replace' → REPLACE INTO
+     * @returns {Promise<number>}
+     */
+    insert(table, data, conflict) {
+        const clause = this._insertClause(conflict);
+        const columns = Object.keys(data);
+        const params = {};
+        const values = columns.map((col) => {
+            params[col] = data[col];
+            return `@${col}`;
+        });
+        return this.executeNonQuery(
+            `${clause} INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
+            params
+        );
+    }
+
+    /**
+     * Bulk multi-row INSERT with optional conflict handling.
+     * @override
+     * @param {string} table - target table name
+     * @param {object[]} rows - array of column:value objects (all must share the same keys)
+     * @param {string} [conflict] - 'ignore' → INSERT IGNORE, 'replace' → REPLACE INTO
+     * @returns {Promise<number>}
+     */
+    async bulkInsert(table, rows, conflict) {
+        if (rows.length === 0) return;
+        const clause = this._insertClause(conflict);
+        const columns = Object.keys(rows[0]);
+        const params = {};
+        const values = rows.map((row, i) => {
+            return (
+                '(' +
+                columns
+                    .map((col) => {
+                        params[`${col}_${i}`] = row[col];
+                        return `@${col}_${i}`;
+                    })
+                    .join(', ') +
+                ')'
+            );
+        });
+        return this.executeNonQuery(
+            `${clause} INTO ${table} (${columns.join(', ')}) VALUES ${values.join(', ')}`,
+            params
+        );
+    }
 }
 
 export { MySQLAdapter };
