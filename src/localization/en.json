@@ -912,6 +912,9 @@
                 "database": {
                     "header": "Database"
                 },
+                "database_engine": {
+                    "header": "Database Engine"
+                },
                 "nightly": {
                     "header": "Nightly"
                 }
@@ -1380,6 +1383,23 @@
                         "portal_spawn": "Portal Spawn:",
                         "video_play": "Video Play:",
                         "event": "Event:"
+                    },
+                    "database_engine": {
+                        "mode": "Engine Mode",
+                        "mode_description": "Switching engine requires an app restart to take effect",
+                        "mode_sqlite": "SQLite",
+                        "mode_postgresql": "PostgreSQL",
+                        "pg_host": "Host",
+                        "pg_port": "Port",
+                        "pg_username": "Username",
+                        "pg_password": "Password",
+                        "pg_database": "Database Name",
+                        "test_connection": "Test Connection",
+                        "test_connection_button": "Test",
+                        "migrate": "Migrate Data",
+                        "migrate_button": "Migrate from SQLite & Switch",
+                        "migrate_hint": "Copying large tables may take a while — run the migration when the app is idle. Each batch auto-commits (no wrapped transaction), so very large datasets can be slow.",
+                        "restart_hint": "Switching engine or changing connection parameters requires an app restart. Switch to PostgreSQL and restart before running the migration."
                     },
                     "database_cleanup": {
                         "header": "Database Cleanup",

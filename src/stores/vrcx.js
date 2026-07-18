@@ -78,7 +78,14 @@ export const useVrcxStore = defineStore('Vrcx', () => {
     const databaseUpgradeState = ref({
         visible: false,
         fromVersion: 0,
-        toVersion: 0
+        toVersion: 0,
+        // Phase 9 §6.2 — extra fields populated by the SQLite → PgSQL
+        // migration pipeline (`migrateToPgsql` in advanced.js). The
+        // DatabaseUpgradeDialog ignores them; they're surfaced here so a
+        // future dialog tweak can show per-table progress without changing
+        // the ref's shape.
+        currentTable: '',
+        rowsCopied: 0
     });
     const databaseReadyForAutoLogin = ref(false);
     let resolveDatabaseInit = (..._args) => {};
@@ -112,7 +119,9 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value = {
             visible: true,
             fromVersion: 0,
-            toVersion: 0
+            toVersion: 0,
+            currentTable: '',
+            rowsCopied: 0
         };
         try {
             if (LINUX) {
@@ -250,7 +259,9 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             databaseUpgradeState.value = {
                 visible: false,
                 fromVersion: 0,
-                toVersion: 0
+                toVersion: 0,
+                currentTable: '',
+                rowsCopied: 0
             };
             resolveDatabaseInit();
         }
@@ -425,7 +436,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
         databaseUpgradeState.value.toVersion = targetVersion;
 
-        const oldDb = createAdapter({ connection: `sqlite:///${oldPath}` });
+        const oldDb = await createAdapter({ connection: `sqlite:///${oldPath}` });
 
         try {
             // 1) 读出旧库版本号

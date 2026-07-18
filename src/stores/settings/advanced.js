@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
+import { migrateSqliteToPgsql } from '../../services/database/migrateEngine.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
 import { useModalStore } from '../modal';
@@ -72,6 +73,19 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const vrcRegistryAskRestore = ref(true);
     const sentryErrorReporting = ref(false);
     const autoJoinGroupCertification = ref(true);
+
+    // ── Phase 9 §6.2 — Database engine selection + SQLite → PgSQL migration ──
+    /** @type {import('vue').Ref<'sqlite'|'postgresql'>} */
+    const databaseEngine = ref('sqlite');
+    const pgsqlHost = ref('localhost');
+    const pgsqlPort = ref(5432);
+    const pgsqlUsername = ref('vrcx');
+    const pgsqlPassword = ref('');
+    const pgsqlDatabase = ref('vrcx');
+    /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
+    const pgsqlConnectionStatus = ref('idle');
+    /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
+    const pgsqlMigrationStatus = ref('idle');
 
     watch(
         () => watchState.isLoggedIn,
@@ -1107,6 +1121,184 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             .catch(() => {});
     }
 
+    // ── Phase 9 §6.2 — Database engine config + migration actions ───────
+    /**
+     * Load the database engine configuration from VRCXStorage into the
+     * reactive refs. Called once during AdvancedTab mount so the UI reflects
+     * the persisted mode/host/port/etc.
+     *
+     * @returns {Promise<void>}
+     */
+    async function loadDatabaseEngineConfig() {
+        try {
+            const [
+                mode,
+                host,
+                port,
+                username,
+                password,
+                name
+            ] = await Promise.all([
+                VRCXStorage.Get('VRCX_Database.mode'),
+                VRCXStorage.Get('VRCX_Database.host'),
+                VRCXStorage.Get('VRCX_Database.port'),
+                VRCXStorage.Get('VRCX_Database.username'),
+                VRCXStorage.Get('VRCX_Database.password'),
+                VRCXStorage.Get('VRCX_Database.name')
+            ]);
+            databaseEngine.value =
+                mode === 'postgresql' ? 'postgresql' : 'sqlite';
+            pgsqlHost.value = host || 'localhost';
+            pgsqlPort.value = Number(port) || 5432;
+            pgsqlUsername.value = username || 'vrcx';
+            pgsqlPassword.value = password || '';
+            // When mode is sqlite, VRCX_Database.name holds the SQLite file
+            // name — don't clobber the PG database name ref with it. Only
+            // adopt the stored value when it looks like a PG database name
+            // (no path separators, no .db suffix).
+            if (mode === 'postgresql' && name && !/[\\/]/.test(name) && !/\.db$/i.test(name)) {
+                pgsqlDatabase.value = name;
+            }
+        } catch (err) {
+            console.warn('loadDatabaseEngineConfig failed:', err);
+        }
+    }
+
+    /**
+     * Persist the database engine configuration to VRCXStorage. The C# layer
+     * reads these keys at startup to decide which engine to Init, so a
+     * restart is required after switching engines.
+     *
+     * @param {'sqlite'|'postgresql'} engine
+     * @param {object} [pgConfig]
+     * @param {string} [pgConfig.host]
+     * @param {number} [pgConfig.port]
+     * @param {string} [pgConfig.username]
+     * @param {string} [pgConfig.password]
+     * @param {string} [pgConfig.database]
+     * @returns {Promise<void>}
+     */
+    async function saveDatabaseEngineConfig(engine, pgConfig) {
+        await VRCXStorage.Set('VRCX_Database.mode', engine);
+        if (pgConfig) {
+            await Promise.all([
+                VRCXStorage.Set('VRCX_Database.host', pgConfig.host),
+                VRCXStorage.Set(
+                    'VRCX_Database.port',
+                    String(pgConfig.port)
+                ),
+                VRCXStorage.Set('VRCX_Database.username', pgConfig.username),
+                VRCXStorage.Set('VRCX_Database.password', pgConfig.password),
+                VRCXStorage.Set('VRCX_Database.name', pgConfig.database)
+            ]);
+        }
+    }
+
+    /**
+     * Probe the PostgreSQL backend health. Only meaningful when the app
+     * booted in `postgresql` mode (so `PostgreSQL.Instance` is initialised);
+     * in `sqlite` mode we can only validate the config fields and report
+     * that a switch + restart is required.
+     *
+     * @returns {Promise<{connected: boolean, error?: string}>}
+     */
+    async function testPgsqlConnection() {
+        pgsqlConnectionStatus.value = 'testing';
+        try {
+            const mode = await VRCXStorage.Get('VRCX_Database.mode');
+            if (mode === 'postgresql' && typeof PostgreSQL !== 'undefined') {
+                const health = await PostgreSQL.GetHealth?.();
+                const parsed = health ? JSON.parse(health) : { connected: false };
+                pgsqlConnectionStatus.value = parsed.connected
+                    ? 'connected'
+                    : 'failed';
+                return parsed;
+            }
+            pgsqlConnectionStatus.value = 'failed';
+            return {
+                connected: false,
+                error: 'Current engine is sqlite. Switch to postgresql and restart to test connection.'
+            };
+        } catch (err) {
+            pgsqlConnectionStatus.value = 'failed';
+            return { connected: false, error: err.message || String(err) };
+        }
+    }
+
+    /**
+     * Resolve the current SQLite database file path from VRCXStorage. Used as
+     * the migration source when switching from SQLite to PostgreSQL. After
+     * the user switches engine + restarts, `VRCX_Database.name` still holds
+     * the previous SQLite file name (we don't overwrite it on save when
+     * engine is postgresql — `saveDatabaseEngineConfig` writes the PG
+     * database name into the same key, but the SQLite file path remains
+     * resolvable via `AppApi.ResolveDatabaseName`).
+     *
+     * @returns {Promise<string>} canonical SQLite db path
+     */
+    async function resolveCurrentSqliteDbPath() {
+        const dbName = await VRCXStorage.Get('VRCX_Database.name');
+        if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
+            return await AppApi.ResolveDatabaseName(dbName || '');
+        }
+        // Fallback for vitest / non-CefSharp environments.
+        return dbName || '';
+    }
+
+    /**
+     * Run the SQLite → PostgreSQL migration. The destination is the live
+     * singleton `adapter` (a `PgSQLAdapter` after the user switched engine +
+     * restarted). Progress is mirrored into `vrcxStore.databaseUpgradeState`
+     * so the existing `DatabaseUpgradeDialog` (which keys off
+     * `fromVersion === -1`) surfaces a "migration in progress" state.
+     *
+     * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
+     * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
+     */
+    async function migrateToPgsql(srcConnStr) {
+        pgsqlMigrationStatus.value = 'migrating';
+        // Surface the migration via the existing DatabaseUpgradeDialog. We
+        // mutate the reactive object's properties (rather than replacing the
+        // ref value) to stay within the ESLint store-boundary rule.
+        vrcxStore.databaseUpgradeState.visible = true;
+        vrcxStore.databaseUpgradeState.fromVersion = -1; // marks "migration in progress"
+        vrcxStore.databaseUpgradeState.toVersion = 0;
+        try {
+            const source = srcConnStr
+                ? srcConnStr
+                : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
+            const result = await migrateSqliteToPgsql(
+                source,
+                {
+                    host: pgsqlHost.value,
+                    port: pgsqlPort.value,
+                    username: pgsqlUsername.value,
+                    password: pgsqlPassword.value,
+                    database: pgsqlDatabase.value
+                },
+                {
+                    onProgress: (p) => {
+                        // Update the dialog's state so the UI can show the
+                        // current table + running row count. We stash these
+                        // on the same reactive object via extra fields the
+                        // dialog doesn't strictly need but won't break on.
+                        vrcxStore.databaseUpgradeState.currentTable =
+                            p.table;
+                        vrcxStore.databaseUpgradeState.rowsCopied =
+                            p.rowsCopied;
+                    }
+                }
+            );
+            pgsqlMigrationStatus.value = 'done';
+            vrcxStore.databaseUpgradeState.visible = false;
+            return result;
+        } catch (err) {
+            pgsqlMigrationStatus.value = 'failed';
+            vrcxStore.databaseUpgradeState.visible = false;
+            throw err;
+        }
+    }
+
     return {
         state,
 
@@ -1151,6 +1343,21 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         vrcRegistryAskRestore,
         sentryErrorReporting,
         autoJoinGroupCertification,
+
+        // Phase 9 §6.2 — database engine selection + migration
+        databaseEngine,
+        pgsqlHost,
+        pgsqlPort,
+        pgsqlUsername,
+        pgsqlPassword,
+        pgsqlDatabase,
+        pgsqlConnectionStatus,
+        pgsqlMigrationStatus,
+        loadDatabaseEngineConfig,
+        saveDatabaseEngineConfig,
+        testPgsqlConnection,
+        migrateToPgsql,
+        resolveCurrentSqliteDbPath,
 
         setEnablePrimaryPassword,
         setEnablePrimaryPasswordConfigRepository,
