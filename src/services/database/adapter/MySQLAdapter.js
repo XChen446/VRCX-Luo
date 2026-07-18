@@ -915,6 +915,94 @@ class MySQLAdapter extends EngineAdapter {
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a VARCHAR(255) NOT NULL, user_id_b VARCHAR(255) NOT NULL, relation_type VARCHAR(255) NOT NULL DEFAULT 'friend', added_at VARCHAR(255), PRIMARY KEY(user_id_a, user_id_b))`
         );
     }
+
+    /**
+     * Create all global shared tables.
+     *
+     * Same MySQL DDL conversion rules as initUserSchema, plus:
+     *   - UNIQUE constraints on TEXT columns use prefix length (e.g.
+     *     UNIQUE(data(255))) since MySQL requires a key length for TEXT
+     *     in unique indexes. This is a pragmatic dedup adaptation — the
+     *     primary uniqueness comes from created_at (timestamp).
+     *
+     * @override
+     * @returns {Promise<void>}
+     */
+    async initGlobalSchema() {
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_location (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), location VARCHAR(512), world_id VARCHAR(255), world_name TEXT, time INT, group_name TEXT, UNIQUE(created_at, location))`
+        );
+        await this.createIndex(
+            'gamelog_location_created_at_idx',
+            'gamelog_location',
+            ['created_at']
+        );
+        await this.createIndex(
+            'idx_gamelog_location_world_created',
+            'gamelog_location',
+            ['world_id', 'created_at']
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_join_leave (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), type VARCHAR(255), display_name VARCHAR(255), location VARCHAR(512), user_id VARCHAR(255), time INT, UNIQUE(created_at, type, display_name))`
+        );
+        await this.createIndex(
+            'idx_gamelog_jl_location',
+            'gamelog_join_leave',
+            ['location']
+        );
+        await this.createIndex(
+            'idx_gamelog_jl_user_created',
+            'gamelog_join_leave',
+            ['user_id', 'created_at']
+        );
+        await this.createIndex(
+            'idx_gamelog_jl_display_created',
+            'gamelog_join_leave',
+            ['display_name', 'created_at']
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_portal_spawn (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), display_name VARCHAR(255), location VARCHAR(512), user_id VARCHAR(255), instance_id VARCHAR(255), world_name TEXT, UNIQUE(created_at, display_name))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_video_play (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), video_url VARCHAR(512), video_name TEXT, video_id VARCHAR(255), location VARCHAR(512), display_name VARCHAR(255), user_id VARCHAR(255), UNIQUE(created_at, video_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_resource_load (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), resource_url VARCHAR(512), resource_type VARCHAR(255), location VARCHAR(512), UNIQUE(created_at, resource_url))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_event (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), data TEXT, UNIQUE(created_at, data(255)))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS gamelog_external (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), message TEXT, display_name VARCHAR(255), user_id VARCHAR(255), location VARCHAR(512), UNIQUE(created_at, message(255)))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_avatar (id VARCHAR(255) PRIMARY KEY, added_at VARCHAR(255), author_id VARCHAR(255), author_name VARCHAR(255), created_at VARCHAR(255), description TEXT, image_url TEXT, name VARCHAR(255), release_status VARCHAR(255), thumbnail_image_url TEXT, updated_at VARCHAR(255), version INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cache_world (id VARCHAR(255) PRIMARY KEY, added_at VARCHAR(255), author_id VARCHAR(255), author_name VARCHAR(255), created_at VARCHAR(255), description TEXT, image_url TEXT, name VARCHAR(255), release_status VARCHAR(255), thumbnail_image_url TEXT, updated_at VARCHAR(255), version INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_world (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), world_id VARCHAR(255), group_name VARCHAR(255))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_avatar (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), avatar_id VARCHAR(255), group_name VARCHAR(255))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS favorite_friend (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), group_name VARCHAR(255))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS memos (user_id VARCHAR(255) PRIMARY KEY, edited_at VARCHAR(255), memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS world_memos (world_id VARCHAR(255) PRIMARY KEY, edited_at VARCHAR(255), memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_memos (avatar_id VARCHAR(255) PRIMARY KEY, edited_at VARCHAR(255), memo TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id VARCHAR(255) NOT NULL, tag VARCHAR(255) NOT NULL, color VARCHAR(255), PRIMARY KEY (avatar_id, tag))`
+        );
+    }
 }
 
 export { MySQLAdapter };
