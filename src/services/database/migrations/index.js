@@ -205,35 +205,81 @@ function validateDatabaseField(database) {
 
 /**
  * 获取当前数据库引擎类型。
- * @returns {string} 引擎类型标识（当前固定返回 "sqlite"）
+ *
+ * Phase 9 task 9.12 (revised 2026-07-19, aligned with MySQL branch):
+ * reads `adapter.engineType` off the singleton instead of re-reading
+ * `VRCXStorage.Get('VRCX_Database.mode')`. This keeps engine detection
+ * in sync with whichever adapter `initAdapter(mode)` actually
+ * constructed — `interopApi.js` reads `VRCXStorage` once at startup and
+ * passes the mode into `initAdapter`, so the adapter is the single
+ * source of truth for the active engine. The previous VRCXStorage read
+ * could diverge from the adapter if `initAdapter` was called with a
+ * different mode (or not called at all in unit tests), which would
+ * cause the migration runner to apply sqlite-targeted `.map` files to a
+ * PgSQL schema or vice versa.
+ *
+ * Fallback `'sqlite'` is retained for:
+ *   - `adapter` being `undefined` (defensive — should never happen in
+ *     production because the adapter module constructs a SQLiteAdapter
+ *     at module load, but covers the case where a test imports the
+ *     migration runner without importing the adapter module first).
+ *   - An adapter whose `engineType` is `'unknown'` (base class default —
+ *     means the subclass forgot to override the getter). Falls back to
+ *     sqlite so the migration runner stays safe for the default engine
+ *     rather than crashing on `'unknown'`.
+ *
+ * @returns {string} 引擎类型标识（"sqlite" | "postgresql" | "mysql" | "unknown"）
  */
 function getDatabaseEngine() {
-    return 'sqlite';
+    return adapter?.engineType || 'sqlite';
 }
 
 /**
  * 检查迁移的 database 限制与当前引擎是否兼容。
+ *
+ * Phase 9 task 9.12: 返回值由 undefined/throw 改为结构化对象 `{ compatible, skip }`。
+ *  - 兼容（含无 database 字段）→ `{ compatible: true, skip: false }`
+ *  - .map 锁定 sqlite 且当前引擎非 sqlite → `{ compatible: false, skip: true }`
+ *    （INV-04: PgSQL initSchema PG DDL 已含最新结构，v16 ALTER 对 PgSQL 无意义，跳过）
+ *  - 其他引擎不匹配（含反向）→ 抛错（保留严格语义，避免误执行）
+ *
  * @param {object|null|undefined} database - map 文件中的 database 字段
  * @param {string} engine - 当前数据库引擎
+ * @returns {{ compatible: boolean, skip: boolean }}
  */
 function checkDatabaseCompatibility(database, engine) {
-    if (!database || typeof database !== 'object') return;
+    if (!database || typeof database !== 'object') {
+        return { compatible: true, skip: false };
+    }
 
-    const check = (key, label) => {
+    const check = (key) => {
         const val = database[key];
         if (
             val &&
             typeof val === 'string' &&
             val.toLowerCase() !== engine.toLowerCase()
         ) {
+            // INV-04: .map 锁定 sqlite 且当前引擎非 sqlite → 跳过（PgSQL initSchema 已含最新结构）
+            if (
+                val.toLowerCase() === 'sqlite' &&
+                engine.toLowerCase() !== 'sqlite'
+            ) {
+                return 'skip';
+            }
+            // 反向或其他不匹配 → 严格抛错，避免误执行
             throw new Error(
-                `数据库引擎不匹配: 迁移要求 ${label} = "${val}", 当前引擎为 "${engine}"`
+                `数据库引擎不匹配: ${key}="${val}", 当前引擎为 "${engine}"`
             );
         }
+        return 'ok';
     };
 
-    check('before', 'database.before');
-    check('after', 'database.after');
+    const before = check('before');
+    const after = check('after');
+    if (before === 'skip' || after === 'skip') {
+        return { compatible: false, skip: true };
+    }
+    return { compatible: true, skip: false };
 }
 
 /**
@@ -370,7 +416,38 @@ async function executeMigration(migration, options, engine) {
     const { version, type, data } = migration;
 
     // 检查 database 引擎兼容性
-    checkDatabaseCompatibility(data.database, engine);
+    const compat = checkDatabaseCompatibility(data.database, engine);
+    if (compat.skip) {
+        // INV-04: PgSQL engine skips v16 .map (database.after:"sqlite").
+        // checkDatabaseCompatibility returns {skip:true}, executeMigration records
+        // checkpoint and returns early with console.warn.
+        // PgSQL initSchema PG DDL already contains latest schema (with group_name etc.),
+        // v16 ALTER is meaningless for PgSQL. Checkpoint 仍记录版本号，视为"已满足"，
+        // 避免下次启动重复尝试执行被跳过的 .map。
+        console.warn(
+            `[迁移] 跳过 ${engine} 锁定的 .map: v${version}-${type}` +
+                (data.description ? ` (${data.description})` : '')
+        );
+        try {
+            await adapter.begin();
+            await recordCheckpoint(version);
+            await adapter.commit();
+        } catch (err) {
+            try {
+                await adapter.rollback();
+            } catch (rollbackErr) {
+                console.error(
+                    `[迁移] v${version} ${type} skip 回滚失败:`,
+                    rollbackErr
+                );
+            }
+            console.error(`[迁移] v${version} ${type} skip 记录检查点失败:`, err);
+            throw new Error(
+                `迁移 v${version} (${type}) 跳过记录检查点失败: ${err.message}`
+            );
+        }
+        return;
+    }
 
     console.log(
         `[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`
