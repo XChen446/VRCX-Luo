@@ -122,6 +122,10 @@ if (mode === 'sqlite')
 {
     interopApi.getDotNetObject('SQLite').Init();
 }
+else if (mode === 'postgresql')
+{
+    interopApi.getDotNetObject('PostgreSQL').Init();
+}
 interopApi.getDotNetObject('AppApiElectron').Init();
 interopApi.getDotNetObject('Discord').Init();
 interopApi.getDotNetObject('WebApi').Init();
