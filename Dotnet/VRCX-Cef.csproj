@@ -62,6 +62,9 @@
     <Compile Remove="DBMerger\**" />
     <EmbeddedResource Remove="DBMerger\**" />
     <None Remove="DBMerger\**" />
+    <Compile Remove="VRCX.Tests\**" />
+    <None Remove="VRCX.Tests\**" />
+    <EmbeddedResource Remove="VRCX.Tests\**" />
   </ItemGroup>
   <ItemGroup>
 	  <Reference Include="Blake2Sharp">

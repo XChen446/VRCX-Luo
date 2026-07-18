@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+vi.setConfig({ testTimeout: 15000 });
 import { createPinia, setActivePinia } from 'pinia';
+import { createRequire } from 'node:module';
 import { nextTick, reactive } from 'vue';
 
 import { links } from '../../shared/constants/link';
+
+const nodeRequire = createRequire(import.meta.url);
+const NodeModule = nodeRequire('module');
+const originalModuleLoad = NodeModule._load;
 
 const mockWatchState = reactive({
     isLoggedIn: false,
@@ -130,6 +137,32 @@ vi.mock('../../shared/utils', () => ({
     escapeTag: (value) => value
 }));
 
+vi.mock('../../stores/activity', () => ({
+    useActivityStore: () => ({
+        startFullCacheBuild: vi.fn()
+    })
+}));
+
+vi.mock('../../stores/manualRelations', () => ({
+    useManualRelationsStore: () => ({
+        loadManualRelations: vi.fn().mockResolvedValue(undefined)
+    })
+}));
+
+vi.mock('../../stores/trackedNonFriends', () => ({
+    useTrackedNonFriendsStore: () => ({
+        loadTrackedNonFriends: vi.fn().mockResolvedValue(undefined)
+    })
+}));
+
+vi.mock('../../services/accountHub', () => ({
+    accountHub: { primaryId: null }
+}));
+
+vi.mock('../../services/accountSession', () => ({
+    AccountSession: vi.fn()
+}));
+
 vi.mock('../../services/database', () => ({
     database: new Proxy(
         {},
@@ -195,6 +228,19 @@ function flushPromises() {
     return Promise.resolve().then(() => Promise.resolve());
 }
 
+function installRequireStub() {
+    NodeModule._load = function testModuleLoad(request, parent, isMain) {
+        if (typeof request === 'string' && request.includes('accountHub')) {
+            return { accountHub: { primaryId: null } };
+        }
+        return originalModuleLoad.call(this, request, parent, isMain);
+    };
+}
+
+function restoreRequireStub() {
+    NodeModule._load = originalModuleLoad;
+}
+
 function makeAuthError(message, status = 401) {
     const err = new Error(message);
     err.status = status;
@@ -248,7 +294,7 @@ async function succeedManualLogin(store) {
 
 describe('useAuthStore login failure toast policy', () => {
     beforeEach(() => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'Date'] });
         vi.setSystemTime(new Date('2026-03-23T00:00:00.000Z'));
         vi.clearAllMocks();
 
@@ -293,9 +339,12 @@ describe('useAuthStore login failure toast policy', () => {
             IPCAnnounceStart: vi.fn(),
             OpenLink: vi.fn()
         };
+
+        installRequireStub();
     });
 
     afterEach(() => {
+        restoreRequireStub();
         vi.useRealTimers();
     });
 

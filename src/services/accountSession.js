@@ -14,7 +14,7 @@
  */
 
 import { reactive } from 'vue';
-import { parseLocation } from '../shared/utils';
+import { parseLocation } from '../shared/utils/location.js';
 import { AppDebug } from './appConfig';
 import { adapter } from './database/adapter/index.js';
 import webApiService from './webapi.js';
@@ -441,7 +441,12 @@ export class AccountSession {
                 }
             };
             socket.onerror = () => {
-                socket.onclose(new CloseEvent('close', { code: 1006 }));
+                // Close the socket so the browser dispatches a single 'close' event.
+                // Manually calling onclose() would race with the real close event and
+                // schedule two reconnect timers; the async _connectWS() guard cannot
+                // prevent a double _requestRaw('auth') because this._ws stays null
+                // until the auth promise resolves.
+                socket.close();
             };
             socket.onmessage = ({ data }) => {
                 try {

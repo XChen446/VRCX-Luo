@@ -22,8 +22,13 @@ vi.mock('../../../../stores', () => ({
         currentUser: ref({ id: 'usr_1', isBoopingEnabled: true })
     }),
     useGameStore: () => ({ isGameRunning: ref(false) }),
-    useLocationStore: () => ({ lastLocation: ref({ location: 'wrld_1:1' }) })
+    useLocationStore: () => ({ lastLocation: ref({ location: 'wrld_1:1' }) }),
+    useTrackedNonFriendsStore: () => ({})
 }));
+vi.mock('../../../../stores/trackedNonFriends', () => ({
+    useTrackedNonFriendsStore: () => ({ isTracked: vi.fn().mockReturnValue(false) })
+}));
+
 vi.mock('../../../../composables/useInviteChecks', () => ({
     useInviteChecks: () => ({ checkCanInvite: () => true })
 }));
@@ -52,30 +57,12 @@ vi.mock('@/components/ui/button', () => ({
 vi.mock('../../../ui/tooltip', () => ({
     TooltipWrapper: { template: '<div><slot /></div>' }
 }));
-vi.mock('lucide-vue-next', () => ({
-    Check: { template: '<i />' },
-    CheckCircle: { template: '<i />' },
-    Clock: { template: '<i />' },
-    Flag: { template: '<i />' },
-    LineChart: { template: '<i />' },
-    Mail: { template: '<i />' },
-    MessageCircle: { template: '<i />' },
-    MessageSquare: { template: '<i />' },
-    Mic: { template: '<i />' },
-    MoreHorizontal: { template: '<i />' },
-    MousePointer: { template: '<i />' },
-    Pencil: { template: '<i />' },
-    Plus: { template: '<i />' },
-    RefreshCw: { template: '<i />' },
-    Settings: { template: '<i />' },
-    Share2: { template: '<i />' },
-    Star: { template: '<i />' },
-    Trash2: { template: '<i />' },
-    User: { template: '<i />' },
-    VolumeX: { template: '<i />' },
-    X: { template: '<i />' },
-    XCircle: { template: '<i />' }
-}));
+vi.mock('lucide-vue-next', () => {
+    const iconMock = { template: '<i />' };
+    const iconMap = {};
+    ['Check', 'CheckCircle', 'Clock', 'ExternalLink', 'Flag', 'LineChart', 'Mail', 'MessageCircle', 'MessageSquare', 'Mic', 'MoreHorizontal', 'MousePointer', 'Pencil', 'Plus', 'RefreshCw', 'Settings', 'Share2', 'Star', 'Trash2', 'User', 'UserPlus', 'VolumeX', 'X', 'XCircle'].forEach((name) => { iconMap[name] = iconMock; });
+    return iconMap;
+});
 
 import UserActionDropdown from '../UserActionDropdown.vue';
 

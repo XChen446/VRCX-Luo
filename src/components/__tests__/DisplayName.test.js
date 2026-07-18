@@ -14,6 +14,16 @@ const mocks = vi.hoisted(() => ({
     userImage: vi.fn((user) => user?.profilePicOverrideThumbnail || '')
 }));
 
+vi.mock('../../stores', () => ({
+    useUserStore: () => ({
+        currentUser: null,
+        cachedUsers: new Map()
+    }),
+    useFriendStore: () => ({
+        friends: new Map()
+    })
+}));
+
 vi.mock('../../api', () => ({
     queryRequest: {
         fetch: (...args) => mocks.fetch(...args)

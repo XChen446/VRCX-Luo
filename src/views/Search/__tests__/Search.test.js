@@ -118,6 +118,11 @@ vi.mock('../../../stores', () => ({
     }),
     useAuthStore: () => ({
         cachedConfig: mocks.cachedConfig
+    }),
+    useUserStore: () => ({
+        currentUser: { id: 'usr_me', presence: {} },
+        onlineFriends: [],
+        activeFriends: []
     })
 }));
 
@@ -261,19 +266,23 @@ import SearchView from '../Search.vue';
 
 function mountSearch() {
     return mount(SearchView, {
-        global: {
-            stubs: {
-                TooltipWrapper: { template: '<div><slot /></div>' },
-                AvatarProviderDialog: {
-                    template: '<div data-testid="avatar-provider-dialog" />'
-                },
-                SearchPagination: {
-                    props: ['show', 'prevDisabled', 'nextDisabled'],
-                    emits: ['prev', 'next'],
-                    template: '<div data-testid="pagination" />'
-                }
+    global: {
+        stubs: {
+            TooltipWrapper: { template: '<div><slot /></div>' },
+            AvatarProviderDialog: {
+                template: '<div data-testid="avatar-provider-dialog" />'
+            },
+            SearchPagination: {
+                props: ['show', 'prevDisabled', 'nextDisabled'],
+                emits: ['prev', 'next'],
+                template: '<div data-testid="pagination" />'
+            },
+            UserIdentityInline: {
+                props: ['user'],
+                template: '<span>{{ user.displayName }}</span>'
             }
         }
+    }
     });
 }
 

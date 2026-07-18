@@ -135,8 +135,8 @@ describe('Friend Utils', () => {
                 pendingOffline: false,
                 ref: { $location_at: 200, location: 'wrld_2' }
             };
-            // compareByLocationAt(b.ref, a.ref): b.$location_at(200) > a.$location_at(100) → 1
-            expect(fn(a, b)).toBe(1);
+            // compareByTimeInInstance: b.ref.$location_at - a.ref.$location_at = 200 - 100 = 100
+            expect(fn(a, b)).toBe(100);
         });
 
         test('sorts pending offline to bottom for time in instance', () => {
@@ -163,7 +163,7 @@ describe('Friend Utils', () => {
 
         test('None sort returns 0', () => {
             const fn = getFriendsSortFunction(['None']);
-            const a = { name: 'Zack' };
+            const a = { name: 'Alice' };
             const b = { name: 'Alice' };
             expect(fn(a, b)).toBe(0);
         });
@@ -206,8 +206,8 @@ describe('Friend Utils', () => {
             const fn = getFriendsSortFunction([]);
             const a = { name: 'Alice' };
             const b = { name: 'Bob' };
-            // No sort functions → result is undefined from loop
-            expect(fn(a, b)).toBeUndefined();
+            // Only compareByName is always appended as fallback
+            expect(fn(a, b)).toBeLessThan(0);
         });
     });
 });

@@ -107,24 +107,30 @@ vi.mock('@/components/ui/checkbox', () => ({
     }
 }));
 
-vi.mock('lucide-vue-next', () => ({
-    AlertTriangle: { template: '<i />' },
-    Image: { template: '<i />' },
-    Lock: { template: '<i />' },
-    MoreHorizontal: { template: '<i />' }
-}));
+vi.mock('lucide-vue-next', () => {
+    const iconMap = {};
+    ['AlertTriangle', 'ExternalLink', 'Flag', 'Image', 'LineChart', 'Lock', 'MessageSquare', 'MoreHorizontal', 'Pencil', 'Share2', 'User'].forEach((name) => { iconMap[name] = { template: '<i />' }; });
+    return iconMap;
+});
 
-vi.mock('../../../../stores', () => ({
-    useFavoriteStore: () => ({
-        showFavoriteDialog: (...args) => mocks.showFavoriteDialog(...args)
-    }),
-    useInviteStore: () => ({
-        canOpenInstanceInGame: mocks.canOpenInstanceInGame
-    }),
-    useInstanceStore: () => ({
-        createNewInstance: (...args) => mocks.createNewInstance(...args)
-    })
-}));
+vi.mock('../../../../stores', () => {
+    const stub = () => ({});
+    return {
+        useFavoriteStore: () => ({ showFavoriteDialog: (...args) => mocks.showFavoriteDialog(...args) }),
+        useInviteStore: () => ({ canOpenInstanceInGame: mocks.canOpenInstanceInGame }),
+        useInstanceStore: () => ({ createNewInstance: (...args) => mocks.createNewInstance(...args) }),
+        useLocationStore: () => ({ lastLocation: 'wrld_00000000-0000-0000-0000-000000000000::~region(us)' }),
+        useUserStore: stub,
+        useAppearanceSettingsStore: stub,
+        useFriendStore: stub,
+        useGameStore: stub,
+        useGroupStore: stub,
+        useWorldStore: stub,
+        useUiStore: stub,
+        useNotificationsSettingsStore: stub,
+        useLaunchStore: stub
+    };
+});
 
 vi.mock('../../../../api', () => ({
     favoriteRequest: {
@@ -145,6 +151,22 @@ vi.mock('../../../../coordinators/favoriteCoordinator', () => ({
     removeLocalWorldFavorite: (...args) =>
         mocks.removeLocalWorldFavorite(...args)
 }));
+
+vi.mock('../../../../components/dialogs/NewInstanceDialog/NewInstanceDialog.vue', () => ({
+    default: {
+        props: ['newInstanceDialogLocationTag', 'lastLocation'],
+        watch: {
+            newInstanceDialogLocationTag(val) {
+                if (val) {
+                    mocks.createNewInstance(val);
+                }
+            }
+        },
+        template: '<div />'
+    }
+}));
+
+
 
 import FavoritesWorldItem from '../FavoritesWorldItem.vue';
 

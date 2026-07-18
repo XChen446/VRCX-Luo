@@ -55,7 +55,8 @@ vi.mock('../../../stores', () => ({
     }),
     useVrcxStore: () => ({
         maxTableSize: mocks.maxTableSize
-    })
+    }),
+    useGalleryStore: () => ({})
 }));
 
 vi.mock('../../../lib/table/useVrcxVueTable', () => ({
@@ -152,7 +153,8 @@ vi.mock('../../../components/ui/tooltip', () => ({
 
 vi.mock('lucide-vue-next', () => ({
     ListFilter: { template: '<span />' },
-    Star: { template: '<span />' }
+    Star: { template: '<span />' },
+    Upload: { template: '<span />' }
 }));
 
 import Feed from '../Feed.vue';

@@ -4,6 +4,9 @@ import { mount } from '@vue/test-utils';
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (k) => k }) }));
 vi.mock('@/shared/utils/common', () => ({ openExternalLink: vi.fn() }));
 vi.mock('../../../stores', () => ({
+    useNotificationsSettingsStore: () => ({
+        notificationLayout: []
+    }),
     useDashboardStore: () => ({
         createDashboard: vi.fn(async () => ({
             id: 'dashboard-1',
@@ -104,7 +107,8 @@ describe('CustomNavDialog.vue', () => {
 
         const emitted = wrapper.emitted('save');
         expect(emitted).toBeTruthy();
-        expect(emitted[0][0]).toEqual(defaultLayout);
         expect(emitted[0][0][0].nameKey).toBe('nav_tooltip.social');
+        expect(emitted[0][0][0].type).toBe('folder');
+        expect(emitted[0][0][0].items).toEqual(['friend-log']);
     });
 });

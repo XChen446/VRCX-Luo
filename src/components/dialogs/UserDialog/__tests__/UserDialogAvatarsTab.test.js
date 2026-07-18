@@ -160,7 +160,7 @@ describe('UserDialogAvatarsTab.vue', () => {
 
         test('renders all avatars when releaseStatus is "all"', () => {
             const wrapper = mountComponent();
-            const items = wrapper.findAll('.cursor-pointer');
+            const items = wrapper.findAll('img');
             expect(items).toHaveLength(3);
         });
 

@@ -67,14 +67,17 @@ const baseProps = {
 };
 
 describe('NavMenuFooter', () => {
-    it('renders version and emits toggle-theme click', async () => {
+    it('renders version and emits toggle-nav-collapse click', async () => {
         const wrapper = mount(NavMenuFooter, { props: baseProps });
 
         expect(wrapper.text()).toContain('2026.01.01');
 
         const buttons = wrapper.findAll('[data-testid="sidebar-menu-btn"]');
-        await buttons[1].trigger('click');
+        const collapseBtn = buttons.find((btn) => btn.text().includes('nav_tooltip.collapse_menu'));
+        if (collapseBtn) {
+            await collapseBtn.trigger('click');
+        }
 
-        expect(wrapper.emitted('toggle-theme')).toHaveLength(1);
+        expect(wrapper.emitted('toggle-nav-collapse')?.length).toBe(1);
     });
 });

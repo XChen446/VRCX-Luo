@@ -361,7 +361,7 @@ describe('User Utils', () => {
                 false,
                 currentUser
             );
-            expect(result.active).toBe(true);
+            expect(result['active-busy']).toBe(true);
         });
 
         test('sets mobile flag for non-PC platform friend', () => {
@@ -425,8 +425,8 @@ describe('User Utils', () => {
                 false,
                 currentUser
             );
-            // activeFriends includes usr_f → active
-            expect(result.active).toBe(true);
+            // activeFriends includes usr_f → active-busy for busy status
+            expect(result['active-busy']).toBe(true);
         });
 
         test('handles private location temp fix → offline branch', () => {

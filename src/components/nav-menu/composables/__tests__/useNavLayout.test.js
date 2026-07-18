@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, ref } from 'vue';
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +14,12 @@ vi.mock('../../../../services/config', () => ({
     }
 }));
 
+vi.mock('../../../../stores/settings/notifications', () => ({
+    useNotificationsSettingsStore: () => ({
+        notificationLayout: ref([])
+    })
+}));
+
 vi.mock('../../navMenuUtils', () => ({
     normalizeHiddenKeys: (keys) => keys || [],
     sanitizeLayout: (layout) => layout
@@ -21,6 +28,10 @@ vi.mock('../../navMenuUtils', () => ({
 import { useNavLayout } from '../useNavLayout';
 
 describe('useNavLayout', () => {
+    beforeEach(() => {
+        setActivePinia(createPinia());
+    });
+
     const createDeps = () => {
         const push = vi.fn();
         const router = {

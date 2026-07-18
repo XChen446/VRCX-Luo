@@ -123,7 +123,7 @@ namespace VRCX
         /// <summary>
         /// Resolves the database file path from VRCX_Database.name.
         /// </summary>
-        private static string ResolveDatabasePath(string name)
+        internal static string ResolveDatabasePath(string name)
         {
             if (string.IsNullOrEmpty(name))
                 return Program.ConfigLocation;
@@ -218,7 +218,7 @@ namespace VRCX
         /// Validates that the resolved database file path is usable.
         /// Throws InvalidOperationException with a clear message on any violation.
         /// </summary>
-        private static void ValidateDatabaseFile(string path)
+        internal static void ValidateDatabaseFile(string path)
         {
             // ── 0. Null-byte trap (defense-in-depth; primary gate is ValidateAndCanonicalizeDatabasePath) ──
             if (path.Contains('\0'))
@@ -302,7 +302,7 @@ namespace VRCX
         ///          (;, ", ', or newlines).
         /// Returns the trimmed value on success.
         /// </summary>
-        private static string SanitizePragmaValue(string key, string val)
+        internal static string SanitizePragmaValue(string key, string val)
         {
             // Layer 0: enforce strict key allowlist (prevents connection-string
             // injection via the KEY, e.g. "foo;PRAGMA rekey"). Must run BEFORE

@@ -117,6 +117,13 @@ export function sanitizeLayout(
         });
     }
 
+    if (
+        !chartsKeys.some((key) => usedKeys.has(key)) &&
+        !chartsKeys.some((key) => hiddenSet.has(key))
+    ) {
+        appendChartsFolder();
+    }
+
     allDefinitions.forEach((item) => {
         if (!usedKeys.has(item.key) && !hiddenSet.has(item.key)) {
             if (chartsKeys.includes(item.key)) {
@@ -134,13 +141,6 @@ export function sanitizeLayout(
             appendItemEntry(item.key);
         }
     });
-
-    if (
-        !chartsKeys.some((key) => usedKeys.has(key)) &&
-        !chartsKeys.some((key) => hiddenSet.has(key))
-    ) {
-        appendChartsFolder();
-    }
 
     // Ensure direct-access is always the last item
     const directAccessIdx = normalized.findIndex(

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     favoriteWorldResults: { value: [] },
     ownGroupResults: { value: [] },
     joinedGroupResults: { value: [] },
+    recentlyMetResults: { value: [] },
+    recentBeenResults: { value: [] },
     hasResults: { value: false }
 }));
 
@@ -29,6 +31,8 @@ vi.mock('../../stores/quickSearch', () => ({
         favoriteWorldResults: mocks.favoriteWorldResults,
         ownGroupResults: mocks.ownGroupResults,
         joinedGroupResults: mocks.joinedGroupResults,
+        recentlyMetResults: mocks.recentlyMetResults,
+        recentBeenResults: mocks.recentBeenResults,
         hasResults: mocks.hasResults,
         selectResult: (...args) => mocks.selectResult(...args)
     })

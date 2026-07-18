@@ -91,19 +91,74 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 
 ## Name 字段验证规则
 
-`SQLite.Init()` 在 `ResolveDatabasePath` 之后、构建连接字符串之前执行 `ValidateDatabaseFile`：
+`SQLite.Init()` 与 `AppApi.ResolveDatabaseName`（JS 桥接）均委托至 `ValidateAndCanonicalizeDatabasePath`（集中式验证器，单一审计点）。验证器依次执行：null 字节拒绝（H-1）→ Trim/null-safe → `ResolveDatabasePath` 分派 → boundary 检查（C-1，按路径类型分两支：含分隔符分支先 `Path.IsPathRooted` 检查拒绝非绝对路径，再 `Path.GetFullPath` 规范化；纯文件名分支 `Path.GetFullPath` 规范化后 `StartsWith(AppData)` 检查）→ `ValidateDatabaseFile` 文件级检查。
 
-| # | 检查项 | 处理 |
-|---|---|---|
-| 1 | `name` 首尾空白 | `Trim()` 净化 |
-| 2 | 后缀不是 `.db` / `.db3` / `.sqlite3`（大小写不敏感） | `InvalidOperationException` |
-| 3 | 文件（名）中含有 `:`（ADS / 明显填错） | `InvalidOperationException` |
-| 4 | 文件名（不含后缀）是保留设备名（`CON` `PRN` `AUX` `NUL` `COM*` `LPT*`） | `InvalidOperationException` |
-| 5 | 解析结果是已存在的目录 | `InvalidOperationException` |
-| 6 | 父目录不存在 | `Directory.CreateDirectory` 递归创建 |
-| 7 | 其他错误（权限、磁盘满等） | 由 `Open()` 抛异常，阻止启动 |
+| # | 检查项 | 处理 | 状态 |
+|---|---|---|---|
+| 0 | `name` 含 `\0`（null 字节） | `InvalidOperationException`（在任何字符串处理前拒绝，H-1 主门） | 新增 |
+| 1 | `name` 首尾空白 | `name?.Trim() ?? string.Empty`（null-safe，移入 `ValidateAndCanonicalizeDatabasePath`） | 修订（原：`Trim()` 净化） |
+| 2 | 后缀不是 `.db` / `.db3` / `.sqlite3`（大小写不敏感） | `InvalidOperationException` | 保留 |
+| 3 | 文件名部分（`Path.GetFileName`）含有 `:`（Windows ADS / 明显填错）— 不检查路径中的驱动器号冒号 | `InvalidOperationException` | 保留 |
+| 4 | 文件名（不含后缀）是保留设备名（`CON` `PRN` `AUX` `NUL` `COM*` `LPT*`） | `InvalidOperationException` | 保留 |
+| 4b | 纯文件名解析后逃逸 `AppDataDirectory` / 含分隔符但非绝对路径 | `InvalidOperationException`（C-1 boundary check，必须在 `GetFullPath` 前检查 `IsPathRooted`） | 新增 |
+| 4c | 路径含 `"` | `InvalidOperationException`（防 Data Source 引号注入，Linux 跨平台，H-4） | 新增 |
+| 5 | 解析结果是已存在的目录 | `InvalidOperationException` | 保留 |
+| 6 | 父目录不存在 | `Directory.CreateDirectory` 递归创建 | 保留 |
+| 7 | 其他错误（权限、磁盘满等） | 由 `Open()` 抛异常，阻止启动 | 保留 |
 
 以上检查全平台统一，不分支。
+
+## Security Hardening (Phase 7.5.x)
+
+> 集中实现于 `Dotnet/SQLite.cs` 行 159–338（`ValidateAndCanonicalizeDatabasePath` / `ValidateDatabaseFile` / `SanitizePragmaValue`）+ `Dotnet/AppApi/Common/AppApiCommon.cs` 行 115–118（`ResolveDatabaseName` 委托）。
+> 完整测试覆盖见 `Dotnet/VRCX.Tests/SQLiteSecurityTests.cs`（42 用例，6 分组）。
+
+### 集中式路径验证器 (C-1, C-2)
+
+- `SQLite.ValidateAndCanonicalizeDatabasePath(string name)` 是路径解析的**单一审计点**
+- `Init()`（C# 后端启动）与 `AppApi.ResolveDatabaseName`（JS 桥接运行时调用）均委托，确保验证一致
+- **Boundary check 两个分支**（C-1）：
+  - 纯文件名分支：`canonical.StartsWith(appDataWithSep, OrdinalIgnoreCase)` — 防止 `subdir/../escape.db` 逃逸
+  - 含分隔符分支：`Path.IsPathRooted(resolved)` — 拒绝 `../../evil.db`
+- **关键顺序**：`IsPathRooted` 必须在 `Path.GetFullPath` **之前**检查，否则规范化后永远为 true，检查失效
+- 错误消息：`"VRCX_Database.name resolves to '{canonical}' which is outside the allowed data directory ..."` / `"... contains path separators but is not an absolute path ..."`
+
+### PRAGMA 注入防护 (H-3, SEC-3a/3b/3c)
+
+`SanitizePragmaValue(string key, string val)` 三层防御，**层序不可调换**：
+
+| 层 | ID | 检查 | 拒绝输入示例 | 错误消息关键字 |
+|---|---|---|---|---|
+| Layer 0 | SEC-3a | 键名白名单正则 `^[A-Za-z0-9_]+$` | `"foo;PRAGMA rekey"`, `" key"`, `"key=value"` | `ASCII letters, digits` |
+| Layer 1 | SEC-3b | 加密键黑名单 `ForbiddenPragmaKeys`（9 个 SEE 键，OrdinalIgnoreCase） | `"key"`, `"rekey"`, `"hexkey"`, `"hexrekey"`, `"textkey"`, `"textrekey"`, `"hexdbkey"`, `"hexrekey_md5"`, `"hexkey_md5"` | `forbidden for security reasons` |
+| Layer 2 | SEC-3c | 值字符黑名单 `ForbiddenPragmaChars`（6 字符） | `"WAL;PRAGMA rekey=x"`, `"WAL\0"`, `"WAL'"`, `"WAL\""` | `forbidden characters` |
+
+- **Layer 0 必须在 Layer 1 之前**：防止 `" key"`、`"key;x"` 等通过空格/分号绕过 ForbiddenPragmaKeys 的全字符串匹配
+- Layer 2 字符集：`;` `'` `"` `\n` `\r` `\0`
+- 返回值：`(val ?? string.Empty).Trim()`
+
+### Data Source 引号注入防护 (H-4)
+
+- `ValidateDatabaseFile` 步骤 0b 拒绝路径中的 `"`
+- 跨平台必要性：Linux 上 `"` 是合法文件名字符，若不拒绝可构造恶意路径破坏连接字符串 `Data Source="..."` 解析
+
+### .bak 向后兼容 (COMPAT-1)
+
+- 实现于 `src/stores/vrcx.js::handleUninitializedDatabase()`
+- `.bak` 键名优先级回退：`VRCX_Database.name` → `VRCX_Database.location` → `VRCX_DatabaseLocation`
+- `AppApi.ResolveDatabaseName(bakDbName)` + `AppApi.ResolveDatabaseName(currentDbName)` 包裹 try/catch，验证失败回退 `initAndFixInPlace`
+- 自引用去重：`bakIdentity === currentIdentity` 时不执行 `migrateFromOldDb`，回退 `initAndFixInPlace`（依赖 `ValidateAndCanonicalizeDatabasePath` 的规范化路径字符串等价比较）
+
+### NPE 修复与性能优化 (SEC-5, SEC-6)
+
+- **SEC-5 (NPE 修复)**：`Init()` 不再对 `VRCXStorage.Instance.Get("VRCX_Database.name")` 返回值直接 `.Trim()`；Trim 移入 `ValidateAndCanonicalizeDatabasePath` 用 `name?.Trim() ?? string.Empty` 实现 null-safe
+- **SEC-6 (性能优化)**：`AllowedDatabaseExtensions` / `ReservedDeviceNames` 从 `ValidateDatabaseFile` 局部变量提升为 `private static readonly` 字段，避免每次调用分配 `HashSet<string>`
+
+### JS 桥接一致性 (BRIDGE-1)
+
+- `AppApi.ResolveDatabaseName`（`AppApiCommon.cs:115-118`）薄包装：`=> SQLite.ValidateAndCanonicalizeDatabasePath(name)`
+- 类型声明：`src/types/globals.d.ts:224` `ResolveDatabaseName(name: string): Promise<string>`
+- **JS 调用方必须 try/catch**：验证失败抛 `InvalidOperationException`，跨 IPC 边界后表现为 rejected Promise
 
 ## 写策略 (CORE RULE)
 
@@ -153,3 +208,15 @@ VRCX_Database.location (旧版 nested) →  VRCX_Database.name
 | NAME-4 | 父目录不存在时 `Init` 递归创建，不报错 |
 | MIG-1 | `VRCX_DatabaseLocation` → `VRCX_Database.name` |
 | MIG-2 | `VRCX_Database.location` → `VRCX_Database.name` |
+| C-1 | `ValidateAndCanonicalizeDatabasePath` 按路径类型做 boundary 检查：纯文件名在 `Path.GetFullPath` 规范化后检查 `StartsWith(AppData)`；含分隔符的路径必须在 `Path.GetFullPath` **前**检查 `Path.IsPathRooted`（否则规范化后始终为 true，检查失效） |
+| C-2 | `ValidateAndCanonicalizeDatabasePath` 是路径解析的单一审计点，`Init()` 与 `AppApi.ResolveDatabaseName` 均委托 |
+| H-1 | `name` 含 `\0` 在任何字符串处理前拒绝（`ValidateAndCanonicalizeDatabasePath` 步骤 0 主门 + `ValidateDatabaseFile` 步骤 0 defense-in-depth + `ForbiddenPragmaChars` 含 `\0`） |
+| H-3 | PRAGMA 注入防护由 `SanitizePragmaValue` 三层防御实现（见 SEC-3a/3b/3c） |
+| SEC-3a | PRAGMA 键名白名单 `^[A-Za-z0-9_]+$`，在加密键黑名单之前执行防绕过 |
+| SEC-3b | PRAGMA 加密键黑名单 `ForbiddenPragmaKeys`（9 个 SEE 键，OrdinalIgnoreCase） |
+| SEC-3c | PRAGMA 值字符黑名单 `ForbiddenPragmaChars`（`;` `'` `"` `\n` `\r` `\0`） |
+| H-4 | `ValidateDatabaseFile` 拒绝路径中的 `"` 防 Data Source 引号注入（Linux 上 `"` 是合法文件名字符） |
+| SEC-5 | `Init()` 不再 `.Trim()`；Trim 移入 `ValidateAndCanonicalizeDatabasePath` 用 `name?.Trim() ?? string.Empty` 实现 null-safe |
+| SEC-6 | `AllowedDatabaseExtensions` / `ReservedDeviceNames` 为 `static readonly` 字段，避免每次调用分配 |
+| COMPAT-1 | `handleUninitializedDatabase` 读取 `.bak` 键名优先级回退（name→location→VRCX_DatabaseLocation）+ `ResolveDatabaseName` try/catch + 自引用去重 |
+| BRIDGE-1 | `AppApi.ResolveDatabaseName` 委托至 `SQLite.ValidateAndCanonicalizeDatabasePath`，确保 C# 后端与 JS 桥接调用方验证一致；JS 调用方必须 try/catch |
