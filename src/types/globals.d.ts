@@ -135,6 +135,14 @@ declare global {
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
     };
 
+    const MySQL: {
+        Init: () => void;
+        Exit: () => void;
+        Execute: (sql: string, args: any) => Promise<any[]>;
+        ExecuteJson: (...args: any[]) => Promise<string>;
+        ExecuteNonQuery: (...args: any[]) => Promise<number>;
+    };
+
     const LogWatcher: {
         Get(): Promise<Array<[string, string, string, ...any[]]>>;
         SetDateTill(date: string): Promise<void>;
