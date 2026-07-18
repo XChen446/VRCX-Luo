@@ -72,7 +72,7 @@ build/            → build output (gitignored)
 
 ## VRCX_Database Config Refactoring (Jul 2026)
 
-See `docs/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` prefix convention, options merge strategy, name resolution rules).
+See `docs/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` prefix convention, options merge strategy, name resolution rules, and security hardening: path traversal / PRAGMA injection / null byte rejection / quote injection / `.bak` backward compatibility).
 
 ## GitHub Issue/PR Editing (UTF-8 中文)
 
