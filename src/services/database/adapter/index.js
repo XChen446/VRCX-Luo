@@ -1,4 +1,5 @@
 import { SQLiteAdapter } from './SQLiteAdapter.js';
+import { MySQLAdapter } from './MySQLAdapter.js';
 
 const ENGINE = 'sqlite';
 
@@ -33,4 +34,4 @@ function createAdapter(config) {
     throw new Error(`Unsupported connection scheme: ${scheme} (expected sqlite://)`);
 }
 
-export { adapter, SQLiteAdapter, createAdapter };
+export { adapter, SQLiteAdapter, MySQLAdapter, createAdapter };
