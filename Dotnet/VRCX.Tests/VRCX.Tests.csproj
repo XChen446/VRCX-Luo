@@ -1,0 +1,62 @@
+<!-- 设计稿 (Stage 2 solutions-architect 输出, Link+stub 方案)
+  - 文件名: VRCX.Tests.csproj
+  - 用途: 7.5.9 Phase — VRCX-Luo 首个 C# 测试工程，覆盖 SQLite 安全加固 42 用例
+  - 最终位置: Dotnet/VRCX.Tests/VRCX.Tests.csproj (由 implementer 决定)
+  - 依赖策略: Link ..\SQLite.cs + 测试工程内 Program/VRCXStorage stub (不 ProjectReference Cef)
+  - 关键决策:
+      * Link SQLite.cs (Compile Include + Link) — SQLite 类被编译进 VRCX.Tests.dll 同 assembly
+        → 不需要 [InternalsVisibleTo] (同 assembly internal 直接可见)
+        → 不拉入 Cef 的 windows TFM + CefSharp + Silk.NET + System.Management 依赖
+      * TFM net10.0 (无 -windows 后缀, 跨平台; 安全方法仅依赖 BCL 跨平台 API)
+      * xUnit 2.9.2 + FluentAssertions 6.12.2 (FA 7.x 对 .NET 10 支持待验证, 先用 6.x 稳定版)
+      * Coverlet 6.0.2 (无 threshold, 仅收集)
+      * System.Data.SQLite 2.0.3 — SQLite.cs Init() 引用 SQLiteConnection; v2.0.3 targets
+        netstandard2.0 (No dependencies), 纯 managed, 跨平台; 安全测试不调 Init(), 不需 native 运行时
+      * AssemblyName 仍设 "VRCX.Tests" — 命名一致性 (虽不再需要 InternalsVisibleTo 匹配)
+      * Stubs\ 路径 — 最终位置 Dotnet/VRCX.Tests/Stubs/, 设计稿阶段 stub 文件在 docs/phase7_5_design/ 平铺
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>VRCX.Tests</AssemblyName>
+    <RootNamespace>VRCX.Tests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <!-- Suppress nullable static-analysis warnings (CS8618 uninitialized fields/props,
+         CS8603 possible null return) that arise from:
+           1. Stubs' by-design fields (Program.AppDataDirectory / ConfigLocation are assigned
+              in test Setup, not at field declaration; VRCXStorage.Get intentionally returns
+              null as fail-fast sentinel).
+           2. Link'd SQLite.cs m_Connection field (initialized in Init(), not ctor; security
+              tests never call Init() so the field stays null at test time — by design).
+         Task constraint forbids modifying stub content; suppressing here is the minimal fix. -->
+    <NoWarn>CS8618;CS8603</NoWarn>
+    <!-- 不设 EnableWindowsTargeting，TFM 无 -windows 后缀，可在 Linux CI 跑 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="FluentAssertions" Version="6.12.2" />
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <!-- System.Data.SQLite needed because Link'd SQLite.cs references SQLiteConnection in Init().
+         v2.0.3 targets netstandard2.0 (No dependencies), pure managed, cross-platform.
+         Security tests don't call Init(), so native SQLite runtime is NOT required at test time. -->
+    <PackageReference Include="System.Data.SQLite" Version="2.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Link SQLite.cs from Dotnet/ (compiles into VRCX.Tests.dll, no ProjectReference to Cef).
+         Avoids pulling Cef's windows TFM + CefSharp + Silk.NET + System.Management deps.
+         Note: Stubs\*.cs are NOT listed here — .NET SDK implicitly includes all .cs files
+         under the project directory (EnableDefaultCompileItems=true). Adding explicit
+         <Compile Include="Stubs\*.cs" /> would cause NETSDK1022 duplicate item errors. -->
+    <Compile Include="..\SQLite.cs" Link="SQLite.cs" />
+  </ItemGroup>
+
+</Project>
