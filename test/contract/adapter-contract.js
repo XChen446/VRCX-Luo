@@ -81,25 +81,26 @@ export function runAdapterContractTests(adapterFactory, name) {
                 );
                 expect(ddlResult).toBe(0);
 
-                // DML (INSERT) returns 1
-                const insResult = await adapter.insert('contract_ddl', {
-                    id: 1,
-                    name: 'x'
-                });
+                // DML (INSERT) returns 1 — call executeNonQuery directly so the
+                // contract verifies the底层 method, not the insert/update/delete wrappers.
+                const insResult = await adapter.executeNonQuery(
+                    'INSERT INTO contract_ddl (id, name) VALUES (@id, @name)',
+                    { id: 1, name: 'x' }
+                );
                 expect(insResult).toBe(1);
 
                 // DML (UPDATE) returns rows-affected
-                const updResult = await adapter.update(
-                    'contract_ddl',
-                    { name: 'y' },
-                    { id: 1 }
+                const updResult = await adapter.executeNonQuery(
+                    'UPDATE contract_ddl SET name = @name WHERE id = @id',
+                    { id: 1, name: 'y' }
                 );
                 expect(updResult).toBe(1);
 
                 // DML (DELETE) returns rows-affected
-                const delResult = await adapter.delete('contract_ddl', {
-                    id: 1
-                });
+                const delResult = await adapter.executeNonQuery(
+                    'DELETE FROM contract_ddl WHERE id = @id',
+                    { id: 1 }
+                );
                 expect(delResult).toBe(1);
             });
 
@@ -164,23 +165,30 @@ export function runAdapterContractTests(adapterFactory, name) {
                 expect(rows).toEqual([[1, 'alice']]);
             });
 
-            test('begin() → error → rollback() does not persist partial DDL', async () => {
+            test('begin() → error → rollback() does not persist DML', async () => {
+                // DML rollback is cross-engine invariant (unlike DDL rollback,
+                // which MySQL/MariaDB implicitly commits). See file header L18-19.
+                await createTestTable();
                 await adapter.begin();
-                // Create a table inside the transaction
-                await adapter.createTable('contract_partial', [
-                    { name: 'id', type: 'INTEGER PRIMARY KEY' },
-                    { name: 'name', type: 'TEXT NOT NULL' }
-                ]);
-                // Trigger an error inside the transaction — NOT NULL violation
+                await adapter.insert('contract_t', {
+                    id: 1,
+                    name: 'alice',
+                    value: 10
+                });
                 try {
-                    await adapter.insert('contract_partial', { id: 1 });
+                    // Trigger a constraint error inside the transaction — duplicate PK
+                    await adapter.insert('contract_t', {
+                        id: 1,
+                        name: 'bob',
+                        value: 20
+                    });
                 } catch {
-                    // expected — NOT NULL constraint failure
+                    // expected — duplicate primary key
                 }
                 await adapter.rollback();
-                // The table created inside the transaction should NOT persist
-                const tables = await adapter.listTables('%contract_partial%');
-                expect(tables).not.toContain('contract_partial');
+                // The row inserted inside the transaction should NOT persist
+                const rows = await adapter.select('contract_t', '*');
+                expect(rows).toHaveLength(0);
             });
         });
 

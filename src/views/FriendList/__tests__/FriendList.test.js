@@ -308,6 +308,8 @@ describe('FriendList.vue', () => {
         mocks.setPageIndex.mockReset();
         mocks.setSorting.mockReset();
         mocks.toggleBulkColumnVisibility.mockReset();
+        mocks.getAllUserMutualOptedOut.mockReset();
+        mocks.fetchMutualGraph.mockReset();
     });
 
     afterEach(() => {
