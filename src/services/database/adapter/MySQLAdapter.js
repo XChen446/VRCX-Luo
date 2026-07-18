@@ -614,6 +614,68 @@ class MySQLAdapter extends EngineAdapter {
     rollback() {
         return this.executeNonQuery('ROLLBACK');
     }
+
+    // ── SQL fragments (engine-specific syntax) ───────────────────────
+
+    /**
+     * SQL expression: convert ISO datetime column to Unix milliseconds.
+     * MySQL: UNIX_TIMESTAMP(col) * 1000
+     * @override
+     * @param {string} column - column name containing ISO datetime
+     * @returns {string}
+     */
+    sqlToUnixMs(column) {
+        return `(UNIX_TIMESTAMP(${column}) * 1000)`;
+    }
+
+    /**
+     * SQL expression: extract world ID from a location string.
+     * MySQL: SUBSTRING_INDEX(col, ':', 1)
+     * @override
+     * @param {string} column - column name containing full location string
+     * @returns {string}
+     */
+    sqlExtractWorldId(column) {
+        return `SUBSTRING_INDEX(${column}, ':', 1)`;
+    }
+
+    /**
+     * SQL expression: check if a location string has an instance ID.
+     * MySQL: LOCATE(':', col) > 0
+     * @override
+     * @param {string} column - column name containing location
+     * @returns {string}
+     */
+    sqlHasInstanceId(column) {
+        return `LOCATE(':', ${column}) > 0`;
+    }
+
+    /**
+     * SQL expression: extract date part from an ISO datetime column.
+     * MySQL: DATE(col)
+     * @override
+     * @param {string} column - column name containing ISO datetime
+     * @returns {string}
+     */
+    sqlDate(column) {
+        return `DATE(${column})`;
+    }
+
+    /**
+     * SQL expression: compute the "enter time" from a leave event record.
+     *
+     * gamelog_join_leave records only leave events (created_at = leave time,
+     * time = duration in ms). Enter time = leave time - duration.
+     *
+     * MySQL: DATE_SUB(tsCol, INTERVAL (msCol / 1000) SECOND)
+     * @override
+     * @param {string} tsColumn - column name of the ISO leave timestamp
+     * @param {string} msColumn - column name of the duration in milliseconds
+     * @returns {string}
+     */
+    sqlEnterTime(tsColumn, msColumn) {
+        return `DATE_SUB(${tsColumn}, INTERVAL (${msColumn} / 1000) SECOND)`;
+    }
 }
 
 export { MySQLAdapter };
