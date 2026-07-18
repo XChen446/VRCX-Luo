@@ -1,0 +1,23 @@
+# Local development PostgreSQL for VRCX-Luo Phase 9 PgSQL adapter testing.
+# Usage: docker compose -f docker-compose.pgsql.yml up -d
+#        docker compose -f docker-compose.pgsql.yml down
+# Connect: postgresql://vrcx:vrcx@localhost:5432/vrcx
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: vrcx
+      POSTGRES_USER: vrcx
+      POSTGRES_DB: vrcx
+    ports:
+      - "5432:5432"
+    volumes:
+      - vrcx-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "vrcx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  vrcx-pgdata:
