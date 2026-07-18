@@ -190,6 +190,57 @@ namespace VRCX
         }
 
         /// <summary>
+        /// Opens a fresh connection from the given connection string, executes
+        /// a query, and returns the result set as JSON. The connection is
+        /// closed after the query completes.
+        ///
+        /// This does NOT touch <see cref="m_Connection"/> — it is completely
+        /// independent, intended for querying an EXTERNAL database (e.g.
+        /// during migration).
+        /// </summary>
+        public string ExecuteJson(string connectionString, string sql, IDictionary<string, object>? args = null)
+        {
+            using var connection = new MySqlConnection(connectionString);
+            connection.Open();
+
+            using var command = new MySqlCommand(sql, connection);
+            AddParameters(command, args);
+
+            using var reader = command.ExecuteReader();
+            var result = new List<object[]>();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    values[i] = reader.GetValue(i);
+                }
+                result.Add(values);
+            }
+
+            return JsonSerializer.Serialize(result);
+        }
+
+        /// <summary>
+        /// Opens a fresh connection from the given connection string, executes
+        /// a non-query, and returns the number of rows affected. The connection
+        /// is closed after the query completes.
+        ///
+        /// This does NOT touch <see cref="m_Connection"/> — it is completely
+        /// independent.
+        /// </summary>
+        public int ExecuteNonQuery(string connectionString, string sql, IDictionary<string, object>? args = null)
+        {
+            using var connection = new MySqlConnection(connectionString);
+            connection.Open();
+
+            using var command = new MySqlCommand(sql, connection);
+            AddParameters(command, args);
+
+            return command.ExecuteNonQuery();
+        }
+
+        /// <summary>
         /// Adds named parameters to a command. Keys may already carry a '@' or
         /// '?' marker; if not, '@' is prepended to match MySqlConnector's
         /// named-parameter convention.
