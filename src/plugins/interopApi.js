@@ -2,6 +2,7 @@
 import InteropApi from '../ipc-electron/interopApi.js';
 import configRepository from '../services/config.js';
 import vrcxJsonStorage from '../services/jsonStorage.js';
+import { initAdapter } from '../services/database/adapter/index.js';
 
 export async function initInteropApi(isVrOverlay = false) {
     if (isVrOverlay) {
@@ -35,6 +36,13 @@ export async function initInteropApi(isVrOverlay = false) {
             window.AssetBundleManager = InteropApi.AssetBundleManager;
             window.AppApiVrElectron = InteropApi.AppApiVrElectron;
         }
+
+        // Switch database adapter based on VRCX_Database.mode config.
+        // MUST run before configRepository.init() (which uses adapter).
+        // VRCXStorage.Get is sync on CefSharp, async on Electron (IPC);
+        // await handles both. Tests mock VRCXStorage.Get → '' → 'sqlite'.
+        const dbMode = await VRCXStorage.Get('VRCX_Database.mode');
+        initAdapter(typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite');
 
         await configRepository.init();
         new vrcxJsonStorage(VRCXStorage);
