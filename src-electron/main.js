@@ -122,7 +122,7 @@ if (mode === 'sqlite')
 {
     interopApi.getDotNetObject('SQLite').Init();
 }
-else if (mode === 'mysql')
+else if (mode === 'mysql' || mode === 'mariadb')
 {
     interopApi.getDotNetObject('MySQL').Init();
 }

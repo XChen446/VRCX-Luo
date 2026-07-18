@@ -243,7 +243,7 @@ namespace VRCX
             {
                 SQLite.Instance.Init();
             }
-            else if (databaseMode == "mysql")
+            else if (databaseMode == "mysql" || databaseMode == "mariadb")
             {
                 MySQL.Instance.Init();
             }

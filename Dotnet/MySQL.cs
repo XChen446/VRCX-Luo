@@ -15,6 +15,12 @@ namespace VRCX
     ///   - Exit() closes/disposes the connection.
     ///   - Execute/ExecuteNonQuery/ExecuteJson run parameterised SQL.
     ///
+    /// Built on MySqlConnector, which natively supports both MySQL and
+    /// MariaDB (protocol-compatible). Both 'mysql' and 'mariadb' modes
+    /// route to this class. No engine-specific branching is needed — the
+    /// SQL dialect, connection string format, and error codes are
+    /// identical across both servers.
+    ///
     /// This is intentionally a thin wrapper (Phase 8.1); dialect adaptation
     /// for DDL, schema init and SQL fragments lives in MySQLAdapter.js.
     /// </summary>

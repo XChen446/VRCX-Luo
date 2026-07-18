@@ -7,6 +7,17 @@ import { EngineAdapter } from './EngineAdapter.js';
  * MySQL backend (Dotnet/MySQL.cs) instead of SQLite. Parameter style is
  * `@param` (same as SQLite) — see architecture note below.
  *
+ * ── MariaDB compatibility ──
+ * MySqlConnector natively supports MariaDB (protocol-compatible). Both
+ * 'mysql' and 'mariadb' modes route to this adapter. The DDL, SQL
+ * fragments, and error handling are compatible with both engines:
+ *   - AUTO_INCREMENT, INSERT IGNORE, REPLACE INTO, ON DUPLICATE KEY
+ *     UPDATE — identical syntax in MySQL and MariaDB
+ *   - INFORMATION_SCHEMA.TABLES/COLUMNS — identical schema
+ *   - Error 1061 "Duplicate key name" — identical in both engines
+ *   - UNIX_TIMESTAMP, SUBSTRING_INDEX, LOCATE, DATE, DATE_SUB — identical
+ *   - LONGTEXT for JSON columns — MariaDB treats JSON as LONGTEXT alias
+ *
  * ── Architecture note: why @param instead of ?param ──
  * Issue 8.4 lists MySQL's parameter style as `?`, but the migration runner
  * (migrations/index.js buildSetClause) generates raw SQL with `@key`

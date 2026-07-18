@@ -33,6 +33,7 @@ function initAdapter(mode = 'sqlite') {
             }
             break;
         case 'mysql':
+        case 'mariadb':
             if (!(adapter instanceof MySQLAdapter)) {
                 adapter = new MySQLAdapter();
             }
