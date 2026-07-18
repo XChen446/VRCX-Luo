@@ -1003,6 +1003,110 @@ class MySQLAdapter extends EngineAdapter {
             `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id VARCHAR(255) NOT NULL, tag VARCHAR(255) NOT NULL, color VARCHAR(255), PRIMARY KEY (avatar_id, tag))`
         );
     }
+
+    // ── Metadata ─────────────────────────────────────────────────────
+
+    /**
+     * List user tables matching a LIKE pattern.
+     *
+     * Uses INFORMATION_SCHEMA.TABLES with a parameterized LIKE clause
+     * instead of `SHOW TABLES LIKE` — SHOW TABLES doesn't support
+     * prepared-statement parameters, and the adapter contract requires
+     * @param binding for injection safety.
+     *
+     * @override
+     * @param {string} likePattern - SQL LIKE pattern (e.g. '%_feed_gps')
+     * @returns {Promise<string[]>}
+     */
+    async listTables(likePattern) {
+        const tables = [];
+        await this.execute(
+            (row) => tables.push(row[0]),
+            `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE @pattern`,
+            { pattern: likePattern }
+        );
+        return tables;
+    }
+
+    /**
+     * Get column metadata for a table.
+     *
+     * Returns positional arrays matching SQLite PRAGMA table_xinfo column
+     * order: [cid, name, type, notnull, dflt_value, pk, hidden].
+     * MySQL has no hidden columns, so the last field is always 0.
+     *
+     * @override
+     * @param {string} table - table name
+     * @returns {Promise<Array<Array>>}
+     */
+    async getTableColumns(table) {
+        const rows = [];
+        await this.execute(
+            (row) => rows.push(row),
+            `SELECT ORDINAL_POSITION, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, 0 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @table ORDER BY ORDINAL_POSITION`,
+            { table }
+        );
+        return rows;
+    }
+
+    /**
+     * Enumerate all user tables with their column metadata.
+     *
+     * Returns the same structured format as SQLiteAdapter.listTablesTypes
+     * so that copyTableData (vrcx.js) works unchanged across engines:
+     *   { tableName, columns: [{ name, type, notNull, defaultValue, isPK, isHidden }] }
+     *
+     * @override
+     * @returns {Promise<Array<{tableName: string, columns: Array}>>}
+     */
+    async listTablesTypes() {
+        const tableRows = [];
+        await this.execute(
+            (r) => tableRows.push(r),
+            `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'`
+        );
+
+        const result = [];
+        for (const [tableName] of tableRows) {
+            const colRows = [];
+            await this.execute(
+                (r) => colRows.push(r),
+                `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = @table ORDER BY ORDINAL_POSITION`,
+                { table: tableName }
+            );
+            result.push({
+                tableName,
+                columns: colRows.map((c) => ({
+                    name: c[0],
+                    type: c[1],
+                    notNull: c[2] === 'NO',
+                    defaultValue: c[3],
+                    isPK: c[4] === 'PRI',
+                    isHidden: false
+                }))
+            });
+        }
+        return result;
+    }
+
+    // ── Naming ───────────────────────────────────────────────────────
+
+    /**
+     * Resolve a user table name with prefix applied.
+     *
+     * MySQL/SQLite both use `{prefix}_{name}` (no schema isolation,
+     * unlike PostgreSQL's `account_{prefix}.{name}`). Respects
+     * _prefixOverride set by withPrefix() for cross-account queries.
+     *
+     * @override
+     * @param {string} prefix - user table prefix (account hash)
+     * @param {string} name - base table name
+     * @returns {string}
+     */
+    userTable(prefix, name) {
+        const p = this._prefixOverride ?? prefix;
+        return `${p}_${name}`;
+    }
 }
 
 export { MySQLAdapter };
