@@ -676,6 +676,39 @@ class MySQLAdapter extends EngineAdapter {
     sqlEnterTime(tsColumn, msColumn) {
         return `DATE_SUB(${tsColumn}, INTERVAL (${msColumn} / 1000) SECOND)`;
     }
+
+    // ── UPSERT ───────────────────────────────────────────────────────
+
+    /**
+     * INSERT with partial ON DUPLICATE KEY UPDATE.
+     *
+     * MySQL uses `ON DUPLICATE KEY UPDATE` instead of SQLite's
+     * `ON CONFLICT(col) DO UPDATE SET`. MySQL automatically detects
+     * conflicts based on any unique key / primary key, so the
+     * `conflictColumn` parameter is not embedded in the SQL — but it's
+     * kept in the signature for interface compatibility with EngineAdapter.
+     *
+     * @override
+     * @param {string} table - target table name
+     * @param {object} insertData - all columns for INSERT
+     * @param {object} updateData - subset of columns for UPDATE on conflict
+     * @param {string} _conflictColumn - unused in MySQL SQL (auto-detected by unique key)
+     * @returns {Promise<number>}
+     */
+    upsertPartial(table, insertData, updateData, _conflictColumn) {
+        const columns = Object.keys(insertData);
+        const params = {};
+        const values = columns.map((col) => {
+            params[col] = insertData[col];
+            return `@${col}`;
+        });
+        const updateClauses = Object.keys(updateData).map((col) => {
+            params[`up_${col}`] = updateData[col];
+            return `${col} = @up_${col}`;
+        });
+        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON DUPLICATE KEY UPDATE ${updateClauses.join(', ')}`;
+        return this.executeNonQuery(sql, params);
+    }
 }
 
 export { MySQLAdapter };
