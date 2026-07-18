@@ -76,7 +76,7 @@ namespace VRCX
                 UserID = username,
                 Password = password,
                 Database = database,
-                AllowUserVariables = true,
+                AllowUserVariables = false,
                 UseAffectedRows = false,
                 SslMode = MySqlSslMode.Preferred,
                 ConnectionTimeout = 15,

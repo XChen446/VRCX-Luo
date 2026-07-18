@@ -709,6 +709,107 @@ class MySQLAdapter extends EngineAdapter {
         const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON DUPLICATE KEY UPDATE ${updateClauses.join(', ')}`;
         return this.executeNonQuery(sql, params);
     }
+
+    // ── DDL ──────────────────────────────────────────────────────────
+
+    /**
+     * Map SQLite column types to MySQL-compatible types.
+     *
+     * Key differences:
+     *   - INTEGER → INT
+     *   - TEXT with PRIMARY KEY → VARCHAR(255) (MySQL doesn't allow TEXT
+     *     as a primary key without a prefix length)
+     *
+     * @private
+     * @param {string} type - SQLite column type
+     * @param {string} [constraints] - column constraints
+     * @returns {string} MySQL-compatible type
+     */
+    _mapColumnType(type, constraints) {
+        const upper = type.toUpperCase();
+        if (upper === 'INTEGER') return 'INT';
+        if (upper === 'TEXT') {
+            if (constraints && constraints.toUpperCase().includes('PRIMARY KEY')) {
+                return 'VARCHAR(255)';
+            }
+            return 'TEXT';
+        }
+        return type;
+    }
+
+    /**
+     * CREATE TABLE IF NOT EXISTS with MySQL type mapping.
+     * @override
+     * @param {string} tableName - table name to create
+     * @param {object[]} columns - [{ name, type, constraints? }] or raw string
+     * @returns {Promise<number>}
+     */
+    createTable(tableName, columns) {
+        const colDefs = columns.map((col) => {
+            if (typeof col === 'string') return col;
+            const mappedType = this._mapColumnType(col.type, col.constraints);
+            const constraints = col.constraints ? ` ${col.constraints}` : '';
+            return `${col.name} ${mappedType}${constraints}`;
+        });
+        return this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs.join(', ')})`
+        );
+    }
+
+    /**
+     * CREATE INDEX with idempotent error handling.
+     *
+     * MySQL does NOT support `CREATE INDEX IF NOT EXISTS` (MariaDB does).
+     * For MySQL, we attempt `CREATE INDEX` and catch error 1061
+     * ("Duplicate key name") to achieve idempotency — mirroring the
+     * migration runner's error-swallowing pattern for duplicate indexes.
+     *
+     * @override
+     * @param {string} indexName - index name
+     * @param {string} table - target table name
+     * @param {string[]|string} columns - column(s) to index
+     * @param {boolean} [unique] - create UNIQUE index
+     * @returns {Promise<number>}
+     */
+    async createIndex(indexName, table, columns, unique = false) {
+        const uniqueStr = unique ? 'UNIQUE ' : '';
+        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        try {
+            return await this.executeNonQuery(
+                `CREATE ${uniqueStr}INDEX ${indexName} ON ${table} (${colStr})`
+            );
+        } catch (e) {
+            if (e && e.message && e.message.includes('Duplicate key name')) {
+                return 0;
+            }
+            throw e;
+        }
+    }
+
+    // ── Maintenance ──────────────────────────────────────────────────
+
+    /**
+     * VACUUM equivalent — MySQL InnoDB manages space reclamation
+     * automatically via its background processes. No-op to avoid
+     * per-table OPTIMIZE TABLE complexity (the migration runner
+     * treats maintenance failures as non-critical).
+     * @override
+     * @returns {Promise<number>}
+     */
+    vacuum() {
+        return Promise.resolve(0);
+    }
+
+    /**
+     * ANALYZE equivalent — MySQL InnoDB maintains index statistics
+     * automatically. No-op for now; can be enhanced to run
+     * ANALYZE TABLE on all tables if performance testing warrants it.
+     * @override
+     * @returns {Promise<number>}
+     */
+    optimize() {
+        return Promise.resolve(0);
+    }
 }
 
 export { MySQLAdapter };
