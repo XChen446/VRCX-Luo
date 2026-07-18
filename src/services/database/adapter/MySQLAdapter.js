@@ -271,6 +271,349 @@ class MySQLAdapter extends EngineAdapter {
             params
         );
     }
+
+    // ── UPDATE / DELETE ──────────────────────────────────────────────
+
+    /** @override */
+    update(table, data, where) {
+        const params = {};
+        const setClauses = Object.keys(data).map((col) => {
+            params[`set_${col}`] = data[col];
+            return `${col} = @set_${col}`;
+        });
+        const whereClauses = Object.keys(where).map((col) => {
+            params[`where_${col}`] = where[col];
+            return `${col} = @where_${col}`;
+        });
+        return this.executeNonQuery(
+            `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    /** @override */
+    updateWhere(table, data, whereClause, params = {}) {
+        const setClauses = Object.keys(data).map((col) => {
+            params[`set_${col}`] = data[col];
+            return `${col} = @set_${col}`;
+        });
+        return this.executeNonQuery(
+            `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClause}`,
+            params
+        );
+    }
+
+    /** @override */
+    delete(table, where) {
+        const params = {};
+        const clauses = Object.keys(where).map((col) => {
+            params[col] = where[col];
+            return `${col} = @${col}`;
+        });
+        return this.executeNonQuery(
+            `DELETE FROM ${table} WHERE ${clauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    /** @override */
+    deleteAll(table) {
+        return this.executeNonQuery(`DELETE FROM ${table}`);
+    }
+
+    /** @override */
+    deleteWhere(table, whereClause, params = {}) {
+        return this.executeNonQuery(
+            `DELETE FROM ${table} WHERE ${whereClause}`,
+            params
+        );
+    }
+
+    /** @override */
+    dropTable(table) {
+        return this.executeNonQuery(`DROP TABLE IF EXISTS ${table}`);
+    }
+
+    // ── SELECT ───────────────────────────────────────────────────────
+
+    /** @override */
+    async selectOne(table, columns, where) {
+        const params = {};
+        const clauses = Object.keys(where).map((col) => {
+            params[col] = where[col];
+            return `${col} = @${col}`;
+        });
+        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        let result = null;
+        await this.execute(
+            (row) => {
+                result = row;
+            },
+            `SELECT ${colStr} FROM ${table} WHERE ${clauses.join(' AND ')} LIMIT 1`,
+            params
+        );
+        return result;
+    }
+
+    /** @override */
+    async select(table, columns, where, options = {}) {
+        const { order, limit, distinct } = options;
+        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        const distinctStr = distinct ? 'DISTINCT ' : '';
+        let sql = `SELECT ${distinctStr}${colStr} FROM ${table}`;
+        const params = {};
+        if (where && Object.keys(where).length > 0) {
+            const clauses = Object.keys(where).map((col) => {
+                params[col] = where[col];
+                return `${col} = @${col}`;
+            });
+            sql += ` WHERE ${clauses.join(' AND ')}`;
+        }
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /** @override */
+    async selectWhere(table, columns, whereClause, params, options = {}) {
+        const { order, limit, distinct } = options;
+        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        const distinctStr = distinct ? 'DISTINCT ' : '';
+        let sql = `SELECT ${distinctStr}${colStr} FROM ${table}`;
+        if (whereClause) sql += ` WHERE ${whereClause}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /** @override */
+    async selectJoin(spec) {
+        const { from, alias, joins, columns, where, params, order, limit } =
+            spec;
+        let sql = `SELECT ${Array.isArray(columns) ? columns.join(', ') : columns} FROM ${from}`;
+        if (alias) sql += ` ${alias}`;
+        if (joins) {
+            for (const j of joins) {
+                sql += ` ${j.type} JOIN ${j.table}`;
+                if (j.alias) sql += ` ${j.alias}`;
+                sql += ` ON ${j.on}`;
+            }
+        }
+        if (where) sql += ` WHERE ${where}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /** @override */
+    async selectWhereIn(
+        table,
+        columns,
+        inColumn,
+        inValues,
+        extraWhere,
+        extraParams,
+        options = {}
+    ) {
+        if (!inValues || inValues.length === 0) return [];
+        const { order, limit } = options;
+        const params = { ...(extraParams || {}) };
+        const placeholders = inValues.map((v, i) => {
+            params[`in_${i}`] = v;
+            return `@in_${i}`;
+        });
+        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        let sql = `SELECT ${colStr} FROM ${table} WHERE ${inColumn} IN (${placeholders.join(', ')})`;
+        if (extraWhere) sql += ` AND ${extraWhere}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    /**
+     * UNION ALL across multiple sources with optional outer ORDER BY + LIMIT.
+     *
+     * MySQL 8.0+ supports derived tables without aliases, so the
+     * `SELECT * FROM (...)` wrapper from SQLiteAdapter works unchanged.
+     *
+     * @override
+     */
+    async selectUnion(sources, options = {}) {
+        if (!sources || sources.length === 0) return [];
+        const { schema, order, limit } = options;
+        const allParams = {};
+        const parts = sources.map((source) => {
+            const {
+                table,
+                columns,
+                nulls,
+                where,
+                params,
+                order: srcOrder,
+                limit: srcLimit
+            } = source;
+            if (params) Object.assign(allParams, params);
+            let colStr = Array.isArray(columns)
+                ? columns.join(', ')
+                : columns || '*';
+            if (nulls && nulls.length > 0) {
+                colStr +=
+                    ', ' + nulls.map((col) => `NULL AS ${col}`).join(', ');
+            }
+            let sql = `SELECT ${colStr} FROM ${table}`;
+            if (where) sql += ` WHERE ${where}`;
+            if (srcOrder) sql += ` ORDER BY ${srcOrder}`;
+            if (srcLimit) sql += ` LIMIT ${srcLimit}`;
+            return `SELECT * FROM (${sql})`;
+        });
+        const outerSchema = schema
+            ? Array.isArray(schema)
+                ? schema.join(', ')
+                : schema
+            : '*';
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        if (order) finalSql += ` ORDER BY ${order}`;
+        if (limit) finalSql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute(
+            (row) => rows.push(row),
+            finalSql,
+            allParams
+        );
+        return rows;
+    }
+
+    /** @override */
+    async selectGroupBy(table, spec) {
+        const {
+            columns,
+            aggregates,
+            groupBy,
+            where,
+            params,
+            order,
+            limit,
+            having
+        } = spec;
+        const colParts = [];
+        if (columns) {
+            colParts.push(
+                Array.isArray(columns) ? columns.join(', ') : columns
+            );
+        }
+        if (aggregates) {
+            for (const agg of aggregates) {
+                colParts.push(`${agg.expr} AS ${agg.alias}`);
+            }
+        }
+        let sql = `SELECT ${colParts.join(', ')} FROM ${table}`;
+        if (where) sql += ` WHERE ${where}`;
+        if (groupBy) {
+            sql += ` GROUP BY ${Array.isArray(groupBy) ? groupBy.join(', ') : groupBy}`;
+        }
+        if (having) sql += ` HAVING ${having}`;
+        if (order) sql += ` ORDER BY ${order}`;
+        if (limit) sql += ` LIMIT ${limit}`;
+        const rows = [];
+        await this.execute((row) => rows.push(row), sql, params);
+        return rows;
+    }
+
+    // ── COUNT ────────────────────────────────────────────────────────
+
+    /** @override */
+    async count(table, where) {
+        const params = {};
+        const clauses = Object.keys(where).map((col) => {
+            params[col] = where[col];
+            return `${col} = @${col}`;
+        });
+        let result = 0;
+        await this.execute(
+            (row) => {
+                result = row[0];
+            },
+            `SELECT COUNT(*) FROM ${table} WHERE ${clauses.join(' AND ')}`,
+            params
+        );
+        return result;
+    }
+
+    /** @override */
+    async countWhere(table, whereClause, params) {
+        let result = 0;
+        await this.execute(
+            (row) => {
+                result = row[0];
+            },
+            `SELECT COUNT(*) FROM ${table}${whereClause ? ` WHERE ${whereClause}` : ''}`,
+            params
+        );
+        return result;
+    }
+
+    // ── ALTER TABLE ──────────────────────────────────────────────────
+
+    /** @override */
+    alterTableAddColumn(table, columnDef) {
+        return this.executeNonQuery(
+            `ALTER TABLE ${table} ADD COLUMN ${columnDef}`
+        );
+    }
+
+    /** @override */
+    alterTableDropColumn(table, column) {
+        return this.executeNonQuery(
+            `ALTER TABLE ${table} DROP COLUMN ${column}`
+        );
+    }
+
+    /** @override */
+    alterTableRename(table, newName) {
+        return this.executeNonQuery(
+            `ALTER TABLE ${table} RENAME TO ${newName}`
+        );
+    }
+
+    // ── Increment ────────────────────────────────────────────────────
+
+    /** @override */
+    increment(table, column, amount, where) {
+        const params = { amount };
+        const whereClauses = Object.keys(where).map((col) => {
+            params[`where_${col}`] = where[col];
+            return `${col} = @where_${col}`;
+        });
+        return this.executeNonQuery(
+            `UPDATE ${table} SET ${column} = ${column} + @amount WHERE ${whereClauses.join(' AND ')}`,
+            params
+        );
+    }
+
+    // ── Transaction ──────────────────────────────────────────────────
+
+    /** @override */
+    begin() {
+        return this.executeNonQuery('BEGIN');
+    }
+
+    /** @override */
+    commit() {
+        return this.executeNonQuery('COMMIT');
+    }
+
+    /** @override */
+    rollback() {
+        return this.executeNonQuery('ROLLBACK');
+    }
 }
 
 export { MySQLAdapter };
