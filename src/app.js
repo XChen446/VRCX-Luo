@@ -14,6 +14,17 @@ import { initAccountHubWatcher } from './services/accountHub.js';
 
 import App from './App.vue';
 
+// The DB adapter singleton is initialised by `initInteropApi()` in
+// `src/plugins/interopApi.js`, which reads `VRCX_Database.mode` from
+// VRCXStorage once and calls `initAdapter(mode)`. That runs before
+// `configRepository.init()` and before any module that touches the
+// database, so by the time `app.js` executes, the singleton is already
+// bound to the right engine (sqlite / postgresql / mysql). `app.js`
+// no longer calls `initAdapter()` itself — the previous top-level
+// `await initAdapter()` was parameterless and read VRCXStorage at
+// module load, which competed with the interopApi call and read the
+// same global twice. Centralising the call in interopApi keeps engine
+// detection in one place and matches the MySQL branch's contract.
 await initPlugins();
 await initPiniaPlugins();
 
