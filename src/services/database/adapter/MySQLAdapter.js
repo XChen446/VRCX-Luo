@@ -23,6 +23,11 @@ class MySQLAdapter extends EngineAdapter {
     /** @type {string|null} */
     connectionString = null;
 
+    /** @override */
+    get engineType() {
+        return 'mysql';
+    }
+
     /**
      * @param {object} [config]
      * @param {string} [config.connection] - mysql:// URI 或原始连接字符串
@@ -844,7 +849,7 @@ class MySQLAdapter extends EngineAdapter {
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), type VARCHAR(255), location TEXT, world_name TEXT, time INT, group_name TEXT)`
         );
         await this.createIndex(
-            `${this.userTable(prefix, 'feed_online_offline')}_user_created_idx`,
+            'idx_user_created',
             this.userTable(prefix, 'feed_online_offline'),
             ['user_id', 'created_at']
         );
@@ -855,12 +860,12 @@ class MySQLAdapter extends EngineAdapter {
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INT AUTO_INCREMENT PRIMARY KEY, user_id VARCHAR(255) NOT NULL, start_at INT NOT NULL, end_at INT NOT NULL, is_open_tail INT NOT NULL DEFAULT 0, source_revision VARCHAR(255) NOT NULL DEFAULT '')`
         );
         await this.createIndex(
-            `${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx`,
+            'idx_user_start',
             this.userTable(prefix, 'activity_sessions_v2'),
             ['user_id', 'start_at']
         );
         await this.createIndex(
-            `${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx`,
+            'idx_user_end',
             this.userTable(prefix, 'activity_sessions_v2'),
             ['user_id', 'end_at']
         );
@@ -874,7 +879,7 @@ class MySQLAdapter extends EngineAdapter {
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), type VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), previous_display_name VARCHAR(255), trust_level VARCHAR(255), previous_trust_level VARCHAR(255), friend_number INT)`
         );
         await this.createIndex(
-            `${this.userTable(prefix, 'friend_log_history')}_user_id_idx`,
+            'idx_user_id',
             this.userTable(prefix, 'friend_log_history'),
             ['user_id']
         );

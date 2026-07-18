@@ -13,7 +13,7 @@
  * - 拓扑依赖排序
  */
 
-import { adapter, SQLiteAdapter, MySQLAdapter } from '../adapter/index.js';
+import { adapter } from '../adapter/index.js';
 import configRepository from '../../config.js';
 
 /**
@@ -206,16 +206,14 @@ function validateDatabaseField(database) {
 /**
  * 获取当前数据库引擎类型。
  *
- * 通过检查 adapter 实例类型推断引擎，而非直接读取 VRCXStorage
- * （VRCXStorage.Get 在 Electron 上是异步的，而此函数需要同步返回）。
- * initAdapter() 在 interopApi.js 中已先于 runMigrations 调用，
- * 因此 adapter 类型在此处已确定。
+ * 读取 adapter.engineType 属性（由各适配器子类覆盖），而非直接
+ * 读取 VRCXStorage（异步）或 instanceof 检查（需要导入适配器类，
+ * 与 vitest mock 不兼容）。initAdapter() 在 interopApi.js 中已先于
+ * runMigrations 调用，因此 adapter 类型在此处已确定。
  * @returns {string} 引擎类型标识 ('sqlite' | 'mysql')
  */
 function getDatabaseEngine() {
-    if (adapter instanceof MySQLAdapter) return 'mysql';
-    if (adapter instanceof SQLiteAdapter) return 'sqlite';
-    return 'sqlite';
+    return adapter?.engineType || 'sqlite';
 }
 
 /**
