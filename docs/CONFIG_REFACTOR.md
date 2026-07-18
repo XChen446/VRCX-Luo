@@ -91,14 +91,14 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 
 ## Name 字段验证规则
 
-`SQLite.Init()` 与 `AppApi.ResolveDatabaseName`（JS 桥接）均委托至 `ValidateAndCanonicalizeDatabasePath`（集中式验证器，单一审计点）。验证器依次执行：null 字节拒绝（H-1）→ Trim/null-safe → `ResolveDatabasePath` 分派 → `Path.GetFullPath` 规范化 → boundary 检查（C-1）→ `ValidateDatabaseFile` 文件级检查。
+`SQLite.Init()` 与 `AppApi.ResolveDatabaseName`（JS 桥接）均委托至 `ValidateAndCanonicalizeDatabasePath`（集中式验证器，单一审计点）。验证器依次执行：null 字节拒绝（H-1）→ Trim/null-safe → `ResolveDatabasePath` 分派 → boundary 检查（C-1，按路径类型分两支：含分隔符分支先 `Path.IsPathRooted` 检查拒绝非绝对路径，再 `Path.GetFullPath` 规范化；纯文件名分支 `Path.GetFullPath` 规范化后 `StartsWith(AppData)` 检查）→ `ValidateDatabaseFile` 文件级检查。
 
 | # | 检查项 | 处理 | 状态 |
 |---|---|---|---|
 | 0 | `name` 含 `\0`（null 字节） | `InvalidOperationException`（在任何字符串处理前拒绝，H-1 主门） | 新增 |
 | 1 | `name` 首尾空白 | `name?.Trim() ?? string.Empty`（null-safe，移入 `ValidateAndCanonicalizeDatabasePath`） | 修订（原：`Trim()` 净化） |
 | 2 | 后缀不是 `.db` / `.db3` / `.sqlite3`（大小写不敏感） | `InvalidOperationException` | 保留 |
-| 3 | 文件（名）中含有 `:`（ADS / 明显填错） | `InvalidOperationException` | 保留 |
+| 3 | 文件名部分（`Path.GetFileName`）含有 `:`（Windows ADS / 明显填错）— 不检查路径中的驱动器号冒号 | `InvalidOperationException` | 保留 |
 | 4 | 文件名（不含后缀）是保留设备名（`CON` `PRN` `AUX` `NUL` `COM*` `LPT*`） | `InvalidOperationException` | 保留 |
 | 4b | 纯文件名解析后逃逸 `AppDataDirectory` / 含分隔符但非绝对路径 | `InvalidOperationException`（C-1 boundary check，必须在 `GetFullPath` 前检查 `IsPathRooted`） | 新增 |
 | 4c | 路径含 `"` | `InvalidOperationException`（防 Data Source 引号注入，Linux 跨平台，H-4） | 新增 |
@@ -208,7 +208,7 @@ VRCX_Database.location (旧版 nested) →  VRCX_Database.name
 | NAME-4 | 父目录不存在时 `Init` 递归创建，不报错 |
 | MIG-1 | `VRCX_DatabaseLocation` → `VRCX_Database.name` |
 | MIG-2 | `VRCX_Database.location` → `VRCX_Database.name` |
-| C-1 | `ValidateAndCanonicalizeDatabasePath` 用 `Path.GetFullPath` 规范化后做 boundary 检查（两分支：纯文件名 `StartsWith(AppData)` / 含分隔符 `IsPathRooted`）— `IsPathRooted` 必须在 `GetFullPath` 前检查 |
+| C-1 | `ValidateAndCanonicalizeDatabasePath` 按路径类型做 boundary 检查：纯文件名在 `Path.GetFullPath` 规范化后检查 `StartsWith(AppData)`；含分隔符的路径必须在 `Path.GetFullPath` **前**检查 `Path.IsPathRooted`（否则规范化后始终为 true，检查失效） |
 | C-2 | `ValidateAndCanonicalizeDatabasePath` 是路径解析的单一审计点，`Init()` 与 `AppApi.ResolveDatabaseName` 均委托 |
 | H-1 | `name` 含 `\0` 在任何字符串处理前拒绝（`ValidateAndCanonicalizeDatabasePath` 步骤 0 主门 + `ValidateDatabaseFile` 步骤 0 defense-in-depth + `ForbiddenPragmaChars` 含 `\0`） |
 | H-3 | PRAGMA 注入防护由 `SanitizePragmaValue` 三层防御实现（见 SEC-3a/3b/3c） |

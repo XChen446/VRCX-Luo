@@ -82,7 +82,7 @@
 
 ```js
 import { describe } from 'vitest';
-import { runAdapterContractTests } from '../../../../test/contract/adapter-contract.js';
+import { runAdapterContractTests } from '../../../../../test/contract/adapter-contract.js';
 
 describe('EngineAdapter contract — MySQLAdapter', () => {
     runAdapterContractTests(() => new MySQLAdapter(...), 'MySQLAdapter');
