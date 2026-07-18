@@ -810,6 +810,111 @@ class MySQLAdapter extends EngineAdapter {
     optimize() {
         return Promise.resolve(0);
     }
+
+    // ── Schema initialization ────────────────────────────────────────
+
+    /**
+     * Create all user-specific tables for the given prefix.
+     *
+     * MySQL DDL differences from SQLite:
+     *   - INTEGER PRIMARY KEY → INT AUTO_INCREMENT PRIMARY KEY
+     *   - TEXT PRIMARY KEY → VARCHAR(255) PRIMARY KEY (MySQL disallows TEXT as PK)
+     *   - Composite PK on TEXT columns → VARCHAR(255) (index prefix requirement)
+     *   - Indexed TEXT columns → VARCHAR(255) (MySQL requires key length for TEXT)
+     *   - CREATE INDEX IF NOT EXISTS → this.createIndex() (idempotent via error catch)
+     *
+     * @override
+     * @param {string} prefix - user table prefix
+     * @returns {Promise<void>}
+     */
+    async initUserSchema(prefix) {
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), location TEXT, world_name TEXT, previous_location TEXT, time INT, group_name TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_status')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), bio TEXT, previous_bio TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), owner_id VARCHAR(255), avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), type VARCHAR(255), location TEXT, world_name TEXT, time INT, group_name TEXT)`
+        );
+        await this.createIndex(
+            `${this.userTable(prefix, 'feed_online_offline')}_user_created_idx`,
+            this.userTable(prefix, 'feed_online_offline'),
+            ['user_id', 'created_at']
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id VARCHAR(255) PRIMARY KEY, updated_at VARCHAR(255) NOT NULL DEFAULT '', is_self INT NOT NULL DEFAULT 0, source_last_created_at VARCHAR(255) NOT NULL DEFAULT '', pending_session_start_at INT, cached_range_days INT NOT NULL DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sessions_v2')} (session_id INT AUTO_INCREMENT PRIMARY KEY, user_id VARCHAR(255) NOT NULL, start_at INT NOT NULL, end_at INT NOT NULL, is_open_tail INT NOT NULL DEFAULT 0, source_revision VARCHAR(255) NOT NULL DEFAULT '')`
+        );
+        await this.createIndex(
+            `${this.userTable(prefix, 'activity_sessions_v2')}_user_start_idx`,
+            this.userTable(prefix, 'activity_sessions_v2'),
+            ['user_id', 'start_at']
+        );
+        await this.createIndex(
+            `${this.userTable(prefix, 'activity_sessions_v2')}_user_end_idx`,
+            this.userTable(prefix, 'activity_sessions_v2'),
+            ['user_id', 'end_at']
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id VARCHAR(255) NOT NULL, target_user_id VARCHAR(255) NOT NULL DEFAULT '', range_days INT NOT NULL, view_kind VARCHAR(255) NOT NULL, exclude_key VARCHAR(255) NOT NULL DEFAULT '', bucket_version INT NOT NULL DEFAULT 1, raw_buckets_json LONGTEXT NOT NULL, normalized_buckets_json LONGTEXT NOT NULL, built_from_cursor VARCHAR(255) NOT NULL DEFAULT '', summary_json LONGTEXT NOT NULL, built_at VARCHAR(255) NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id VARCHAR(255) PRIMARY KEY, display_name VARCHAR(255), trust_level VARCHAR(255), friend_number INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_history')} (id INT AUTO_INCREMENT PRIMARY KEY, created_at VARCHAR(255), type VARCHAR(255), user_id VARCHAR(255), display_name VARCHAR(255), previous_display_name VARCHAR(255), trust_level VARCHAR(255), previous_trust_level VARCHAR(255), friend_number INT)`
+        );
+        await this.createIndex(
+            `${this.userTable(prefix, 'friend_log_history')}_user_id_idx`,
+            this.userTable(prefix, 'friend_log_history'),
+            ['user_id']
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications')} (id VARCHAR(255) PRIMARY KEY, created_at VARCHAR(255), type VARCHAR(255), sender_user_id VARCHAR(255), sender_username VARCHAR(255), receiver_user_id VARCHAR(255), message TEXT, world_id VARCHAR(255), world_name TEXT, image_url TEXT, invite_message TEXT, request_message TEXT, response_message TEXT, expired INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notifications_v2')} (id VARCHAR(255) PRIMARY KEY, created_at VARCHAR(255), updated_at VARCHAR(255), expires_at VARCHAR(255), type VARCHAR(255), link TEXT, link_text TEXT, message TEXT, title TEXT, image_url TEXT, seen INT, sender_user_id VARCHAR(255), sender_username VARCHAR(255), data LONGTEXT, responses LONGTEXT, details LONGTEXT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'moderation')} (user_id VARCHAR(255) PRIMARY KEY, updated_at VARCHAR(255), display_name VARCHAR(255), block INT, mute INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'avatar_history')} (avatar_id VARCHAR(255) PRIMARY KEY, created_at VARCHAR(255), time INT)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'notes')} (user_id VARCHAR(255) PRIMARY KEY, display_name VARCHAR(255), note TEXT, created_at VARCHAR(255))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends')} (friend_id VARCHAR(255) PRIMARY KEY)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links')} (friend_id VARCHAR(255) NOT NULL, mutual_id VARCHAR(255) NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_links_old')} (friend_id VARCHAR(255) NOT NULL, mutual_id VARCHAR(255) NOT NULL, date VARCHAR(255) NOT NULL, PRIMARY KEY(friend_id, mutual_id))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_friends_old')} (friend_id VARCHAR(255) PRIMARY KEY, last_updated VARCHAR(255) NOT NULL)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'mutual_graph_meta')} (friend_id VARCHAR(255) PRIMARY KEY, last_fetched_at VARCHAR(255), opted_out INT DEFAULT 0)`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'tracked_nonfriends')} (user_id VARCHAR(255) PRIMARY KEY, display_name VARCHAR(255), added_at VARCHAR(255))`
+        );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'manual_relations_MANUEL')} (user_id_a VARCHAR(255) NOT NULL, user_id_b VARCHAR(255) NOT NULL, relation_type VARCHAR(255) NOT NULL DEFAULT 'friend', added_at VARCHAR(255), PRIMARY KEY(user_id_a, user_id_b))`
+        );
+    }
 }
 
 export { MySQLAdapter };
