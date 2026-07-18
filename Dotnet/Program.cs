@@ -238,9 +238,14 @@ namespace VRCX
             logger.Debug("Wine detection: {0}", Wine.GetIfWine());
 
             IPCServer.Instance.Init();
-            if (VRCXStorage.Instance.Get("VRCX_Database.mode") == "sqlite")
+            var databaseMode = VRCXStorage.Instance.Get("VRCX_Database.mode");
+            if (databaseMode == "sqlite")
             {
                 SQLite.Instance.Init();
+            }
+            else if (databaseMode == "mysql")
+            {
+                MySQL.Instance.Init();
             }
             AppApiInstance = new AppApiCef();
 
@@ -264,6 +269,7 @@ namespace VRCX
             Discord.Instance.Exit();
             VRCXStorage.Instance.Save();
             SQLite.Instance.Exit();
+            MySQL.Instance.Exit();
             ProcessMonitor.Instance.Exit();
         }
 #else
