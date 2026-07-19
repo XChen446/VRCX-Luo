@@ -53,9 +53,11 @@ jobs:
           dotnet format style --no-restore --verify-no-changes
 
   # Phase 9 slice S12 (task 9.15): PostgreSQL 16/17 integration test matrix.
-  # Runs `*.pgsql.test.js` against a PG service container. Tests self-skip
-  # when PG_TEST_HOST is unset, so this job is the only place they actually
-  # execute. See docs/PHASE9_PGSQL_DESIGN.md §7.5 / §10.2 S12 for design.
+  # Uses ikalnytskyi/action-setup-postgres to provision PG on the runner
+  # (supports Linux/macOS/Windows, no Docker service container needed).
+  # Tests self-skip when PG_TEST_HOST is unset, so this job is the only
+  # place `*.pgsql.test.js` actually executes.
+  # Ref: https://github.com/marketplace/actions/setup-postgresql-for-linux-macos-windows
   test_pgsql:
     name: PgSQL Integration (PG ${{ matrix.pg.version }})
     runs-on: ubuntu-latest
@@ -63,43 +65,36 @@ jobs:
       fail-fast: false
       matrix:
         pg:
-          - { image: postgres:16, version: "16" }
-          - { image: postgres:17, version: "17" }
-    services:
-      postgres:
-        image: ${{ matrix.pg.image }}
-        env:
-          POSTGRES_PASSWORD: vrcx
-          POSTGRES_USER: vrcx
-          POSTGRES_DB: vrcx
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      PG_TEST_HOST: localhost
-      PG_TEST_PORT: 5432
-      PG_TEST_USER: vrcx
-      PG_TEST_PASSWORD: vrcx
-      PG_TEST_DB: vrcx
-      PG_TEST_VERSION: ${{ matrix.pg.version }}
+          - { version: "16" }
+          - { version: "17" }
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      # Pin to v8 tag SHA (c4dda34, 2025-10-10) for supply-chain safety.
+      # Bump by updating SHA + tag comment after reviewing upstream release notes.
+      - name: Setup PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@c4dda34aae1c821e3a771b68b73b13af3198a7ee # v8
+        id: postgres
+        with:
+          postgres-version: ${{ matrix.pg.version }}
+          username: vrcx
+          password: vrcx
+          database: vrcx
+          port: 5432
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Wait for PostgreSQL
-        run: |
-          for i in {1..30}; do
-            if pg_isready -h localhost -p 5432 -U vrcx; then break; fi
-            sleep 2
-          done
       - name: Run PgSQL integration tests
         run: npm test -- --run --include '**/*.pgsql.test.js'
+        env:
+          PG_TEST_HOST: localhost
+          PG_TEST_PORT: 5432
+          PG_TEST_USER: vrcx
+          PG_TEST_PASSWORD: vrcx
+          PG_TEST_DB: vrcx
+          PG_TEST_VERSION: ${{ matrix.pg.version }}
+          # PGSERVICE enables psql/libpq clients to connect without explicit URI.
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}

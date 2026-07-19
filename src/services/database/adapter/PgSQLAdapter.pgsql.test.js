@@ -6,14 +6,15 @@ import { describe, it, expect } from 'vitest';
  * Gated on `PG_TEST_HOST` so it stays inert under the default `npm test`
  * (SQLite mode) suite. The CI workflow `.github/workflows/ci.yaml`
  * `test_pgsql` job sets the env var and runs `*.pgsql.test.js` against a
- * PostgreSQL 16 / 17 service container.
+ * PostgreSQL 16 / 17 instance provisioned by `ikalnytskyi/action-setup-postgres`.
  *
  * Run locally:
- *   docker compose -f docker-compose.pgsql.yml up -d
+ *   docker run -d --name vrcx-pg -e POSTGRES_PASSWORD=vrcx -e POSTGRES_USER=vrcx \
+ *     -e POSTGRES_DB=vrcx -p 5432:5432 postgres:16
  *   PG_TEST_HOST=localhost npm test -- --run PgSQLAdapter.pgsql
  *
  * No `pg` driver dependency: uses Node's built-in `node:net` to probe TCP
- * reachability of the PG container. Full adapter integration tests
+ * reachability of the PG instance. Full adapter integration tests
  * (initUserSchema / listTables / CRUD / migration parity) will be added in
  * follow-up slices.
  */

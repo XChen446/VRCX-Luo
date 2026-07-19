@@ -34,8 +34,8 @@
 | **9.12** | `migrations/index.js` 硬编码 SQL 片段按引擎分发 | §4.5 迁移运行器兼容性(D1+D2) |
 | **9.13** | 数据搬迁管道支持 SQLite → PgSQL 引擎间转换 | §6.2 搬迁管道设计 |
 | **9.14** | 连接健康检查与状态暴露(`isConnected()`/`getHealth()`) | §4.1 健康检查扩展 + §4.2 C# 端 |
-| **9.15** | GitHub Actions 添加 PostgreSQL 16/17 service container | §7.5 CI 配置 |
-| **9.16** | 编写 `docker-compose.pgsql.yml` 本地开发配置 | §7.6 docker-compose |
+| **9.15** | GitHub Actions 添加 PostgreSQL 16/17 集成测试 | §7.5 CI 配置(`action-setup-postgres`,采纳 review 后修订) |
+| **9.16** | ~~编写 `docker-compose.pgsql.yml` 本地开发配置~~ **降级**(PR #7 review 采纳):docker-compose 移除,本地开发用 `docker run postgres:16` 一行启动 | §7.6 本地开发 PG 容器 |
 
 **配套横切**(不在 9.2-9.16 编号内但为前置必要工作,归入对应切片):
 - C#→JS 桥注册 4 处缺口(Context Brief H)→ 归入切片 9.2
@@ -113,9 +113,10 @@
 | 文件路径 | 用途 | 任务 |
 |----------|------|------|
 | `src/services/database/adapter/PgSQLAdapter.js` | PgSQL 方言适配器(继承 EngineAdapter,实现 42+3 方法 + `_bind` + `dropUserSchema` + `isConnected`/`getHealth` 扩展) | 9.3-9.9, 9.11, 9.14 |
-| `docker-compose.pgsql.yml`(仓库根) | 本地开发 PgSQL 容器(PG 16/17) | 9.16 |
-| `.github/workflows/` 下新增或扩展 CI workflow(或扩展现有 workflow 加 pg service) | CI 集成测试 PG matrix | 9.15 |
+| `.github/workflows/ci.yaml`(扩展 test_pgsql job) | CI 集成测试 PG matrix,使用 `ikalnytskyi/action-setup-postgres` action | 9.15 |
 | `test/contract/adapter-contract.pgsql.js`(或扩展现有契约,见 §7.2) | PgSQL 镜像契约测试 wrapper | 9.3/10.3 |
+
+> **9.16 docker-compose.pgsql.yml 已移除**(PR #7 review 采纳,2026-07-19):CI 改用 `action-setup-postgres` 不依赖 docker-compose;本地开发用 `docker run postgres:16` 一行启动(见 §7.6)。
 
 ### 3.2 修改文件
 
@@ -879,65 +880,60 @@ globalThis.PostgreSQL = new Proxy({}, { get: () => noopAsync });
 - 执行 §6.2 搬迁流程,校验行数 + 抽样
 - **需新增**:`migrateEngine.test.js`,skip 若无 PG 容器(`describe.skipIf(!process.env.PG_TEST_HOST)`)
 
-### 7.5 CI service container(task 9.15)
+### 7.5 CI PostgreSQL setup(task 9.15,采纳 review 后修订)
 
-**GitHub Actions workflow** 扩展(或新增 matrix):
+**GitHub Actions workflow** 使用 [`ikalnytskyi/action-setup-postgres`](https://github.com/marketplace/actions/setup-postgresql-for-linux-macos-windows) 在 runner 上直接 provision PG(支持 Linux/macOS/Windows,无需 Docker service container):
 ```yaml
-services:
-  postgres:
-    image: postgres:16   # matrix: [16, 17]
-    env:
-      POSTGRES_PASSWORD: vrcx
-      POSTGRES_USER: vrcx
-      POSTGRES_DB: vrcx
-    ports:
-      - 5432:5432
-    options: >-
-      --health-cmd pg_isready
-      --health-interval 10s
-      --health-timeout 5s
-      --health-retries 5
-
 jobs:
-  test-pgsql:
+  test_pgsql:
     runs-on: ubuntu-latest
-    env:
-      PG_TEST_HOST: localhost
-      PG_TEST_PORT: 5432
-      PG_TEST_USER: vrcx
-      PG_TEST_PASSWORD: vrcx
-      PG_TEST_DB: vrcx
+    strategy:
+      fail-fast: false
+      matrix:
+        pg:
+          - { version: "16" }
+          - { version: "17" }
     steps:
       - checkout
+      - name: Setup PostgreSQL
+        uses: ikalnytskyi/action-setup-postgres@c4dda34aae1c821e3a771b68b73b13af3198a7ee # v8
+        id: postgres
+        with:
+          postgres-version: ${{ matrix.pg.version }}
+          username: vrcx
+          password: vrcx
+          database: vrcx
+          port: 5432
       - setup-node 24
       - npm ci
-      - npm run test -- --include '**/*.pgsql.test.js'
+      - name: Run PgSQL integration tests
+        run: npm test -- --include '**/*.pgsql.test.js'
+        env:
+          PG_TEST_HOST: localhost
+          PG_TEST_PORT: 5432
+          PG_TEST_USER: vrcx
+          PG_TEST_PASSWORD: vrcx
+          PG_TEST_DB: vrcx
+          PG_TEST_VERSION: ${{ matrix.pg.version }}
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
 ```
 
-### 7.6 docker-compose.pgsql.yml(task 9.16)
+**修订理由**(2026-07-19 PR #7 review 采纳):
+- service container 模式仅支持 Linux runner,`action-setup-postgres` 支持 Linux/macOS/Windows 三平台
+- 无需 Docker,runner 启动更快
+- action 经 GitHub Marketplace 审核,可用 SHA pin 防供应链攻击
+- 移除独立的 docker-compose 文件(开发阶段过渡工具,长期保留意义不大;开发者本地需 PG 可 `docker run postgres:16` 一行启动)
 
-```yaml
-version: '3.8'
-services:
-  postgres:
-    image: postgres:16
-    environment:
-      POSTGRES_PASSWORD: vrcx
-      POSTGRES_USER: vrcx
-      POSTGRES_DB: vrcx
-    ports:
-      - "5432:5432"
-    volumes:
-      - vrcx-pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "vrcx"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+### 7.6 本地开发 PG 容器(task 9.16,采纳 review 后降级)
 
-volumes:
-  vrcx-pgdata:
+**原设计** `docker-compose.pgsql.yml` 经 PR #7 review 后**移除**。开发者本地需要 PG 16/17 时,直接使用:
+```bash
+docker run -d --name vrcx-pg -e POSTGRES_PASSWORD=vrcx -e POSTGRES_USER=vrcx -e POSTGRES_DB=vrcx -p 5432:5432 postgres:16
+# 或 PG 17:postgres:17
+pg_isready -h localhost -p 5432 -U vrcx
 ```
+
+CI 不依赖 docker-compose(改用 §7.5 的 `action-setup-postgres`),仓库内不保留 compose 文件。
 
 ### 7.7 测试基础设施缺口:Node 无内置 PG
 
@@ -951,7 +947,7 @@ volumes:
 
 **Phase 9 最小方案**:
 - **纯单元测试**(_bind、_mapColumnType、userTable、SQL fragments、_stripWildcardPrefix):不需 PG,直接断言字符串输出。用 vitest 默认环境。
-- **集成测试**(initUserSchema/listTables/CRUD 语义/搬迁):用真实 PG 容器(CI service + docker-compose),`describe.skipIf(!process.env.PG_TEST_HOST)` 跳过无容器环境。
+- **集成测试**(initUserSchema/listTables/CRUD 语义/搬迁):用真实 PG(CI 由 `action-setup-postgres` action provision,本地用 `docker run postgres:16`),`describe.skipIf(!process.env.PG_TEST_HOST)` 跳过无 PG 环境。
 - **不用 pg-mem**:避免引入新依赖 + 兼容性陷阱。_bind 等纯逻辑用单元测试覆盖,DDL/语义用真实 PG 覆盖。
 
 ---
@@ -1008,7 +1004,7 @@ volumes:
                      │
        ┌─────────────┼─────────────┬────────────┐
        ▼             ▼             ▼            ▼
-      9.4          9.5           9.6          (9.16 docker, 可并行)
+       9.4          9.5           9.6          (9.16 已降级, 可并行)
    (方言:insert   (SQL           (userTable
     /upsert/类型)  fragments)     schema 隔离)
        │             │             │
@@ -1133,16 +1129,16 @@ volumes:
 - **残留风险**:无
 - **依赖**:S1(可与 S1 部分合并)
 
-#### 切片 S11 — task 9.16(docker-compose)
-- **任务**:9.16 docker-compose.pgsql.yml(PG 16/17)
-- **改动文件**:`docker-compose.pgsql.yml`(新建)
-- **验证证据**:`docker-compose -f docker-compose.pgsql.yml up` 启动 PG,pg_isready 通过
+#### 切片 S11 — task 9.16(本地 PG 容器,采纳 review 后降级)
+- **任务**:9.16 原设计 docker-compose.pgsql.yml,经 PR #7 review 后**移除**;开发者本地需 PG 用 `docker run -d --name vrcx-pg -e POSTGRES_PASSWORD=vrcx -e POSTGRES_USER=vrcx -e POSTGRES_DB=vrcx -p 5432:5432 postgres:16` 一行启动
+- **改动文件**:无(原 `docker-compose.pgsql.yml` 已删除)
+- **验证证据**:`docker run postgres:16` + `pg_isready -h localhost -p 5432 -U vrcx` 通过
 - **残留风险**:无
 - **依赖**:无(可与 S2 并行)
 
-#### 切片 S12 — task 9.15(CI PG container)
-- **任务**:9.15 GitHub Actions PG 16/17 service container + 集成测试矩阵
-- **改动文件**:`.github/workflows/*.yml`(扩展或新增)
+#### 切片 S12 — task 9.15(CI PG setup via action)
+- **任务**:9.15 GitHub Actions PG 16/17 集成测试矩阵,使用 `ikalnytskyi/action-setup-postgres@c4dda34` action(支持 Linux/macOS/Windows,无需 Docker service container)
+- **改动文件**:`.github/workflows/ci.yaml`(扩展 test_pgsql job)
 - **验证证据**:CI 在 PG 16/17 上跑集成测试(S4/S5/S8/S9)全绿
 - **残留风险**:无
 - **依赖**:S2-S10(集成测试就绪)
@@ -1184,8 +1180,8 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 | **9.12** | ① `getDatabaseEngine()` 运行时读 mode(非硬编码);② `checkDatabaseCompatibility` 对非 sqlite + `database.after:'sqlite'` 返回 skip;③ 调度入口处理 skip(continue + warn);④ 集成测试:PgSQL 首次 runMigrations,v16 跳过(INV-04),checkpoint 记录 LATEST;⑤ **R13 已缓解:无需补加任何 .map 引擎锁(全仓 .map 锁已覆盖,空集 ∅)** |
 | **9.13** | ① 搬迁管道 `migrateSqliteToPgsql(srcConnStr, dstConfig)` 存在;② 集成测试:SQLite 内存库 20 全局表 + 50 用户表搬到 PG,行数一致 + 抽样校验 + 时间戳范围校验;③ 分批 bulkInsert 无 PG 参数超限;④ **R6 已缓解:activity_sessions_v2 用 GENERATED BY DEFAULT,搬迁管道直接 copyTableData 即可**;⑤ **UI 入口(已确定)**:AdvancedTab 新增"数据库引擎"组,含模式选择 + 连接字段 + 测试连接 + 迁移并切换按钮,进度复用 DatabaseUpgradeDialog |
 | **9.14** | ① `adapter.isConnected()` 返回 boolean;② `adapter.getHealth()` 返回 `{connected, poolStats, latencyMs}`;③ C# `Ping()` 执行 `SELECT 1` 探活;④ 集成测试:断开 PG 后 isConnected()=false |
-| **9.15** | ① CI workflow 含 postgres:16 + postgres:17 matrix;② service container healthcheck 就绪;③ CI 在 PG 16/17 上跑集成测试(S4/S5/S8/S9)全绿;④ `npm run test` 在 CI PG 环境通过 |
-| **9.16** | ① `docker-compose.pgsql.yml` 存在;② `docker-compose -f docker-compose.pgsql.yml up` 启动 PG 16,pg_isready 通过;③ volume 持久化配置;④ healthcheck 配置 |
+| **9.15** | ① CI workflow 含 PG 16 + PG 17 matrix;② 使用 `ikalnytskyi/action-setup-postgres` action(无需 service container);③ CI 在 PG 16/17 上跑集成测试(S4/S5/S8/S9)全绿;④ `npm run test` 在 CI PG 环境通过 |
+| **9.16** | **降级**(PR #7 review 采纳):① `docker-compose.pgsql.yml` 已移除;② 开发者本地用 `docker run postgres:16` + `pg_isready` 验证可连接;③ CI 不依赖 docker-compose(改用 action) |
 
 ### 11.2 整体验收门槛
 
@@ -1229,7 +1225,7 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 8. **接口冻结**:EngineAdapter 42+3 不改;PgSQL 扩展(dropUserSchema/isConnected/getHealth)不入基类。
 9. **桥注册 4 处**:JavascriptBindings.cs L13 后,main.js L121-124,Program.cs L241-244,vitest.setup.js L18 后。
 10. **切片顺序**:S1(9.2)→S2(9.3+9.4+9.5)→S3(9.6)→S4(9.7+9.8)→S5(9.9)→S6(9.11)→S7(9.10)→S8(9.12)→S9(9.13+UI)→S10(9.14)→S12(9.15),S11(9.16)并行。
-11. **测试**:纯单元测试(_bind/映射/fragment,不需 PG)+ 真实 PG 容器集成测试(CI service + docker-compose),不用 pg-mem。
+11. **测试**:纯单元测试(_bind/映射/fragment,不需 PG)+ 真实 PG 集成测试(CI 由 `action-setup-postgres` action provision,本地 `docker run postgres:16`),不用 pg-mem。**docker-compose.pgsql.yml 经 PR #7 review 移除**(2026-07-19)。
 12. **关键风险(v1.1 更新)**:R1(_bind 边界,已由正则解决)、R5(sqlEnterTime 格式,**已确认必须用 to_char 修正**)、R6(AUTOINCREMENT 搬迁,**已缓解改 BY DEFAULT**)、R12(insert replace,**已落实分层方案,风险降为低**)、R14(dropUserSchema 接入,**待产品决策**)。R4(getTableColumns)**已关闭**(无生产调用方)、R13(其他 .map SQLite 特有 SQL)**已缓解**(全仓 .map 锁已覆盖,空集 ∅)。
 13. **v1.1 核实新增 — insert replace 分层(§4.1.5)**:PgSQLAdapter 维护 `table→PK columns` 元数据(建表时填充),`conflict='replace'` 默认路径生成 `ON CONFLICT (pk) DO UPDATE SET ${非pk=EXCLUDED.非pk}`(覆盖 23 处真 replace),降级路径 `DO NOTHING`+warn(覆盖 4 处自增 PK,等价 SQLite)。
 14. **v1.1 核实新增 — 搬迁 UI(§6.2/§10.2 S9)**:必须新建,入口放 AdvancedTab.vue L177 后新增"数据库引擎"组(模式 Select + host/port/username/password/name Input + 测试连接 Button + 迁移并切换 Button),进度复用 DatabaseUpgradeDialog,搬迁模块新建 `src/services/database/migrateEngine.js`。首次切引擎引导对话框留作后续。
