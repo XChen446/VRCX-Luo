@@ -118,6 +118,30 @@ interopApi.getDotNetObject('ProgramElectron').PreInit(version, args);
 interopApi.getDotNetObject('VRCXStorage').Load();
 interopApi.getDotNetObject('ProgramElectron').Init();
 var mode = interopApi.getDotNetObject('VRCXStorage').Get('VRCX_Database.mode');
+if (!mode)
+{
+    // 主配置缺失 VRCX_Database.mode,优先从 .bak 恢复(对应 Phase 0.4 Backup 机制)。
+    // 决策 #1:.bak 恢复后不在 Init 阶段写回主配置,延迟到主账号登录成功后再回写
+    //         (与 .bak 生成/使用的"登录成功才持久化"语义一致)。
+    // 决策 #4:仅针对关键配置项 VRCX_Database.mode 检测 .bak 恢复。
+    try
+    {
+        var bakJson = interopApi.getDotNetObject('VRCXStorage').GetBackup();
+        if (bakJson && bakJson !== '{}')
+        {
+            var bak = JSON.parse(bakJson);
+            if (bak['VRCX_Database.mode'])
+            {
+                mode = bak['VRCX_Database.mode'];
+                console.warn('[bootstrap] VRCX_Database.mode recovered from .bak (deferred write-back until primary login):', mode);
+            }
+        }
+    }
+    catch (e)
+    {
+        console.warn('[bootstrap] Failed to parse .bak for VRCX_Database.mode, will fall back to fresh init:', e && e.message);
+    }
+}
 if (mode === 'sqlite')
 {
     interopApi.getDotNetObject('SQLite').Init();
@@ -128,11 +152,9 @@ else if (mode === 'postgresql')
 }
 else
 {
-    // Fallback to SQLite for null/empty/unknown values.
-    // Preserves pre-Phase-9 default behavior for legacy users
-    // (no VRCX_Database.mode key), new installs, and corrupt config.
-    // Without this, AppApi/WebApi/LogWatcher would
-    // NullReferenceException on startup.
+    // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,
+    //         直接认定为需要 init 初始化(启动新 SQLite 实例)。
+    console.warn('[bootstrap] VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance');
     interopApi.getDotNetObject('SQLite').Init();
 }
 interopApi.getDotNetObject('AppApiElectron').Init();

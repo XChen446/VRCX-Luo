@@ -239,6 +239,34 @@ namespace VRCX
 
             IPCServer.Instance.Init();
             var databaseMode = VRCXStorage.Instance.Get("VRCX_Database.mode");
+            if (string.IsNullOrEmpty(databaseMode))
+            {
+                // 主配置缺失 VRCX_Database.mode,优先从 .bak 恢复(对应 Phase 0.4 Backup 机制)。
+                // 决策 #1:.bak 恢复后不在 Init 阶段写回主配置,延迟到主账号登录成功后再回写
+                //         (与 .bak 生成/使用的"登录成功才持久化"语义一致)。
+                // 决策 #4:仅针对关键配置项 VRCX_Database.mode 检测 .bak 恢复。
+                try
+                {
+                    var bakJson = VRCXStorage.Instance.GetBackup();
+                    if (!string.IsNullOrEmpty(bakJson) && bakJson != "{}")
+                    {
+                        using var bakDoc = JsonDocument.Parse(bakJson);
+                        if (bakDoc.RootElement.TryGetProperty("VRCX_Database.mode", out var modeEl))
+                        {
+                            var bakMode = modeEl.GetString();
+                            if (!string.IsNullOrEmpty(bakMode))
+                            {
+                                databaseMode = bakMode;
+                                logger.Warn("VRCX_Database.mode recovered from .bak (deferred write-back until primary login): {0}", bakMode);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.Warn(ex, "Failed to parse .bak for VRCX_Database.mode, will fall back to fresh init");
+                }
+            }
             if (databaseMode == "sqlite")
             {
                 SQLite.Instance.Init();
@@ -249,11 +277,9 @@ namespace VRCX
             }
             else
             {
-                // Fallback to SQLite for null/empty/unknown values.
-                // Preserves pre-Phase-9 default behavior for legacy users
-                // (no VRCX_Database.mode key), new installs, and corrupt
-                // config. Without this, AppApi/WebApi/LogWatcher would
-                // NullReferenceException on startup.
+                // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,
+                //         直接认定为需要 init 初始化(启动新 SQLite 实例)。
+                logger.Warn("VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance");
                 SQLite.Instance.Init();
             }
             AppApiInstance = new AppApiCef();
