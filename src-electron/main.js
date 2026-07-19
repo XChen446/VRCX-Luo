@@ -126,6 +126,15 @@ else if (mode === 'postgresql')
 {
     interopApi.getDotNetObject('PostgreSQL').Init();
 }
+else
+{
+    // Fallback to SQLite for null/empty/unknown values.
+    // Preserves pre-Phase-9 default behavior for legacy users
+    // (no VRCX_Database.mode key), new installs, and corrupt config.
+    // Without this, AppApi/WebApi/LogWatcher would
+    // NullReferenceException on startup.
+    interopApi.getDotNetObject('SQLite').Init();
+}
 interopApi.getDotNetObject('AppApiElectron').Init();
 interopApi.getDotNetObject('Discord').Init();
 interopApi.getDotNetObject('WebApi').Init();

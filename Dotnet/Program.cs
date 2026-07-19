@@ -247,6 +247,15 @@ namespace VRCX
             {
                 PostgreSQL.Instance.Init();
             }
+            else
+            {
+                // Fallback to SQLite for null/empty/unknown values.
+                // Preserves pre-Phase-9 default behavior for legacy users
+                // (no VRCX_Database.mode key), new installs, and corrupt
+                // config. Without this, AppApi/WebApi/LogWatcher would
+                // NullReferenceException on startup.
+                SQLite.Instance.Init();
+            }
             AppApiInstance = new AppApiCef();
 
             ProcessMonitor.Instance.Init();
