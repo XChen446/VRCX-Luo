@@ -488,14 +488,14 @@ class MySQLAdapter extends EngineAdapter {
             if (where) sql += ` WHERE ${where}`;
             if (srcOrder) sql += ` ORDER BY ${srcOrder}`;
             if (srcLimit) sql += ` LIMIT ${srcLimit}`;
-            return `SELECT * FROM (${sql})`;
+            return `SELECT * FROM (${sql}) AS u`;
         });
         const outerSchema = schema
             ? Array.isArray(schema)
                 ? schema.join(', ')
                 : schema
             : '*';
-        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')}) AS outer_union`;
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
@@ -881,7 +881,7 @@ class MySQLAdapter extends EngineAdapter {
             ['user_id', 'end_at']
         );
         await this.executeNonQuery(
-            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id VARCHAR(255) NOT NULL, target_user_id VARCHAR(255) NOT NULL DEFAULT '', range_days INT NOT NULL, view_kind VARCHAR(255) NOT NULL, exclude_key VARCHAR(255) NOT NULL DEFAULT '', bucket_version INT NOT NULL DEFAULT 1, raw_buckets_json LONGTEXT NOT NULL, normalized_buckets_json LONGTEXT NOT NULL, built_from_cursor VARCHAR(255) NOT NULL DEFAULT '', summary_json LONGTEXT NOT NULL, built_at VARCHAR(255) NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`
+            `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_bucket_cache_v2')} (user_id VARCHAR(255) CHARACTER SET ascii NOT NULL, target_user_id VARCHAR(255) CHARACTER SET ascii NOT NULL DEFAULT '', range_days INT NOT NULL, view_kind VARCHAR(255) CHARACTER SET ascii NOT NULL, exclude_key VARCHAR(255) CHARACTER SET ascii NOT NULL DEFAULT '', bucket_version INT NOT NULL DEFAULT 1, raw_buckets_json LONGTEXT NOT NULL, normalized_buckets_json LONGTEXT NOT NULL, built_from_cursor VARCHAR(255) NOT NULL DEFAULT '', summary_json LONGTEXT NOT NULL, built_at VARCHAR(255) NOT NULL DEFAULT '', PRIMARY KEY (user_id, target_user_id, range_days, view_kind, exclude_key))`
         );
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'friend_log_current')} (user_id VARCHAR(255) PRIMARY KEY, display_name VARCHAR(255), trust_level VARCHAR(255), friend_number INT)`
