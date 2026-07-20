@@ -31,6 +31,7 @@ export async function initInteropApi(isVrOverlay = false) {
             window.VRCXStorage = InteropApi.VRCXStorage;
             window.SQLite = InteropApi.SQLite;
             window.MySQL = InteropApi.MySQL;
+            window.PostgreSQL = InteropApi.PostgreSQL;
             window.LogWatcher = InteropApi.LogWatcher;
             window.Discord = InteropApi.Discord;
             window.AssetBundleManager = InteropApi.AssetBundleManager;
@@ -42,7 +43,9 @@ export async function initInteropApi(isVrOverlay = false) {
         // VRCXStorage.Get is sync on CefSharp, async on Electron (IPC);
         // await handles both. Tests mock VRCXStorage.Get → '' → 'sqlite'.
         const dbMode = await VRCXStorage.Get('VRCX_Database.mode');
-        initAdapter(typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite');
+        await initAdapter(
+            typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite'
+        );
 
         await configRepository.init();
         new vrcxJsonStorage(VRCXStorage);

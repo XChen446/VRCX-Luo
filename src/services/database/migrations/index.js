@@ -218,27 +218,50 @@ function getDatabaseEngine() {
 
 /**
  * 检查迁移的 database 限制与当前引擎是否兼容。
+ *
+ * Phase 9 task 9.12: 返回值由 undefined/throw 改为结构化对象 `{ compatible, skip }`。
+ *  - 兼容（含无 database 字段）→ `{ compatible: true, skip: false }`
+ *  - .map 锁定 sqlite 且当前引擎非 sqlite → `{ compatible: false, skip: true }`
+ *    （INV-04: PgSQL/MySQL initSchema DDL 已含最新结构，v16 ALTER 对非 sqlite 无意义，跳过）
+ *  - 其他引擎不匹配（含反向）→ 抛错（保留严格语义，避免误执行）
+ *
  * @param {object|null|undefined} database - map 文件中的 database 字段
  * @param {string} engine - 当前数据库引擎
+ * @returns {{ compatible: boolean, skip: boolean }}
  */
 function checkDatabaseCompatibility(database, engine) {
-    if (!database || typeof database !== 'object') return;
+    if (!database || typeof database !== 'object') {
+        return { compatible: true, skip: false };
+    }
 
-    const check = (key, label) => {
+    const check = (key) => {
         const val = database[key];
         if (
             val &&
             typeof val === 'string' &&
             val.toLowerCase() !== engine.toLowerCase()
         ) {
+            // INV-04: .map 锁定 sqlite 且当前引擎非 sqlite → 跳过（非 sqlite initSchema 已含最新结构）
+            if (
+                val.toLowerCase() === 'sqlite' &&
+                engine.toLowerCase() !== 'sqlite'
+            ) {
+                return 'skip';
+            }
+            // 反向或其他不匹配 → 严格抛错，避免误执行
             throw new Error(
-                `数据库引擎不匹配: 迁移要求 ${label} = "${val}", 当前引擎为 "${engine}"`
+                `数据库引擎不匹配: ${key}="${val}", 当前引擎为 "${engine}"`
             );
         }
+        return 'ok';
     };
 
-    check('before', 'database.before');
-    check('after', 'database.after');
+    const before = check('before');
+    const after = check('after');
+    if (before === 'skip' || after === 'skip') {
+        return { compatible: false, skip: true };
+    }
+    return { compatible: true, skip: false };
 }
 
 /**
@@ -375,7 +398,41 @@ async function executeMigration(migration, options, engine) {
     const { version, type, data } = migration;
 
     // 检查 database 引擎兼容性
-    checkDatabaseCompatibility(data.database, engine);
+    const compat = checkDatabaseCompatibility(data.database, engine);
+    if (compat.skip) {
+        // INV-04: 非 sqlite engine 跳过 v16 .map (database.after:"sqlite")。
+        // checkDatabaseCompatibility 返回 {skip:true}, executeMigration 记录
+        // checkpoint 并提前返回 with console.warn。
+        // 非 sqlite initSchema DDL 已含最新 schema (with group_name etc.),
+        // v16 ALTER 对非 sqlite 无意义。Checkpoint 仍记录版本号，视为"已满足"，
+        // 避免下次启动重复尝试执行被跳过的 .map。
+        console.warn(
+            `[迁移] 跳过 ${engine} 锁定的 .map: v${version}-${type}` +
+                (data.description ? ` (${data.description})` : '')
+        );
+        try {
+            await adapter.begin();
+            await recordCheckpoint(version);
+            await adapter.commit();
+        } catch (err) {
+            try {
+                await adapter.rollback();
+            } catch (rollbackErr) {
+                console.error(
+                    `[迁移] v${version} ${type} skip 回滚失败:`,
+                    rollbackErr
+                );
+            }
+            console.error(
+                `[迁移] v${version} ${type} skip 记录检查点失败:`,
+                err
+            );
+            throw new Error(
+                `迁移 v${version} (${type}) 跳过记录检查点失败: ${err.message}`
+            );
+        }
+        return;
+    }
 
     console.log(
         `[迁移] 执行 v${version} ${type}.map: ${data.description || '无描述'}`
