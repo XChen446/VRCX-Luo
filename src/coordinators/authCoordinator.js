@@ -59,7 +59,7 @@ export async function runLogoutFlow() {
  * Runs post-login side effects after a successful auth response.
  * @param {object} json Current user payload from auth API.
  */
-export function runLoginSuccessFlow(json) {
+export async function runLoginSuccessFlow(json) {
     const updateLoopStore = useUpdateLoopStore();
 
     updateLoopStore.setNextCurrentUserRefresh(420); // 7mins
@@ -71,9 +71,9 @@ export function runLoginSuccessFlow(json) {
     // 决策 #4:仅针对关键配置项 VRCX_Database.mode。
     try
     {
-        if (!VRCXStorage.Get('VRCX_Database.mode'))
+        if (!(await VRCXStorage.Get('VRCX_Database.mode')))
         {
-            var bakJson = VRCXStorage.GetBackup();
+            var bakJson = await VRCXStorage.GetBackup();
             if (bakJson && bakJson !== '{}')
             {
                 var bak = JSON.parse(bakJson);
