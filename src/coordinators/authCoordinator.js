@@ -69,27 +69,25 @@ export function runLoginSuccessFlow(json) {
     // 但未写回主配置(避免 Init 阶段持久化)。此处登录成功后写回主配置,
     // 再 Backup(此时 Backup 备份含 mode 的配置,不丢失)。
     // 决策 #4:仅针对关键配置项 VRCX_Database.mode。
-    try {
-        if (!VRCXStorage.Get('VRCX_Database.mode')) {
+    try
+    {
+        if (!VRCXStorage.Get('VRCX_Database.mode'))
+        {
             var bakJson = VRCXStorage.GetBackup();
-            if (bakJson && bakJson !== '{}') {
+            if (bakJson && bakJson !== '{}')
+            {
                 var bak = JSON.parse(bakJson);
-                if (bak['VRCX_Database.mode']) {
-                    VRCXStorage.Set(
-                        'VRCX_Database.mode',
-                        bak['VRCX_Database.mode']
-                    );
-                    console.warn(
-                        '[auth] VRCX_Database.mode recovered from .bak written back to main config'
-                    );
+                if (bak['VRCX_Database.mode'])
+                {
+                    VRCXStorage.Set('VRCX_Database.mode', bak['VRCX_Database.mode']);
+                    console.warn('[auth] VRCX_Database.mode recovered from .bak written back to main config');
                 }
             }
         }
-    } catch (e) {
-        console.warn(
-            '[auth] Failed to recover VRCX_Database.mode from .bak:',
-            e && e.message
-        );
+    }
+    catch (e)
+    {
+        console.warn('[auth] Failed to recover VRCX_Database.mode from .bak:', e && e.message);
     }
     VRCXStorage.Backup();
     initWebsocket();

@@ -206,11 +206,29 @@ function validateDatabaseField(database) {
 /**
  * 获取当前数据库引擎类型。
  *
- * 读取 adapter.engineType 属性（由各适配器子类覆盖），而非直接
- * 读取 VRCXStorage（异步）或 instanceof 检查（需要导入适配器类，
- * 与 vitest mock 不兼容）。initAdapter() 在 interopApi.js 中已先于
- * runMigrations 调用，因此 adapter 类型在此处已确定。
- * @returns {string} 引擎类型标识 ('sqlite' | 'mysql')
+ * Phase 9 task 9.12 (revised 2026-07-19, aligned with MySQL branch):
+ * reads `adapter.engineType` off the singleton instead of re-reading
+ * `VRCXStorage.Get('VRCX_Database.mode')`. This keeps engine detection
+ * in sync with whichever adapter `initAdapter(mode)` actually
+ * constructed — `interopApi.js` reads `VRCXStorage` once at startup and
+ * passes the mode into `initAdapter`, so the adapter is the single
+ * source of truth for the active engine. The previous VRCXStorage read
+ * could diverge from the adapter if `initAdapter` was called with a
+ * different mode (or not called at all in unit tests), which would
+ * cause the migration runner to apply sqlite-targeted `.map` files to a
+ * PgSQL schema or vice versa.
+ *
+ * Fallback `'sqlite'` is retained for:
+ *   - `adapter` being `undefined` (defensive — should never happen in
+ *     production because the adapter module constructs a SQLiteAdapter
+ *     at module load, but covers the case where a test imports the
+ *     migration runner without importing the adapter module first).
+ *   - An adapter whose `engineType` is `'unknown'` (base class default —
+ *     means the subclass forgot to override the getter). Falls back to
+ *     sqlite so the migration runner stays safe for the default engine
+ *     rather than crashing on `'unknown'`.
+ *
+ * @returns {string} 引擎类型标识（"sqlite" | "postgresql" | "mysql" | "unknown"）
  */
 function getDatabaseEngine() {
     return adapter?.engineType || 'sqlite';
@@ -222,7 +240,7 @@ function getDatabaseEngine() {
  * Phase 9 task 9.12: 返回值由 undefined/throw 改为结构化对象 `{ compatible, skip }`。
  *  - 兼容（含无 database 字段）→ `{ compatible: true, skip: false }`
  *  - .map 锁定 sqlite 且当前引擎非 sqlite → `{ compatible: false, skip: true }`
- *    （INV-04: PgSQL/MySQL initSchema DDL 已含最新结构，v16 ALTER 对非 sqlite 无意义，跳过）
+ *    （INV-04: PgSQL initSchema PG DDL 已含最新结构，v16 ALTER 对 PgSQL 无意义，跳过）
  *  - 其他引擎不匹配（含反向）→ 抛错（保留严格语义，避免误执行）
  *
  * @param {object|null|undefined} database - map 文件中的 database 字段
@@ -241,7 +259,7 @@ function checkDatabaseCompatibility(database, engine) {
             typeof val === 'string' &&
             val.toLowerCase() !== engine.toLowerCase()
         ) {
-            // INV-04: .map 锁定 sqlite 且当前引擎非 sqlite → 跳过（非 sqlite initSchema 已含最新结构）
+            // INV-04: .map 锁定 sqlite 且当前引擎非 sqlite → 跳过（PgSQL initSchema 已含最新结构）
             if (
                 val.toLowerCase() === 'sqlite' &&
                 engine.toLowerCase() !== 'sqlite'
@@ -400,11 +418,11 @@ async function executeMigration(migration, options, engine) {
     // 检查 database 引擎兼容性
     const compat = checkDatabaseCompatibility(data.database, engine);
     if (compat.skip) {
-        // INV-04: 非 sqlite engine 跳过 v16 .map (database.after:"sqlite")。
-        // checkDatabaseCompatibility 返回 {skip:true}, executeMigration 记录
-        // checkpoint 并提前返回 with console.warn。
-        // 非 sqlite initSchema DDL 已含最新 schema (with group_name etc.),
-        // v16 ALTER 对非 sqlite 无意义。Checkpoint 仍记录版本号，视为"已满足"，
+        // INV-04: PgSQL engine skips v16 .map (database.after:"sqlite").
+        // checkDatabaseCompatibility returns {skip:true}, executeMigration records
+        // checkpoint and returns early with console.warn.
+        // PgSQL initSchema PG DDL already contains latest schema (with group_name etc.),
+        // v16 ALTER is meaningless for PgSQL. Checkpoint 仍记录版本号，视为"已满足"，
         // 避免下次启动重复尝试执行被跳过的 .map。
         console.warn(
             `[迁移] 跳过 ${engine} 锁定的 .map: v${version}-${type}` +
@@ -423,10 +441,7 @@ async function executeMigration(migration, options, engine) {
                     rollbackErr
                 );
             }
-            console.error(
-                `[迁移] v${version} ${type} skip 记录检查点失败:`,
-                err
-            );
+            console.error(`[迁移] v${version} ${type} skip 记录检查点失败:`, err);
             throw new Error(
                 `迁移 v${version} (${type}) 跳过记录检查点失败: ${err.message}`
             );

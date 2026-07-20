@@ -30,18 +30,39 @@ export async function initInteropApi(isVrOverlay = false) {
             window.WebApi = InteropApi.WebApi;
             window.VRCXStorage = InteropApi.VRCXStorage;
             window.SQLite = InteropApi.SQLite;
-            window.MySQL = InteropApi.MySQL;
+            // Electron: the InteropApi Proxy (see ipc-electron/interopApi.js)
+            // forwards any property access to `window.interopApi.callDotNetMethod`,
+            // so `window.PostgreSQL` / `window.MySQL` are usable as soon as
+            // the .NET side registers those classes — no static binding
+            // needed. The assignments here exist for parity with the
+            // SQLite/AppApi lines above (ESLint `no-undef` + readability).
+            // `src-electron/main.js` calls `PostgreSQL.Init()` when the
+            // user selects `postgresql` mode; MySQL will get the same
+            // treatment once the MySQL branch's main.js change merges.
             window.PostgreSQL = InteropApi.PostgreSQL;
+            window.MySQL = InteropApi.MySQL;
             window.LogWatcher = InteropApi.LogWatcher;
             window.Discord = InteropApi.Discord;
             window.AssetBundleManager = InteropApi.AssetBundleManager;
             window.AppApiVrElectron = InteropApi.AppApiVrElectron;
         }
 
-        // Switch database adapter based on VRCX_Database.mode config.
-        // MUST run before configRepository.init() (which uses adapter).
-        // VRCXStorage.Get is sync on CefSharp, async on Electron (IPC);
-        // await handles both. Tests mock VRCXStorage.Get → '' → 'sqlite'.
+        // Initialise the DB adapter singleton before `configRepository`
+        // or any module that touches the database runs. The mode is read
+        // from VRCXStorage once here (the authoritative source for user
+        // config at startup) and passed into `initAdapter(mode)`, which
+        // lazy-imports the appropriate adapter class. This aligns with
+        // the MySQL branch's call contract (`initAdapter(mode)` takes
+        // an explicit mode argument) and keeps the adapter module free
+        // of VRCXStorage reads so it can be unit-tested in isolation.
+        //
+        // VRCXStorage.Get is typed as `Promise<string>` (callers `await`
+        // it defensively), but the C# binding returns a string
+        // synchronously at runtime. `await` on a string is a no-op, so
+        // this works in both Cef (sync string) and vitest (real Promise
+        // stubbed to resolve to '' → falls through to the 'sqlite'
+        // default). The `typeof === 'string' && mode` guard rejects
+        // empty/non-string values without throwing.
         const dbMode = await VRCXStorage.Get('VRCX_Database.mode');
         await initAdapter(
             typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite'
