@@ -174,9 +174,15 @@ namespace VRCX
 
             #region Handle Database Error
 
-            catch (SQLiteException e)
+            // MySqlException lives in the MySqlConnector assembly, which is
+            // referenced conditionally across the Cef / Electron projects. To
+            // avoid a hard assembly dependency here, match by type name so a
+            // MySQL/MariaDB Init() failure is routed to the database repair
+            // branch (same surface as SQLite) instead of the generic crash
+            // handler. This mirrors the repair-guide UX for both engines.
+            catch (Exception e) when (e is SQLiteException || e.GetType().Name == "MySqlException")
             {
-                logger.Fatal(e, "Unhandled SQLite Exception, closing.");
+                logger.Fatal(e, "Unhandled database exception, closing.");
                 var messageBoxResult = MessageBox.Show(
                     "A fatal database error has occured.\n" +
                     "Please try to repair your database by following the steps in the provided repair guide, or alternatively rename your \"%AppData%\\VRCX\" folder to reset VRCX. " +
@@ -185,7 +191,10 @@ namespace VRCX
                     e, "Database error", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (messageBoxResult == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
+                    // AppApiInstance is assigned in Run() AFTER Init() returns;
+                    // any Init()-time exception reaches here before it is set,
+                    // so guard against the (pre-existing) null-reference.
+                    AppApiInstance?.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
                 }
             }
 
@@ -200,7 +209,7 @@ namespace VRCX
                         MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                     if (messageBoxResult == DialogResult.Yes)
                     {
-                        AppApiInstance.OpenLink(cpuError.Value.Item2);
+                        AppApiInstance?.OpenLink(cpuError.Value.Item2);
                     }
                 }
 
@@ -208,7 +217,7 @@ namespace VRCX
                 var result = MessageBox.Show(e.ToString(), $"{Version} crashed, open Discord for support?", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (result == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://vrcx.app/discord");
+                    AppApiInstance?.OpenLink("https://vrcx.app/discord");
                 }
                 Environment.Exit(0);
             }
