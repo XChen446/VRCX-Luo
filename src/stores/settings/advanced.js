@@ -1179,6 +1179,24 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      * @returns {Promise<void>}
      */
     async function saveDatabaseEngineConfig(engine, pgConfig) {
+        // If we are switching away from SQLite, snapshot the SQLite file
+        // name before VRCX_Database.name is repurposed for the PG database.
+        // resolveCurrentSqliteDbPath reads sqlitePath first so the SQLite →
+        // PgSQL migration can still locate the source file after restart.
+        if (engine === 'postgresql' && pgConfig) {
+            const currentMode = await VRCXStorage.Get('VRCX_Database.mode');
+            if (currentMode !== 'postgresql') {
+                const currentName = await VRCXStorage.Get(
+                    'VRCX_Database.name'
+                );
+                if (currentName) {
+                    await VRCXStorage.Set(
+                        'VRCX_Database.sqlitePath',
+                        currentName
+                    );
+                }
+            }
+        }
         await VRCXStorage.Set('VRCX_Database.mode', engine);
         if (pgConfig) {
             await Promise.all([
@@ -1228,16 +1246,18 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     /**
      * Resolve the current SQLite database file path from VRCXStorage. Used as
      * the migration source when switching from SQLite to PostgreSQL. After
-     * the user switches engine + restarts, `VRCX_Database.name` still holds
-     * the previous SQLite file name (we don't overwrite it on save when
-     * engine is postgresql — `saveDatabaseEngineConfig` writes the PG
-     * database name into the same key, but the SQLite file path remains
-     * resolvable via `AppApi.ResolveDatabaseName`).
+     * the user switches engine + restarts, `VRCX_Database.name` is
+     * repurposed for the PG database name, so we read the snapshotted
+     * `VRCX_Database.sqlitePath` first (written by
+     * `saveDatabaseEngineConfig` before the switch) and fall back to
+     * `VRCX_Database.name` for legacy configs that never switched.
      *
      * @returns {Promise<string>} canonical SQLite db path
      */
     async function resolveCurrentSqliteDbPath() {
-        const dbName = await VRCXStorage.Get('VRCX_Database.name');
+        const dbName =
+            (await VRCXStorage.Get('VRCX_Database.sqlitePath')) ||
+            (await VRCXStorage.Get('VRCX_Database.name'));
         if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
             return await AppApi.ResolveDatabaseName(dbName || '');
         }

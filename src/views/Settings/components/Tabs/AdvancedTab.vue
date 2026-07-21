@@ -289,12 +289,49 @@
                 <SettingsItem
                     :label="t('view.settings.advanced.advanced.database_engine.migrate')"
                     :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
-                    <Button size="sm" variant="outline" @click="onMigrateToPgsql">
-                        {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
-                    </Button>
+                    <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" :disabled="pgsqlMigrationStatus === 'migrating'" @click="isMigrateDialogVisible = true">
+                            {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
+                        </Button>
+                        <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
+                        <span v-if="pgsqlMigrationStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="pgsqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
                 </SettingsItem>
             </template>
         </SettingsGroup>
+
+        <Dialog
+            :open="isMigrateDialogVisible"
+            @update:open="
+                (open) => {
+                    if (!open) isMigrateDialogVisible = false;
+                }
+            ">
+            <DialogContent class="x-dialog sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{{
+                        t('view.settings.advanced.advanced.database_engine.migrate')
+                    }}</DialogTitle>
+                </DialogHeader>
+
+                <Alert variant="warning" class="mb-3">
+                    <TriangleAlert />
+                    <AlertDescription>
+                        {{ t('view.settings.advanced.advanced.database_engine.migrate_hint') }}
+                    </AlertDescription>
+                </Alert>
+
+                <DialogFooter>
+                    <Button variant="outline" size="sm" @click="isMigrateDialogVisible = false">
+                        {{ t('confirm.cancel_button') }}
+                    </Button>
+                    <Button size="sm" :disabled="pgsqlMigrationStatus === 'migrating'" @click="handleMigrateToPgsql">
+                        {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
 
         <SettingsGroup :title="t('view.settings.advanced.advanced.database_cleanup.header')">
             <SettingsItem
@@ -450,6 +487,7 @@
 <script setup>
     import { Trash2, TriangleAlert } from 'lucide-vue-next';
     import { computed, onMounted, reactive, ref } from 'vue';
+    import Noty from 'noty';
     import { Button } from '@/components/ui/button';
     import { Switch } from '@/components/ui/switch';
     import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -565,6 +603,7 @@
     const visits = ref(null);
     const selectedPurgePeriod = ref('180');
     const isPurgeDialogVisible = ref(false);
+    const isMigrateDialogVisible = ref(false);
 
     const cacheSize = reactive({
         cachedUsers: 0,
@@ -663,10 +702,21 @@
     }
 
     /**
+     * Close the confirmation dialog and kick off the migration. Mirrors the
+     * `handlePurge` / `isPurgeDialogVisible` pattern used for avatar feed
+     * purging so the user must confirm before a destructive operation.
+     */
+    function handleMigrateToPgsql() {
+        isMigrateDialogVisible.value = false;
+        onMigrateToPgsql();
+    }
+
+    /**
      * Run the SQLite → PostgreSQL migration. The destination is the live
      * singleton adapter, which is a PgSQLAdapter only after the user
      * switched engine + restarted. If they haven't, `migrateToPgsql` will
-     * throw with a clear message.
+     * throw with a clear message. Noty notifications surface the outcome
+     * in the UI in addition to the console log.
      */
     async function onMigrateToPgsql() {
         try {
@@ -676,6 +726,15 @@
                     'Migration completed with errors:',
                     result.errors
                 );
+                new Noty({
+                    type: 'warning',
+                    text: `Migration completed with ${result.errors.length} error(s)`
+                }).show();
+            } else {
+                new Noty({
+                    type: 'success',
+                    text: `Migration done: ${result.globalTables} global tables, ${result.userTables} user tables, ${result.rowsCopied} rows copied`
+                }).show();
             }
             console.log(
                 `Migration done: ${result.globalTables} global tables, ` +
@@ -685,6 +744,10 @@
             );
         } catch (err) {
             console.error('Migration failed:', err);
+            new Noty({
+                type: 'error',
+                text: `Migration failed: ${err.message || err}`
+            }).show();
         }
     }
 

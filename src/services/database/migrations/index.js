@@ -228,10 +228,14 @@ function validateDatabaseField(database) {
  *     sqlite so the migration runner stays safe for the default engine
  *     rather than crashing on `'unknown'`.
  *
- * @returns {string} 引擎类型标识（"sqlite" | "postgresql" | "mysql" | "unknown"）
+ * @returns {string} 引擎类型标识（"sqlite" | "postgresql" | "mysql"）
  */
 function getDatabaseEngine() {
-    return adapter?.engineType || 'sqlite';
+    const engine = adapter?.engineType;
+    if (!engine || engine === 'unknown') {
+        return 'sqlite';
+    }
+    return engine;
 }
 
 /**

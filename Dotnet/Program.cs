@@ -156,7 +156,7 @@ namespace VRCX
                             "vc_redist has finished installing, if the issue persists upon next restart, please reinstall VRCX From GitHub,\nVRCX Will now restart.",
                             "vc_redist installation complete", MessageBoxButtons.OK);
                         Thread.Sleep(5000);
-                        AppApiInstance.RestartApplication(false);
+                        AppApiInstance?.RestartApplication(false);
                         break;
 
                     case DialogResult.No:
@@ -185,7 +185,7 @@ namespace VRCX
                     e, "Database error", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (messageBoxResult == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
+                    AppApiInstance?.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
                 }
             }
 
@@ -200,7 +200,7 @@ namespace VRCX
                         MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                     if (messageBoxResult == DialogResult.Yes)
                     {
-                        AppApiInstance.OpenLink(cpuError.Value.Item2);
+                        AppApiInstance?.OpenLink(cpuError.Value.Item2);
                     }
                 }
 
@@ -208,7 +208,7 @@ namespace VRCX
                 var result = MessageBox.Show(e.ToString(), $"{Version} crashed, open Discord for support?", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (result == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://vrcx.app/discord");
+                    AppApiInstance?.OpenLink("https://vrcx.app/discord");
                 }
                 Environment.Exit(0);
             }
