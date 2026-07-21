@@ -147,7 +147,7 @@ declare global {
             sql: string,
             args: any[] | null
         ) => Promise<number>;
-        IsConnected: () => boolean;
+        IsConnected: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
     };
 

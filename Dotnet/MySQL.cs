@@ -173,7 +173,12 @@ namespace VRCX
                     var values = new object[reader.FieldCount];
                     for (var i = 0; i < reader.FieldCount; i++)
                     {
-                        values[i] = reader.GetValue(i);
+                        // IsDBNull guard: DBNull.Value serialises to "{}" via
+                        // System.Text.Json and is the wrong value for the JS
+                        // bridge. Map NULL columns to null explicitly so both
+                        // the CefSharp (object[][]) and JSON entry points see
+                        // JS null instead of an empty object.
+                        values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                     }
                     result.Add(values);
                 }
@@ -219,7 +224,7 @@ namespace VRCX
                 var values = new object[reader.FieldCount];
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
-                    values[i] = reader.GetValue(i);
+                    values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                 }
                 result.Add(values);
             }
