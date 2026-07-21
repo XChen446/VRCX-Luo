@@ -662,14 +662,14 @@ class PgSQLAdapter extends EngineAdapter {
             // Wrap each branch as a derived table — legal in both SQLite and
             // PgSQL. PgSQL could use bare parenthesised branches, but
             // keeping the same shape as SQLiteAdapter avoids divergence.
-            return `SELECT * FROM (${sql})`;
+            return `SELECT * FROM (${sql}) AS _u`;
         });
         const outerSchema = schema
             ? Array.isArray(schema)
                 ? schema.join(', ')
                 : schema
             : '*';
-        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')})`;
+        let finalSql = `SELECT ${outerSchema} FROM (${parts.join(' UNION ALL ')}) AS _outer`;
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
