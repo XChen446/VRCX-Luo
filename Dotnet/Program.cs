@@ -156,7 +156,7 @@ namespace VRCX
                             "vc_redist has finished installing, if the issue persists upon next restart, please reinstall VRCX From GitHub,\nVRCX Will now restart.",
                             "vc_redist installation complete", MessageBoxButtons.OK);
                         Thread.Sleep(5000);
-                        AppApiInstance.RestartApplication(false);
+                        AppApiInstance?.RestartApplication(false);
                         break;
 
                     case DialogResult.No:

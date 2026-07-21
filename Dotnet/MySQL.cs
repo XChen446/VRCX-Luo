@@ -141,8 +141,12 @@ namespace VRCX
         /// </summary>
         public void Exit()
         {
-            m_Connection?.Close();
-            m_Connection?.Dispose();
+            lock (m_ConnectionLock)
+            {
+                m_Connection?.Close();
+                m_Connection?.Dispose();
+                m_Connection = null;
+            }
         }
 
         /// <summary>

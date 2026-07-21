@@ -133,6 +133,11 @@ export async function initAdapter(mode = 'sqlite') {
 
     // sqlite: synchronous, no lazy import.
     if (normalized === 'sqlite') {
+        // If a non-sqlite init is in flight, wait for it to finish so we
+        // don't race on the `adapter` binding.
+        if (_initPromise) {
+            await _initPromise;
+        }
         if (!(adapter instanceof SQLiteAdapter)) {
             adapter = new SQLiteAdapter();
         }
