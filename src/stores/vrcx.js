@@ -425,7 +425,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         databaseUpgradeState.value.fromVersion = -1; // 标记「迁移中」
         databaseUpgradeState.value.toVersion = targetVersion;
 
-        const oldDb = createAdapter({ connection: `sqlite:///${oldPath}` });
+        const oldDb = await createAdapter({ connection: `sqlite:///${oldPath}` });
 
         try {
             // 1) 读出旧库版本号
