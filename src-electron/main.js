@@ -149,6 +149,10 @@ interopApi.getDotNetObject('ProgramElectron').Init();
     {
         interopApi.getDotNetObject('SQLite').Init();
     }
+    else if (mode === 'mysql' || mode === 'mariadb')
+    {
+        interopApi.getDotNetObject('MySQL').Init();
+    }
     else if (mode === 'postgresql')
     {
         interopApi.getDotNetObject('PostgreSQL').Init();

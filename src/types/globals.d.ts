@@ -17,6 +17,7 @@ declare global {
         WebApi: WebApi;
         VRCXStorage: VRCXStorage;
         SQLite: SQLite;
+        MySQL: MySQL;
         PostgreSQL: PostgreSQL;
         LogWatcher: LogWatcher;
         Discord: Discord;
@@ -428,6 +429,14 @@ declare global {
             variantVersion: number
         ): Promise<void>;
         DeleteAllCache: () => Promise<void>;
+    };
+
+    const MySQL: {
+        Init: () => void;
+        Exit: () => void;
+        Execute: (sql: string, args: any) => Promise<any[]>;
+        ExecuteJson: (...args: any[]) => Promise<string>;
+        ExecuteNonQuery: (...args: any[]) => Promise<number>;
     };
 
     const webApiService: {

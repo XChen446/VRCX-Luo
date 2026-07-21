@@ -10,7 +10,7 @@ export async function initInteropApi(isVrOverlay = false) {
             await CefSharp.BindObjectAsync('AppApiVr');
         } else {
             // @ts-ignore
-            window.AppApiVr = InteropApi.AppApiVr;
+            window.AppApiVr = InteropApi.AppApiVrElectron;
         }
     } else {
         // #region | Init Cef C# bindings
@@ -31,6 +31,7 @@ export async function initInteropApi(isVrOverlay = false) {
                 'VRCXStorage',
                 'SQLite',
                 'PostgreSQL',
+                'MySQL',
                 'LogWatcher',
                 'Discord',
                 'AssetBundleManager'

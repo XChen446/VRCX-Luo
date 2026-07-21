@@ -79,7 +79,7 @@ export async function runLoginSuccessFlow(json) {
                 var bak = JSON.parse(bakJson);
                 if (bak['VRCX_Database.mode'])
                 {
-                    VRCXStorage.Set('VRCX_Database.mode', bak['VRCX_Database.mode']);
+                    await VRCXStorage.Set('VRCX_Database.mode', bak['VRCX_Database.mode']);
                     console.warn('[auth] VRCX_Database.mode recovered from .bak written back to main config');
                 }
             }
@@ -89,6 +89,6 @@ export async function runLoginSuccessFlow(json) {
     {
         console.warn('[auth] Failed to recover VRCX_Database.mode from .bak:', e && e.message);
     }
-    VRCXStorage.Backup();
+    await VRCXStorage.Backup();
     initWebsocket();
 }

@@ -52,6 +52,38 @@ jobs:
           dotnet format whitespace --no-restore --verify-no-changes
           dotnet format style --no-restore --verify-no-changes
 
+  test_mysql:
+    name: Test MySQL (${{ matrix.mysql-version }})
+    runs-on: ubuntu-latest
+    needs: lint_js
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql-version: ['8.0', '8.4']
+    env:
+      MYSQL_TEST_HOST: 127.0.0.1
+      MYSQL_TEST_PORT: 3306
+      MYSQL_TEST_USER: root
+      MYSQL_TEST_PASSWORD: root
+      MYSQL_TEST_DATABASE: vrcx_test
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup MySQL ${{ matrix.mysql-version }}
+        uses: shogo82148/actions-setup-mysql@076e636c45996ec8cb1a455c65f9f5364aeebd8a # v1.52.1
+        with:
+          mysql-version: ${{ matrix.mysql-version }}
+          root-password: root
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Create test database
+        run: mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE IF NOT EXISTS vrcx_test;"
+      - run: npm test -- --run
+
   # Phase 9 slice S12 (task 9.15): PostgreSQL 16/17 integration test matrix.
   # Uses ikalnytskyi/action-setup-postgres to provision PG on the runner
   # (supports Linux/macOS/Windows, no Docker service container needed).

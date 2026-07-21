@@ -232,10 +232,12 @@ function validateDatabaseField(database) {
  */
 function getDatabaseEngine() {
     const engine = adapter?.engineType;
-    if (!engine || engine === 'unknown') {
-        return 'sqlite';
-    }
-    return engine;
+    // 'unknown' is the base EngineAdapter default (a subclass forgot to
+    // override the getter). It is truthy, so `||` would NOT fall back; treat
+    // it the same as undefined/empty and default to 'sqlite' so the migration
+    // runner stays safe for the default engine rather than crashing on
+    // 'unknown'.
+    return engine && engine !== 'unknown' ? engine : 'sqlite';
 }
 
 /**
