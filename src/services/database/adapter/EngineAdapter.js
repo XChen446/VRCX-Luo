@@ -22,17 +22,6 @@ class EngineAdapter {
     /** @type {string|null} */
     _prefixOverride = null;
 
-    /**
-     * Engine type identifier for runtime engine detection.
-     * Subclasses override this to return their engine name
-     * (e.g. 'sqlite', 'mysql', 'postgresql'). Used by the migration
-     * runner's getDatabaseEngine() without importing adapter classes.
-     * @type {string}
-     */
-    get engineType() {
-        return 'unknown';
-    }
-
     constructor() {
         if (new.target === EngineAdapter) {
             throw new TypeError(

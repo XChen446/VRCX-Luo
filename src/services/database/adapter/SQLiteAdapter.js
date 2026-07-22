@@ -14,11 +14,6 @@ class SQLiteAdapter extends EngineAdapter {
     /** @type {string|null} */
     connectionString = null;
 
-    /** @override */
-    get engineType() {
-        return 'sqlite';
-    }
-
     /**
      * Engine type identifier — used by the migration runner's
      * `getDatabaseEngine()` to detect the active engine from the
