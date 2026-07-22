@@ -14,6 +14,11 @@ class SQLiteAdapter extends EngineAdapter {
     /** @type {string|null} */
     connectionString = null;
 
+    /** @override */
+    get engineType() {
+        return 'sqlite';
+    }
+
     /**
      * @param {object} [config]
      * @param {string} [config.connection] - sqlite:/// URI 或连接字符串

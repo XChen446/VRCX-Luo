@@ -156,7 +156,7 @@ namespace VRCX
                             "vc_redist has finished installing, if the issue persists upon next restart, please reinstall VRCX From GitHub,\nVRCX Will now restart.",
                             "vc_redist installation complete", MessageBoxButtons.OK);
                         Thread.Sleep(5000);
-                        AppApiInstance.RestartApplication(false);
+                        AppApiInstance?.RestartApplication(false);
                         break;
 
                     case DialogResult.No:
@@ -174,9 +174,15 @@ namespace VRCX
 
             #region Handle Database Error
 
-            catch (SQLiteException e)
+            // MySqlException lives in the MySqlConnector assembly, which is
+            // referenced conditionally across the Cef / Electron projects. To
+            // avoid a hard assembly dependency here, match by type name so a
+            // MySQL/MariaDB Init() failure is routed to the database repair
+            // branch (same surface as SQLite) instead of the generic crash
+            // handler. This mirrors the repair-guide UX for both engines.
+            catch (Exception e) when (e is SQLiteException || e.GetType().Name == "MySqlException")
             {
-                logger.Fatal(e, "Unhandled SQLite Exception, closing.");
+                logger.Fatal(e, "Unhandled database exception, closing.");
                 var messageBoxResult = MessageBox.Show(
                     "A fatal database error has occured.\n" +
                     "Please try to repair your database by following the steps in the provided repair guide, or alternatively rename your \"%AppData%\\VRCX\" folder to reset VRCX. " +
@@ -185,7 +191,10 @@ namespace VRCX
                     e, "Database error", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (messageBoxResult == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
+                    // AppApiInstance is assigned in Run() AFTER Init() returns;
+                    // any Init()-time exception reaches here before it is set,
+                    // so guard against the (pre-existing) null-reference.
+                    AppApiInstance?.OpenLink("https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database");
                 }
             }
 
@@ -200,7 +209,7 @@ namespace VRCX
                         MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                     if (messageBoxResult == DialogResult.Yes)
                     {
-                        AppApiInstance.OpenLink(cpuError.Value.Item2);
+                        AppApiInstance?.OpenLink(cpuError.Value.Item2);
                     }
                 }
 
@@ -208,7 +217,7 @@ namespace VRCX
                 var result = MessageBox.Show(e.ToString(), $"{Version} crashed, open Discord for support?", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
                 if (result == DialogResult.Yes)
                 {
-                    AppApiInstance.OpenLink("https://vrcx.app/discord");
+                    AppApiInstance?.OpenLink("https://vrcx.app/discord");
                 }
                 Environment.Exit(0);
             }
@@ -238,8 +247,50 @@ namespace VRCX
             logger.Debug("Wine detection: {0}", Wine.GetIfWine());
 
             IPCServer.Instance.Init();
-            if (VRCXStorage.Instance.Get("VRCX_Database.mode") == "sqlite")
+            var databaseMode = VRCXStorage.Instance.Get("VRCX_Database.mode");
+            if (string.IsNullOrEmpty(databaseMode))
             {
+                // 主配置缺失 VRCX_Database.mode,优先从 .bak 恢复(对应 Phase 0.4 Backup 机制)。
+                // 决策 #1:.bak 恢复后不在 Init 阶段写回主配置,延迟到主账号登录成功后再回写
+                //         (与 .bak 生成/使用的"登录成功才持久化"语义一致)。
+                // 决策 #4:仅针对关键配置项 VRCX_Database.mode 检测 .bak 恢复。
+                try
+                {
+                    var bakJson = VRCXStorage.Instance.GetBackup();
+                    if (!string.IsNullOrEmpty(bakJson) && bakJson != "{}")
+                    {
+                        using var bakDoc = JsonDocument.Parse(bakJson);
+                        if (bakDoc.RootElement.TryGetProperty("VRCX_Database.mode", out var modeEl))
+                        {
+                            var bakMode = modeEl.GetString();
+                            if (!string.IsNullOrEmpty(bakMode))
+                            {
+                                databaseMode = bakMode;
+                                logger.Warn("VRCX_Database.mode recovered from .bak (deferred write-back until primary login): {0}", bakMode);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.Warn(ex, "Failed to parse .bak for VRCX_Database.mode, will fall back to fresh init");
+                }
+            }
+            if (databaseMode == "sqlite")
+            {
+                SQLite.Instance.Init();
+            }
+            else if (databaseMode == "mysql" || databaseMode == "mariadb")
+            {
+                MySQL.Instance.Init();
+            }
+            // 2A:不加 postgresql 分支(避免引用 PostgreSQL.Instance 编译失败,PostgreSQL.cs 在 MySQL 分支不存在)
+            // mode='postgresql' 或其他未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
+            else
+            {
+                // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,
+                //         直接认定为需要 init 初始化(启动新 SQLite 实例)。
+                logger.Warn("VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance");
                 SQLite.Instance.Init();
             }
             AppApiInstance = new AppApiCef();
@@ -264,6 +315,7 @@ namespace VRCX
             Discord.Instance.Exit();
             VRCXStorage.Instance.Save();
             SQLite.Instance.Exit();
+            MySQL.Instance.Exit();
             ProcessMonitor.Instance.Exit();
         }
 #else

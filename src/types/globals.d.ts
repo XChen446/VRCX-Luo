@@ -135,6 +135,22 @@ declare global {
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
     };
 
+    // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
+    // (desktop) or Electron main-process IPC. In vitest it is a noopAsync
+    // Proxy (see vitest.setup.js). `ExecuteJson`/`ExecuteNonQuery` accept a
+    // positional `object[]` bound by `$N`; `IsConnected`/`GetHealth` are
+    // status probes used by PgSQLAdapter health checks.
+    const PostgreSQL: {
+        Execute: (sql: string, args: any[] | null) => Promise<any[]>;
+        ExecuteJson: (sql: string, args: any[] | null) => Promise<string>;
+        ExecuteNonQuery: (
+            sql: string,
+            args: any[] | null
+        ) => Promise<number>;
+        IsConnected: () => Promise<boolean>;
+        GetHealth: () => Promise<string>;
+    };
+
     const LogWatcher: {
         Get(): Promise<Array<[string, string, string, ...any[]]>>;
         SetDateTill(date: string): Promise<void>;
@@ -411,6 +427,14 @@ declare global {
             variantVersion: number
         ): Promise<void>;
         DeleteAllCache: () => Promise<void>;
+    };
+
+    const MySQL: {
+        Init: () => void;
+        Exit: () => void;
+        Execute: (sql: string, args: any) => Promise<any[]>;
+        ExecuteJson: (...args: any[]) => Promise<string>;
+        ExecuteNonQuery: (...args: any[]) => Promise<number>;
     };
 
     const webApiService: {
