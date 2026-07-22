@@ -179,8 +179,10 @@ namespace VRCX
             // avoid a hard assembly dependency here, match by type name so a
             // MySQL/MariaDB Init() failure is routed to the database repair
             // branch (same surface as SQLite) instead of the generic crash
-            // handler. This mirrors the repair-guide UX for both engines.
-            catch (Exception e) when (e is SQLiteException || e.GetType().Name == "MySqlException")
+            // handler. PostgresException (Npgsql) is matched the same way and
+            // for the same reason. This mirrors the repair-guide UX for all
+            // three engines.
+            catch (Exception e) when (e is SQLiteException || e.GetType().Name == "MySqlException" || e.GetType().Name == "PostgresException")
             {
                 logger.Fatal(e, "Unhandled database exception, closing.");
                 var messageBoxResult = MessageBox.Show(

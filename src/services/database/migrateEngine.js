@@ -1,11 +1,18 @@
-// Phase 9 slice S9 (task 9.13) — SQLite → PostgreSQL cross-engine migration.
+// Phase 9 slice S9 (task 9.13) — SQLite → remote-engine cross-engine migration.
 //
-// Provides `migrateSqliteToPgsql(srcConnStr, dstConfig, options)` which copies
+// Provides `migrateSqliteToRemote(srcConnStr, dstConfig, options)` which copies
 // every global + user table from a source SQLite database into the currently
-// initialised PostgreSQL target. The destination is the singleton `adapter`
-// from `./adapter/index.js` — this is a `PgSQLAdapter` instance only when
-// `VRCX_Database.mode === 'postgresql'` was saved + the app restarted so the
-// C# `PostgreSQL.Instance` pool is initialised before the renderer boots.
+// initialised remote target (PostgreSQL or MySQL/MariaDB). The destination is
+// the singleton `adapter` from `./adapter/index.js` — a `PgSQLAdapter` when
+// `VRCX_Database.mode === 'postgresql'` or a `MySQLAdapter` when mode is
+// `'mysql'`/`'mariadb'`, each saved + the app restarted so the C#
+// `PostgreSQL.Instance` / `MySQL.Instance` pool is initialised before the
+// renderer boots. `migrateSqliteToPgsql` is kept as a backward-compatible alias.
+//
+// The migration body is engine-agnostic: it only touches the abstract
+// `EngineAdapter` surface (`initGlobalSchema` / `initUserSchema` / `userTable`
+// / `bulkInsert`), which every remote subclass implements, so the same code
+// path serves both PG and MySQL destinations.
 //
 // See `docs/PHASE9_PGSQL_DESIGN.md` §6.2 + §11.1 9.13 DoD.
 //
@@ -22,8 +29,9 @@ import { adapter, createAdapter } from './adapter/index.js';
 
 /**
  * 16 global tables (public schema) — mirrors `SQLiteAdapter.initGlobalSchema`
- * (L985-1049) and `PgSQLAdapter.initGlobalSchema` (L1293-1341) table-for-table.
- * Order matches the schema-init order so the migration log reads naturally.
+ * (L985-1049), `PgSQLAdapter.initGlobalSchema` (L1293-1341) and
+ * `MySQLAdapter.initGlobalSchema` table-for-table. Order matches the
+ * schema-init order so the migration log reads naturally.
  * @type {string[]}
  */
 const GLOBAL_TABLES = [
@@ -47,9 +55,12 @@ const GLOBAL_TABLES = [
 
 /**
  * 22 user-table base names — mirrors `PgSQLAdapter.initUserSchema` (L1133-1206)
- * / `SQLiteAdapter.initUserSchema` (L900-979). In the source SQLite DB these
- * live flat as `${prefix}_${name}`; in the destination PG DB they live in the
- * `account_${prefix}` schema as just `${name}` (see `userTable(prefix, name)`).
+ * / `SQLiteAdapter.initUserSchema` (L900-979) / `MySQLAdapter.initUserSchema`.
+ * In the source SQLite DB these live flat as `${prefix}_${name}`; in a
+ * destination PG DB they live in the `account_${prefix}` schema as just
+ * `${name}`, and in a destination MySQL DB they live as the prefixed name
+ * `${prefix}_${name}` (see `userTable(prefix, name)` — each adapter resolves
+ * the destination identifier itself, so this list is engine-agnostic).
  *
  * Sorted longest-first when matching so e.g. `activity_sync_state_v2` is tried
  * before `activity_sessions_v2` (no overlap here, but the rule is defensive
@@ -104,24 +115,31 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * Migrate data from a SQLite database to a PostgreSQL target.
+ * Migrate data from a SQLite database to a remote-engine target
+ * (PostgreSQL or MySQL/MariaDB).
  *
  * The destination is the singleton `adapter` from `./adapter/index.js`, which
- * is a `PgSQLAdapter` instance only when the app booted with
- * `VRCX_Database.mode === 'postgresql'` and the C# `PostgreSQL` binding has
- * been initialised. Callers must ensure the engine has been switched + the
- * app restarted before invoking this function; otherwise the destination
- * writes will go to the live SQLite adapter and corrupt it. We guard against
- * this by refusing to run when the singleton is not a `PgSQLAdapter`.
+ * is a `PgSQLAdapter` when the app booted with `VRCX_Database.mode ===
+ * 'postgresql'` (C# `PostgreSQL` pool initialised) or a `MySQLAdapter` when
+ * mode is `'mysql'`/`'mariadb'` (C# `MySQL` initialised). Callers must ensure
+ * the engine has been switched + the app restarted before invoking this
+ * function; otherwise the destination writes will go to the live SQLite
+ * adapter and corrupt it. We guard against this by refusing to run when the
+ * singleton's `engineType` is `'sqlite'` (or the abstract `'unknown'`).
+ *
+ * The body is engine-agnostic: it only touches abstract `EngineAdapter`
+ * methods every remote subclass implements, so PG and MySQL share one code
+ * path. `isConnected` (a PgSQLAdapter extension) is probed best-effort when
+ * present; subclasses without it are assumed connected after a successful Init.
  *
  * @param {string} srcConnStr - SQLite connection string like 'sqlite:///C:/path/to/old.db'.
- * @param {object} dstConfig - PostgreSQL config { host, port, username, password, database } — informational; the live connection is the singleton.
+ * @param {object} dstConfig - remote engine config { host, port, username, password, database } — informational; the live connection is the singleton.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.
- * @param {number} [options.batchSize=500] - rows per bulkInsert call (PG param limit 65535; 500 rows × ~50 cols is safe).
+ * @param {number} [options.batchSize=500] - rows per bulkInsert call (PG param limit 65535; 500 rows × ~50 cols is safe; MySQL prepared-statement limit is similar).
  * @param {(p: MigrationProgress) => void} [options.onProgress] - progress callback for UI.
  * @returns {Promise<MigrationResult>}
  */
-export async function migrateSqliteToPgsql(
+export async function migrateSqliteToRemote(
     srcConnStr,
     dstConfig,
     options = {}
@@ -133,44 +151,49 @@ export async function migrateSqliteToPgsql(
     let userTables = 0;
 
     // ── 0. Guards ────────────────────────────────────────────────────
-    // The destination must be a PgSQLAdapter. If it's a SQLiteAdapter the
-    // user hasn't switched engine + restarted yet — refuse to run rather
-    // than silently corrupt the live SQLite database.
+    // The destination must NOT be a SQLiteAdapter. If it is, the user
+    // hasn't switched engine + restarted yet — refuse to run rather than
+    // silently corrupt the live SQLite database.
     //
-    // M1 (QA M1 + Security M1): the original guard checked
-    // `userTable` + `initUserSchema`, but BOTH SQLiteAdapter and
-    // PgSQLAdapter implement those (they're abstract on the base class
-    // and concrete on both subclasses), so the check could never
-    // distinguish them — in SQLite mode the guard would pass and the
-    // migration would write to the live SQLite DB. `dropUserSchema` is a
-    // PgSQLAdapter-only extension (§4.1.15; intentionally NOT on the base
-    // class nor on SQLiteAdapter), so it's a reliable discriminator.
-    //
-    // M4 (QA M4): `isConnected` is also PgSQLAdapter-only; the union type
-    // `PgSQLAdapter | SQLiteAdapter` doesn't carry it, so a direct
-    // `adapter.isConnected` access trips TS2339. We cast to a narrow
-    // structural type that declares both optional methods.
-    const adapterAny =
-        /** @type {{ isConnected?: () => boolean, dropUserSchema?: (prefix: string) => Promise<number> }} */ (adapter);
-    if (!adapterAny || typeof adapterAny.dropUserSchema !== 'function') {
+    // Original M1 fix (QA M1 + Security M1) used `dropUserSchema` as a
+    // PgSQLAdapter-only discriminator, but that made the migration
+    // Pg-only and excluded MySQLAdapter (which deliberately has no
+    // `dropUserSchema` because MySQL stores user tables flat under a
+    // `prefix_` naming scheme rather than in per-account schemas). To treat
+    // both remote engines uniformly we now gate on `adapter.engineType` —
+    // an abstract getter every subclass overrides — and accept any value
+    // that isn't `'sqlite'` (or the abstract default `'unknown'`).
+    const engine =
+        /** @type {{ engineType?: string, isConnected?: () => boolean }} */ (
+            adapter
+        ).engineType;
+    if (!engine || engine === 'sqlite' || engine === 'unknown') {
         throw new Error(
-            'migrateSqliteToPgsql: destination adapter is not a PgSQLAdapter. ' +
-                'Switch VRCX_Database.mode to "postgresql" and restart the app before running the migration.'
+            'migrateSqliteToRemote: destination adapter is the default SQLite engine. ' +
+                'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
+                'restart the app before running the migration.'
         );
     }
+    // M4 (QA M4): `isConnected` is a PgSQLAdapter-only extension (not on the
+    // base class nor on MySQLAdapter, which probes health through the C#
+    // MySQL pool's Init path). We probe it best-effort when present so a
+    // disconnected PG pool fails fast with a clear message; subclasses
+    // without it are assumed connected after a successful Init.
+    const adapterAny =
+        /** @type {{ isConnected?: () => boolean }} */ (adapter);
     if (
         typeof adapterAny.isConnected === 'function' &&
         !adapterAny.isConnected()
     ) {
         throw new Error(
-            'migrateSqliteToPgsql: PostgreSQL backend is not connected. ' +
+            `migrateSqliteToRemote: ${engine} backend is not connected. ` +
                 'Check VRCX_Database.host/port/credentials and restart the app.'
         );
     }
 
     // `dstConfig` is informational only — kept in the signature so callers
     // can pass the same config object they saved to VRCXStorage, and so a
-    // future refactor can build a fresh PgSQLAdapter from it if needed.
+    // future refactor can build a fresh adapter from it if needed.
     void dstConfig;
 
     // ── 1. Build source SQLite adapter (read-only) ───────────────────
@@ -439,3 +462,13 @@ async function copyTable(
 }
 
 export { GLOBAL_TABLES, USER_TABLE_NAMES };
+
+/**
+ * Backward-compatible alias for {@link migrateSqliteToRemote}. Kept so the
+ * pre-merge PgSQL-only call site (`advanced.js` `migrateToPgsql`) and any
+ * external callers/tests referencing the historical name keep working after
+ * the engine-agnostic generalisation. The function body is identical:
+ * `migrateSqliteToPgsql === migrateSqliteToRemote`.
+ */
+const migrateSqliteToPgsql = migrateSqliteToRemote;
+export { migrateSqliteToPgsql };

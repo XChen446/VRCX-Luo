@@ -150,6 +150,24 @@ namespace VRCX
         }
 
         /// <summary>
+        /// Reports whether the shared connection is currently open. Mirrors
+        /// <see cref="PostgreSQL.IsConnected"/> so the renderer-side
+        /// <c>testMysqlConnection</c> store action can probe backend health
+        /// symmetrically with PostgreSQL. Safe to call before <see cref="Init"/>
+        /// (returns <c>false</c>) and after <see cref="Exit"/> (returns
+        /// <c>false</c>). Acquires <see cref="m_ConnectionLock"/> so the read
+        /// can't race a concurrent <c>Exit</c>/<c>Init</c> swap.
+        /// </summary>
+        /// <returns><c>true</c> if <see cref="m_Connection"/> is non-null and <see cref="MySqlConnection.State"/> is <see cref="System.Data.ConnectionState.Open"/>.</returns>
+        public bool IsConnected()
+        {
+            lock (m_ConnectionLock)
+            {
+                return m_Connection != null && m_Connection.State == System.Data.ConnectionState.Open;
+            }
+        }
+
+        /// <summary>
         /// Executes a SELECT/PRAGMA-like statement and returns the result set
         /// serialised as a JSON string. Used by the Linux/Electron JS bridge.
         /// </summary>

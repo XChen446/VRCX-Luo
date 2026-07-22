@@ -436,6 +436,14 @@ declare global {
         Execute: (sql: string, args: any) => Promise<any[]>;
         ExecuteJson: (...args: any[]) => Promise<string>;
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
+        /**
+         * Reports whether the shared MySQL/MariaDB connection is open. Bound
+         * via CefSharp (desktop) or Electron main-process IPC; in vitest it is
+         * a noopAsync Proxy (see vitest.setup.js). Symmetric to
+         * PostgreSQL.IsConnected so the renderer's testMysqlConnection store
+         * action can probe backend health the same way.
+         */
+        IsConnected: () => Promise<boolean>;
     };
 
     const webApiService: {

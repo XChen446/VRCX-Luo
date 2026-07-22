@@ -1,4 +1,4 @@
-<template>
+﻿<template>
     <div class="flex flex-col gap-10 py-2">
         <SettingsGroup :title="t('view.settings.advanced.advanced.vrchat_settings.header')">
             <SettingsItem
@@ -249,6 +249,9 @@
                             <SelectItem value="postgresql">
                                 {{ t('view.settings.advanced.advanced.database_engine.mode_postgresql') }}
                             </SelectItem>
+                            <SelectItem value="mysql">
+                                {{ t('view.settings.advanced.advanced.database_engine.mode_mysql') }}
+                            </SelectItem>
                         </SelectGroup>
                     </SelectContent>
                 </Select>
@@ -290,12 +293,51 @@
                     :label="t('view.settings.advanced.advanced.database_engine.migrate')"
                     :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
                     <div class="flex items-center gap-2">
-                        <Button size="sm" variant="outline" :disabled="pgsqlMigrationStatus === 'migrating'" @click="isMigrateDialogVisible = true">
+                        <Button size="sm" variant="outline" :disabled="pgsqlMigrationStatus === 'migrating'" @click="migrateTargetEngine = 'postgresql'; isMigrateDialogVisible = true">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
                         <span v-if="pgsqlMigrationStatus === 'done'" class="text-green-500">✓</span>
                         <span v-if="pgsqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+            </template>
+
+            <template v-else-if="databaseEngine === 'mysql'">
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.mysql_host')">
+                    <Input v-model="mysqlHost" class="w-60" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.mysql_port')">
+                    <Input v-model.number="mysqlPort" type="number" class="w-24" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.mysql_username')">
+                    <Input v-model="mysqlUsername" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.mysql_password')">
+                    <Input v-model="mysqlPassword" type="password" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.mysql_database')">
+                    <Input v-model="mysqlDatabase" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.test_connection')">
+                    <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" @click="onTestMysqlConnection">
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_button') }}
+                        </Button>
+                        <span v-if="mysqlConnectionStatus === 'connected'" class="text-green-500">✓</span>
+                        <span v-if="mysqlConnectionStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+                <SettingsItem
+                    :label="t('view.settings.advanced.advanced.database_engine.migrate')"
+                    :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
+                    <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" :disabled="mysqlMigrationStatus === 'migrating'" @click="migrateTargetEngine = 'mysql'; isMigrateDialogVisible = true">
+                            {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
+                        </Button>
+                        <span v-if="mysqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
+                        <span v-if="mysqlMigrationStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="mysqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
             </template>
@@ -326,7 +368,14 @@
                     <Button variant="outline" size="sm" @click="isMigrateDialogVisible = false">
                         {{ t('confirm.cancel_button') }}
                     </Button>
-                    <Button size="sm" :disabled="pgsqlMigrationStatus === 'migrating'" @click="handleMigrateToPgsql">
+                    <Button
+                        size="sm"
+                        :disabled="
+                            migrateTargetEngine === 'postgresql'
+                                ? pgsqlMigrationStatus === 'migrating'
+                                : mysqlMigrationStatus === 'migrating'
+                        "
+                        @click="handleMigrate">
                         {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                     </Button>
                 </DialogFooter>
@@ -575,7 +624,14 @@
         pgsqlPassword,
         pgsqlDatabase,
         pgsqlConnectionStatus,
-        pgsqlMigrationStatus
+        pgsqlMigrationStatus,
+        mysqlHost,
+        mysqlPort,
+        mysqlUsername,
+        mysqlPassword,
+        mysqlDatabase,
+        mysqlConnectionStatus,
+        mysqlMigrationStatus
     } = storeToRefs(advancedSettingsStore);
 
     const {
@@ -596,7 +652,9 @@
         loadDatabaseEngineConfig,
         saveDatabaseEngineConfig,
         testPgsqlConnection,
-        migrateToPgsql
+        testMysqlConnection,
+        migrateToPgsql,
+        migrateToMysql
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
@@ -604,6 +662,15 @@
     const selectedPurgePeriod = ref('180');
     const isPurgeDialogVisible = ref(false);
     const isMigrateDialogVisible = ref(false);
+    /**
+     * Which remote engine the migration confirmation dialog is targeting.
+     * Set by the migrate buttons (`'postgresql'` / `'mysql'`) before opening
+     * the dialog, then read by `handleMigrate` to dispatch to the right store
+     * action. Defaults to `'postgresql'` for backward compatibility with the
+     * original PgSQL-only flow.
+     * @type {import('vue').Ref<'postgresql' | 'mysql'>}
+     */
+    const migrateTargetEngine = ref('postgresql');
 
     const cacheSize = reactive({
         cachedUsers: 0,
@@ -669,17 +736,37 @@
         const prev = databaseEngine.value;
         databaseEngine.value = value;
         try {
-            await saveDatabaseEngineConfig(value, {
-                host: pgsqlHost.value,
-                port: pgsqlPort.value,
-                username: pgsqlUsername.value,
-                password: pgsqlPassword.value,
-                database: pgsqlDatabase.value
-            });
+            await saveDatabaseEngineConfig(value, remoteConfigFor(value));
         } catch (err) {
             console.error('Failed to save database engine config:', err);
             databaseEngine.value = prev;
         }
+    }
+
+    /**
+     * Build the remote config object for the given engine mode by reading the
+     * matching set of refs ({@code pg*} vs {@code mysql*}). Centralised so the
+     * change / test-connection / migrate handlers all read the same fields.
+     * @param {string} engine - 'postgresql' | 'mysql'
+     * @returns {{host: string, port: number, username: string, password: string, database: string}}
+     */
+    function remoteConfigFor(engine) {
+        if (engine === 'mysql' || engine === 'mariadb') {
+            return {
+                host: mysqlHost.value,
+                port: mysqlPort.value,
+                username: mysqlUsername.value,
+                password: mysqlPassword.value,
+                database: mysqlDatabase.value
+            };
+        }
+        return {
+            host: pgsqlHost.value,
+            port: pgsqlPort.value,
+            username: pgsqlUsername.value,
+            password: pgsqlPassword.value,
+            database: pgsqlDatabase.value
+        };
     }
 
     /** Probe the PG backend health and surface the result via the status ref. */
@@ -702,30 +789,54 @@
     }
 
     /**
-     * Close the confirmation dialog and kick off the migration. Mirrors the
-     * `handlePurge` / `isPurgeDialogVisible` pattern used for avatar feed
-     * purging so the user must confirm before a destructive operation.
+     * Probe the MySQL/MariaDB backend health. Symmetric to
+     * `onTestPgsqlConnection`; persists the current MySQL fields first so the
+     * next boot uses the latest values, then calls the live probe.
      */
-    function handleMigrateToPgsql() {
-        isMigrateDialogVisible.value = false;
-        onMigrateToPgsql();
+    async function onTestMysqlConnection() {
+        try {
+            await saveDatabaseEngineConfig(databaseEngine.value, {
+                host: mysqlHost.value,
+                port: mysqlPort.value,
+                username: mysqlUsername.value,
+                password: mysqlPassword.value,
+                database: mysqlDatabase.value
+            });
+        } catch (err) {
+            console.warn('saveDatabaseEngineConfig before test failed:', err);
+        }
+        await testMysqlConnection();
     }
 
     /**
-     * Run the SQLite → PostgreSQL migration. The destination is the live
-     * singleton adapter, which is a PgSQLAdapter only after the user
-     * switched engine + restarted. If they haven't, `migrateToPgsql` will
-     * throw with a clear message. Noty notifications surface the outcome
-     * in the UI in addition to the console log.
+    /**
+     * Close the confirmation dialog and kick off the migration, dispatched by
+     * `migrateTargetEngine`. Mirrors the `handlePurge` /
+     * `isMigrateDialogVisible` pattern used for avatar feed purging so the
+     * user must confirm before a destructive operation.
      */
-    async function onMigrateToPgsql() {
+    function handleMigrate() {
+        isMigrateDialogVisible.value = false;
+        onMigrate();
+    }
+
+    /**
+     * Run the SQLite to remote (PostgreSQL or MySQL) migration. Dispatched by
+     * `migrateTargetEngine`; the destination is the live singleton adapter,
+     * which is the matching remote adapter only after the user switched
+     * engine + restarted. If they have not, the store action will throw with
+     * a clear message. Noty notifications surface the outcome in the UI in
+     * addition to the console log.
+     */
+    async function onMigrate() {
+        const storeAction =
+            migrateTargetEngine.value === "mysql"
+                ? migrateToMysql
+                : migrateToPgsql;
         try {
-            const result = await migrateToPgsql();
+            const result = await storeAction();
             if (result.errors.length > 0) {
-                console.warn(
-                    'Migration completed with errors:',
-                    result.errors
-                );
+                console.warn('Migration completed with errors:', result.errors);
                 new Noty({
                     type: 'warning',
                     text: `Migration completed with ${result.errors.length} error(s)`

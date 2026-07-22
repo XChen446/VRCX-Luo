@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
-import { migrateSqliteToPgsql } from '../../services/database/migrateEngine.js';
+import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
 import { useModalStore } from '../modal';
@@ -74,8 +74,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const sentryErrorReporting = ref(false);
     const autoJoinGroupCertification = ref(true);
 
-    // ── Phase 9 §6.2 — Database engine selection + SQLite → PgSQL migration ──
-    /** @type {import('vue').Ref<'sqlite'|'postgresql'>} */
+    // ── Phase 9 §6.2 — Database engine selection + SQLite → remote migration ──
+    /** @type {import('vue').Ref<'sqlite'|'postgresql'|'mysql'>} */
     const databaseEngine = ref('sqlite');
     const pgsqlHost = ref('localhost');
     const pgsqlPort = ref(5432);
@@ -86,6 +86,19 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const pgsqlConnectionStatus = ref('idle');
     /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
     const pgsqlMigrationStatus = ref('idle');
+    // MySQL/MariaDB connection refs — mirror the PgSQL set so the Advanced tab
+    // can render a symmetric form + migration control. Default port 3306 is the
+    // MySQL/MariaDB convention; the database name defaults to 'vrcx' to match
+    // the PgSQL default + the CI test fixture (`MYSQL_TEST_DATABASE: vrcx_test`).
+    const mysqlHost = ref('localhost');
+    const mysqlPort = ref(3306);
+    const mysqlUsername = ref('root');
+    const mysqlPassword = ref('');
+    const mysqlDatabase = ref('vrcx');
+    /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
+    const mysqlConnectionStatus = ref('idle');
+    /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
+    const mysqlMigrationStatus = ref('idle');
 
     watch(
         () => watchState.isLoggedIn,
@@ -1147,17 +1160,33 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 VRCXStorage.Get('VRCX_Database.name')
             ]);
             databaseEngine.value =
-                mode === 'postgresql' ? 'postgresql' : 'sqlite';
+                mode === 'postgresql'
+                    ? 'postgresql'
+                    : mode === 'mysql' || mode === 'mariadb'
+                    ? 'mysql'
+                    : 'sqlite';
             pgsqlHost.value = host || 'localhost';
             pgsqlPort.value = Number(port) || 5432;
             pgsqlUsername.value = username || 'vrcx';
             pgsqlPassword.value = password || '';
             // When mode is sqlite, VRCX_Database.name holds the SQLite file
-            // name — don't clobber the PG database name ref with it. Only
-            // adopt the stored value when it looks like a PG database name
+            // name — don't clobber the remote database name ref with it. Only
+            // adopt the stored value when it looks like a remote database name
             // (no path separators, no .db suffix).
-            if (mode === 'postgresql' && name && !/[\\/]/.test(name) && !/\.db$/i.test(name)) {
-                pgsqlDatabase.value = name;
+            if (mode !== 'sqlite' && name && !/[\\/]/.test(name) && !/\.db$/i.test(name)) {
+                if (mode === 'postgresql') {
+                    pgsqlDatabase.value = name;
+                } else {
+                    mysqlDatabase.value = name;
+                }
+            }
+            // MySQL uses the same shared VRCX_Database.* keys, so mirror host/
+            // port/user/pass into the MySQL refs when the active mode is mysql.
+            if (mode === 'mysql' || mode === 'mariadb') {
+                mysqlHost.value = host || 'localhost';
+                mysqlPort.value = Number(port) || 3306;
+                mysqlUsername.value = username || 'root';
+                mysqlPassword.value = password || '';
             }
         } catch (err) {
             console.warn('loadDatabaseEngineConfig failed:', err);
@@ -1169,7 +1198,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      * reads these keys at startup to decide which engine to Init, so a
      * restart is required after switching engines.
      *
-     * @param {'sqlite'|'postgresql'} engine
+     * @param {'sqlite'|'postgresql'|'mysql'} engine
      * @param {object} [pgConfig]
      * @param {string} [pgConfig.host]
      * @param {number} [pgConfig.port]
@@ -1180,12 +1209,17 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      */
     async function saveDatabaseEngineConfig(engine, pgConfig) {
         // If we are switching away from SQLite, snapshot the SQLite file
-        // name before VRCX_Database.name is repurposed for the PG database.
-        // resolveCurrentSqliteDbPath reads sqlitePath first so the SQLite →
-        // PgSQL migration can still locate the source file after restart.
-        if (engine === 'postgresql' && pgConfig) {
+        // name before VRCX_Database.name is repurposed for the remote
+        // database. resolveCurrentSqliteDbPath reads sqlitePath first so the
+        // SQLite → remote migration can still locate the source file after
+        // restart. Applies to both postgresql and mysql/mariadb switches.
+        const isRemoteEngine =
+            engine === 'postgresql' ||
+            engine === 'mysql' ||
+            engine === 'mariadb';
+        if (isRemoteEngine && pgConfig) {
             const currentMode = await VRCXStorage.Get('VRCX_Database.mode');
-            if (currentMode !== 'postgresql') {
+            if (currentMode !== engine) {
                 const currentName = await VRCXStorage.Get(
                     'VRCX_Database.name'
                 );
@@ -1244,6 +1278,41 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
+     * Probe the MySQL/MariaDB backend health. Symmetric to `testPgsqlConnection`;
+     * unlike PG, the MySQL C# binding exposes `IsConnected` rather than a
+     * JSON `GetHealth` payload, so we interpret a truthy `IsConnected` as
+     * connected. Only meaningful when the app booted in `mysql`/`mariadb` mode
+     * (so `MySQL.Instance` is initialised); in `sqlite` mode we can only
+     * report that a switch + restart is required.
+     *
+     * @returns {Promise<{connected: boolean, error?: string}>}
+     */
+    async function testMysqlConnection() {
+        mysqlConnectionStatus.value = 'testing';
+        try {
+            const mode = await VRCXStorage.Get('VRCX_Database.mode');
+            if (
+                (mode === 'mysql' || mode === 'mariadb') &&
+                typeof MySQL !== 'undefined'
+            ) {
+                const connected = await MySQL.IsConnected?.();
+                mysqlConnectionStatus.value = connected
+                    ? 'connected'
+                    : 'failed';
+                return { connected: !!connected };
+            }
+            mysqlConnectionStatus.value = 'failed';
+            return {
+                connected: false,
+                error: 'Current engine is sqlite. Switch to mysql/mariadb and restart to test connection.'
+            };
+        } catch (err) {
+            mysqlConnectionStatus.value = 'failed';
+            return { connected: false, error: err.message || String(err) };
+        }
+    }
+
+    /**
      * Resolve the current SQLite database file path from VRCXStorage. Used as
      * the migration source when switching from SQLite to PostgreSQL. After
      * the user switches engine + restarts, `VRCX_Database.name` is
@@ -1287,7 +1356,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             const source = srcConnStr
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
-            const result = await migrateSqliteToPgsql(
+            const result = await migrateSqliteToRemote(
                 source,
                 {
                     host: pgsqlHost.value,
@@ -1314,6 +1383,54 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             return result;
         } catch (err) {
             pgsqlMigrationStatus.value = 'failed';
+            vrcxStore.databaseUpgradeState.visible = false;
+            throw err;
+        }
+    }
+
+    /**
+     * Run the SQLite → MySQL/MariaDB migration. Symmetric to `migrateToPgsql`;
+     * the underlying `migrateSqliteToRemote` is engine-agnostic and only
+     * requires the live singleton `adapter` to be a `MySQLAdapter` (which it
+     * is after the user switched engine + restarted so the C# `MySQL.Instance`
+     * pool is initialised). The same `DatabaseUpgradeDialog` surfaces
+     * progress.
+     *
+     * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
+     * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
+     */
+    async function migrateToMysql(srcConnStr) {
+        mysqlMigrationStatus.value = 'migrating';
+        vrcxStore.databaseUpgradeState.visible = true;
+        vrcxStore.databaseUpgradeState.fromVersion = -1;
+        vrcxStore.databaseUpgradeState.toVersion = 0;
+        try {
+            const source = srcConnStr
+                ? srcConnStr
+                : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
+            const result = await migrateSqliteToRemote(
+                source,
+                {
+                    host: mysqlHost.value,
+                    port: mysqlPort.value,
+                    username: mysqlUsername.value,
+                    password: mysqlPassword.value,
+                    database: mysqlDatabase.value
+                },
+                {
+                    onProgress: (p) => {
+                        vrcxStore.databaseUpgradeState.currentTable =
+                            p.table;
+                        vrcxStore.databaseUpgradeState.rowsCopied =
+                            p.rowsCopied;
+                    }
+                }
+            );
+            mysqlMigrationStatus.value = 'done';
+            vrcxStore.databaseUpgradeState.visible = false;
+            return result;
+        } catch (err) {
+            mysqlMigrationStatus.value = 'failed';
             vrcxStore.databaseUpgradeState.visible = false;
             throw err;
         }
@@ -1373,10 +1490,19 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         pgsqlDatabase,
         pgsqlConnectionStatus,
         pgsqlMigrationStatus,
+        mysqlHost,
+        mysqlPort,
+        mysqlUsername,
+        mysqlPassword,
+        mysqlDatabase,
+        mysqlConnectionStatus,
+        mysqlMigrationStatus,
         loadDatabaseEngineConfig,
         saveDatabaseEngineConfig,
         testPgsqlConnection,
+        testMysqlConnection,
         migrateToPgsql,
+        migrateToMysql,
         resolveCurrentSqliteDbPath,
 
         setEnablePrimaryPassword,

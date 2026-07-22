@@ -17,6 +17,7 @@ globalThis.WebApi = new Proxy({}, { get: () => noopAsync });
 globalThis.VRCXStorage = new Proxy({}, { get: () => noopAsync });
 globalThis.SQLite = new Proxy({}, { get: () => noopAsync });
 globalThis.PostgreSQL = new Proxy({}, { get: () => noopAsync });
+globalThis.MySQL = new Proxy({}, { get: () => noopAsync });
 globalThis.LogWatcher = new Proxy({}, { get: () => noopAsync });
 globalThis.Discord = new Proxy({}, { get: () => noopAsync });
 globalThis.AssetBundleManager = new Proxy({}, { get: () => noopAsync });
