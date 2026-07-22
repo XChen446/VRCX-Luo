@@ -56,7 +56,11 @@ jobs:
   # Uses `if: always()` because format_js (oxfmt) is currently red at repo baseline
   # (~1140 files with format drift). Without always(), the gate would never pass,
   # silently blocking MySQL/PgSQL integration tests — the high-value jobs.
-  # If format_js is later fixed, this `if: always()` can be removed.
+  # The test_mysql/test_pgsql jobs ALSO declare `if: always()` because GitHub's
+  # default `if: success()` would skip them when any upstream job in the chain
+  # failed (e.g. format_js) — even though the immediate need (quality-gate)
+  # concluded success. Once format_js baseline drift is fixed, these `if: always()`
+  # on the test jobs can be relaxed back to default success() gating if desired.
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
@@ -69,6 +73,7 @@ jobs:
     name: Test MySQL (${{ matrix.mysql-version }})
     runs-on: ubuntu-latest
     needs: quality-gate
+    if: always()
     strategy:
       fail-fast: false
       matrix:
@@ -107,6 +112,7 @@ jobs:
     name: PgSQL Integration (PG ${{ matrix.pg.version }})
     runs-on: ubuntu-latest
     needs: quality-gate
+    if: always()
     strategy:
       fail-fast: false
       matrix:
