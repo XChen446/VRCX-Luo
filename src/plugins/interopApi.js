@@ -10,17 +10,28 @@ export async function initInteropApi(isVrOverlay = false) {
             await CefSharp.BindObjectAsync('AppApiVr');
         } else {
             // @ts-ignore
-            window.AppApiVr = InteropApi.AppApiVrElectron;
+            window.AppApiVr = InteropApi.AppApiVr;
         }
     } else {
         // #region | Init Cef C# bindings
         if (WINDOWS) {
+            // PostgreSQL is registered by C# `JavascriptBindings.cs` (L14)
+            // alongside SQLite, so it is available to be bound here.
+            // MySQL is NOT yet registered on the C# side in this branch —
+            // adding it to `BindObjectAsync` now would reject the whole
+            // promise and break Cef startup. Once the MySQL branch's
+            // `JavascriptBindings.cs` change merges in, append 'MySQL'
+            // to this list. The Electron branch below already wires up
+            // `window.MySQL` via the InteropApi Proxy (safe — the proxy
+            // only forwards calls at runtime, so an unimplemented .NET
+            // MySQL class does not block startup).
             await CefSharp.BindObjectAsync(
                 'AppApi',
                 'WebApi',
                 'VRCXStorage',
                 'SQLite',
                 'MySQL',
+                'PostgreSQL',
                 'LogWatcher',
                 'Discord',
                 'AssetBundleManager'

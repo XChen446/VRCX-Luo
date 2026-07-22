@@ -11,6 +11,11 @@
  *   @engine-specific  — produces engine-dependent SQL syntax (SQLite/PgSQL/MySQL differ)
  *
  * Interface frozen at 42 abstract + 3 optional methods (2026-07-16).
+ *
+ * The `engineType` getter below is metadata, not part of the 42+3
+ * method interface — it carries no SQL semantics and exists solely so
+ * the migration runner can detect the active engine without importing
+ * adapter classes (added 2026-07-19 to align with the MySQL branch).
  */
 
 class EngineAdapter {
@@ -37,6 +42,28 @@ class EngineAdapter {
     }
 
     // ── Optional overrides ──────────────────────────────────────────
+
+    /**
+     * Engine type identifier for runtime engine detection.
+     *
+     * Subclasses override this to return their engine name
+     * (e.g. 'sqlite', 'mysql', 'postgresql'). Used by the migration
+     * runner's `getDatabaseEngine()` without importing adapter classes —
+     * the migration runner reads `adapter.engineType` off the singleton
+     * instead of re-reading `VRCXStorage`, so engine detection stays in
+     * sync with whichever adapter `initAdapter(mode)` actually
+     * constructed.
+     *
+     * Default `'unknown'` ensures that a base-class-only instance (which
+     * cannot exist in production — `EngineAdapter` is abstract) or an
+     * adapter that forgot the override surfaces loudly in migration
+     * compatibility checks rather than silently masquerading as sqlite.
+     *
+     * @type {string}
+     */
+    get engineType() {
+        return 'unknown';
+    }
 
     /**
      * Normalize parameter objects for the dialect's binding style.

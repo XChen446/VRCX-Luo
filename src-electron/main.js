@@ -153,8 +153,11 @@ interopApi.getDotNetObject('ProgramElectron').Init();
     {
         interopApi.getDotNetObject('MySQL').Init();
     }
-    // 2A:不加 postgresql 分支(避免引用 PostgreSQL,PostgreSQL 在 MySQL 分支不存在)
-    // mode='postgresql' 或其他未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
+    else if (mode === 'postgresql')
+    {
+        interopApi.getDotNetObject('PostgreSQL').Init();
+    }
+    // 三个引擎分支之后:mode='postgresql' 之外的未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
     else
     {
         // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,

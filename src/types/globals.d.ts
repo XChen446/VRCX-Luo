@@ -17,6 +17,7 @@ declare global {
         WebApi: WebApi;
         VRCXStorage: VRCXStorage;
         SQLite: SQLite;
+        PostgreSQL: PostgreSQL;
         LogWatcher: LogWatcher;
         Discord: Discord;
         AssetBundleManager: AssetBundleManager;

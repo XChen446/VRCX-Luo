@@ -284,8 +284,11 @@ namespace VRCX
             {
                 MySQL.Instance.Init();
             }
-            // 2A:不加 postgresql 分支(避免引用 PostgreSQL.Instance 编译失败,PostgreSQL.cs 在 MySQL 分支不存在)
-            // mode='postgresql' 或其他未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
+            else if (databaseMode == "postgresql")
+            {
+                PostgreSQL.Instance.Init();
+            }
+            // 三个远程/本地引擎分支之后:其他未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
             else
             {
                 // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,
@@ -315,7 +318,9 @@ namespace VRCX
             Discord.Instance.Exit();
             VRCXStorage.Instance.Save();
             SQLite.Instance.Exit();
+            // 三个引擎 Exit() 均对未初始化单例空安全(可重入 guard),故此处无条件全部清理。
             MySQL.Instance.Exit();
+            PostgreSQL.Instance.Exit();
             ProcessMonitor.Instance.Exit();
         }
 #else

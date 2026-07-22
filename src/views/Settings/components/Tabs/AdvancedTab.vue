@@ -233,6 +233,106 @@
             </div>
         </SettingsGroup>
 
+        <SettingsGroup :title="t('view.settings.advanced_groups.database_engine.header')">
+            <SettingsItem
+                :label="t('view.settings.advanced.advanced.database_engine.mode')"
+                :description="t('view.settings.advanced.advanced.database_engine.mode_description')">
+                <Select :model-value="databaseEngine" @update:modelValue="onDatabaseEngineChange">
+                    <SelectTrigger class="w-40">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectGroup>
+                            <SelectItem value="sqlite">
+                                {{ t('view.settings.advanced.advanced.database_engine.mode_sqlite') }}
+                            </SelectItem>
+                            <SelectItem value="postgresql">
+                                {{ t('view.settings.advanced.advanced.database_engine.mode_postgresql') }}
+                            </SelectItem>
+                        </SelectGroup>
+                    </SelectContent>
+                </Select>
+            </SettingsItem>
+
+            <Alert variant="warning" class="mb-1">
+                <TriangleAlert />
+                <AlertDescription>
+                    {{ t('view.settings.advanced.advanced.database_engine.restart_hint') }}
+                </AlertDescription>
+            </Alert>
+
+            <template v-if="databaseEngine === 'postgresql'">
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_host')">
+                    <Input v-model="pgsqlHost" class="w-60" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_port')">
+                    <Input v-model.number="pgsqlPort" type="number" class="w-24" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_username')">
+                    <Input v-model="pgsqlUsername" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_password')">
+                    <Input v-model="pgsqlPassword" type="password" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_database')">
+                    <Input v-model="pgsqlDatabase" class="w-40" />
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.test_connection')">
+                    <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" @click="onTestPgsqlConnection">
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_button') }}
+                        </Button>
+                        <span v-if="pgsqlConnectionStatus === 'connected'" class="text-green-500">✓</span>
+                        <span v-if="pgsqlConnectionStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+                <SettingsItem
+                    :label="t('view.settings.advanced.advanced.database_engine.migrate')"
+                    :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
+                    <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" :disabled="pgsqlMigrationStatus === 'migrating'" @click="isMigrateDialogVisible = true">
+                            {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
+                        </Button>
+                        <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
+                        <span v-if="pgsqlMigrationStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="pgsqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+            </template>
+        </SettingsGroup>
+
+        <Dialog
+            :open="isMigrateDialogVisible"
+            @update:open="
+                (open) => {
+                    if (!open) isMigrateDialogVisible = false;
+                }
+            ">
+            <DialogContent class="x-dialog sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>{{
+                        t('view.settings.advanced.advanced.database_engine.migrate')
+                    }}</DialogTitle>
+                </DialogHeader>
+
+                <Alert variant="warning" class="mb-3">
+                    <TriangleAlert />
+                    <AlertDescription>
+                        {{ t('view.settings.advanced.advanced.database_engine.migrate_hint') }}
+                    </AlertDescription>
+                </Alert>
+
+                <DialogFooter>
+                    <Button variant="outline" size="sm" @click="isMigrateDialogVisible = false">
+                        {{ t('confirm.cancel_button') }}
+                    </Button>
+                    <Button size="sm" :disabled="pgsqlMigrationStatus === 'migrating'" @click="handleMigrateToPgsql">
+                        {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
         <SettingsGroup :title="t('view.settings.advanced.advanced.database_cleanup.header')">
             <SettingsItem
                 :label="t('view.settings.advanced.advanced.database_cleanup.auto_cleanup')"
@@ -386,10 +486,12 @@
 
 <script setup>
     import { Trash2, TriangleAlert } from 'lucide-vue-next';
-    import { computed, reactive, ref } from 'vue';
+    import { computed, onMounted, reactive, ref } from 'vue';
+    import Noty from 'noty';
     import { Button } from '@/components/ui/button';
     import { Switch } from '@/components/ui/switch';
     import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    import { Input } from '@/components/ui/input';
     import { Alert, AlertDescription } from '@/components/ui/alert';
     import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
     import { storeToRefs } from 'pinia';
@@ -465,7 +567,15 @@
         avatarAutoCleanup,
         purgeInProgress,
         sentryErrorReporting,
-        autoJoinGroupCertification
+        autoJoinGroupCertification,
+        databaseEngine,
+        pgsqlHost,
+        pgsqlPort,
+        pgsqlUsername,
+        pgsqlPassword,
+        pgsqlDatabase,
+        pgsqlConnectionStatus,
+        pgsqlMigrationStatus
     } = storeToRefs(advancedSettingsStore);
 
     const {
@@ -482,13 +592,18 @@
         purgeAvatarFeedData,
         promptAutoClearVRCXCacheFrequency,
         setSentryErrorReporting,
-        setAutoJoinGroupCertification
+        setAutoJoinGroupCertification,
+        loadDatabaseEngineConfig,
+        saveDatabaseEngineConfig,
+        testPgsqlConnection,
+        migrateToPgsql
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
     const visits = ref(null);
     const selectedPurgePeriod = ref('180');
     const isPurgeDialogVisible = ref(false);
+    const isMigrateDialogVisible = ref(false);
 
     const cacheSize = reactive({
         cachedUsers: 0,
@@ -542,4 +657,101 @@
             visits.value = args.json;
         });
     }
+
+    // ── Phase 9 §6.2 — Database engine selection + migration handlers ──
+    /**
+     * Persist the newly selected engine mode. A restart is required for the
+     * C# layer to re-Init the chosen backend; we don't switch adapters at
+     * runtime.
+     * @param {string} value
+     */
+    async function onDatabaseEngineChange(value) {
+        const prev = databaseEngine.value;
+        databaseEngine.value = value;
+        try {
+            await saveDatabaseEngineConfig(value, {
+                host: pgsqlHost.value,
+                port: pgsqlPort.value,
+                username: pgsqlUsername.value,
+                password: pgsqlPassword.value,
+                database: pgsqlDatabase.value
+            });
+        } catch (err) {
+            console.error('Failed to save database engine config:', err);
+            databaseEngine.value = prev;
+        }
+    }
+
+    /** Probe the PG backend health and surface the result via the status ref. */
+    async function onTestPgsqlConnection() {
+        // Persist current fields first so the C# layer (on next restart) uses
+        // the latest values; the live probe runs against the already-Init'd
+        // connection from the current boot.
+        try {
+            await saveDatabaseEngineConfig(databaseEngine.value, {
+                host: pgsqlHost.value,
+                port: pgsqlPort.value,
+                username: pgsqlUsername.value,
+                password: pgsqlPassword.value,
+                database: pgsqlDatabase.value
+            });
+        } catch (err) {
+            console.warn('saveDatabaseEngineConfig before test failed:', err);
+        }
+        await testPgsqlConnection();
+    }
+
+    /**
+     * Close the confirmation dialog and kick off the migration. Mirrors the
+     * `handlePurge` / `isPurgeDialogVisible` pattern used for avatar feed
+     * purging so the user must confirm before a destructive operation.
+     */
+    function handleMigrateToPgsql() {
+        isMigrateDialogVisible.value = false;
+        onMigrateToPgsql();
+    }
+
+    /**
+     * Run the SQLite → PostgreSQL migration. The destination is the live
+     * singleton adapter, which is a PgSQLAdapter only after the user
+     * switched engine + restarted. If they haven't, `migrateToPgsql` will
+     * throw with a clear message. Noty notifications surface the outcome
+     * in the UI in addition to the console log.
+     */
+    async function onMigrateToPgsql() {
+        try {
+            const result = await migrateToPgsql();
+            if (result.errors.length > 0) {
+                console.warn(
+                    'Migration completed with errors:',
+                    result.errors
+                );
+                new Noty({
+                    type: 'warning',
+                    text: `Migration completed with ${result.errors.length} error(s)`
+                }).show();
+            } else {
+                new Noty({
+                    type: 'success',
+                    text: `Migration done: ${result.globalTables} global tables, ${result.userTables} user tables, ${result.rowsCopied} rows copied`
+                }).show();
+            }
+            console.log(
+                `Migration done: ${result.globalTables} global tables, ` +
+                    `${result.userTables} user tables, ` +
+                    `${result.rowsCopied} rows copied, ` +
+                    `${result.errors.length} errors.`
+            );
+        } catch (err) {
+            console.error('Migration failed:', err);
+            new Noty({
+                type: 'error',
+                text: `Migration failed: ${err.message || err}`
+            }).show();
+        }
+    }
+
+    onMounted(() => {
+        loadDatabaseEngineConfig();
+    });
 </script>

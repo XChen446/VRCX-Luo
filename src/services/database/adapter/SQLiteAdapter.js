@@ -20,6 +20,21 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
+     * Engine type identifier — used by the migration runner's
+     * `getDatabaseEngine()` to detect the active engine from the
+     * singleton adapter without importing adapter classes or re-reading
+     * `VRCXStorage`. Aligns with the MySQL branch's `engineType` getter
+     * mechanism (SQLiteAdapter → 'sqlite', PgSQLAdapter → 'postgresql',
+     * MySQLAdapter → 'mysql').
+     *
+     * @override
+     * @type {string}
+     */
+    get engineType() {
+        return 'sqlite';
+    }
+
+    /**
      * @param {object} [config]
      * @param {string} [config.connection] - sqlite:/// URI 或连接字符串
      * @param {...object} [config.params] - 额外连接参数（覆盖默认）
