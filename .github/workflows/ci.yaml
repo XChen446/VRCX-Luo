@@ -52,7 +52,7 @@ jobs:
           dotnet format whitespace --no-restore --verify-no-changes
           dotnet format style --no-restore --verify-no-changes
 
-test_mysql:
+  test_mysql:
     name: Test MySQL (${{ matrix.mysql-version }})
     runs-on: ubuntu-latest
     needs: lint_js
