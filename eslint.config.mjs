@@ -23,6 +23,7 @@ export default defineConfig([
                 VRCXStorage: 'readonly',
                 SQLite: 'readonly',
                 PostgreSQL: 'readonly',
+                MySQL: 'readonly',
                 LogWatcher: 'readonly',
                 Discord: 'readonly',
                 AppApi: 'readonly',

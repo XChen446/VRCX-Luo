@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n';
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
 import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
-import { createAdapter } from '../../services/database/adapter/index.js';
+import { adapter, createAdapter } from '../../services/database/adapter/index.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
 import { useModalStore } from '../modal';
@@ -641,7 +641,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         if (lastCleanupStr) {
             const lastCleanup = new Date(lastCleanupStr);
             const daysSinceLastCleanup =
-                (now - lastCleanup) / (1000 * 60 * 60 * 24);
+                (now.getTime() - lastCleanup.getTime()) /
+                (1000 * 60 * 60 * 24);
             if (daysSinceLastCleanup < 7) return;
         }
 
@@ -1280,29 +1281,43 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
 
     /**
      * Probe the PostgreSQL backend health. Only meaningful when the app
-     * booted in `postgresql` mode (so `PostgreSQL.Instance` is initialised);
-     * in `sqlite` mode we can only validate the config fields and report
-     * that a switch + restart is required.
+     * *booted* in `postgresql` mode, because the C# `PostgreSQL.Instance`
+     * is only `Init()`'d at startup when `VRCX_Database.mode ===
+     * 'postgresql'` (Program.cs). The frontend singleton `adapter` is the
+     * authoritative witness of the current boot's engine: its
+     * `engineType` getter returns `'postgresql'` only when
+     * `initAdapter('postgresql')` ran at startup. We therefore gate on
+     * `adapter.engineType` — NOT on `VRCXStorage.Get('VRCX_Database.mode')`,
+     * which the user may have just rewritten via `onDatabaseEngineChange`
+     * without restarting. Gating on the storage value would let a stale
+     * `mode === 'postgresql'` reach `PostgreSQL.GetHealth()` on a process
+     * that never Init'd PG, returning a misleading "connection failed"
+     * that hides the real cause (needs restart).
      *
      * @returns {Promise<{connected: boolean, error?: string}>}
      */
     async function testPgsqlConnection() {
         pgsqlConnectionStatus.value = 'testing';
         try {
-            const mode = await VRCXStorage.Get('VRCX_Database.mode');
-            if (mode === 'postgresql' && typeof PostgreSQL !== 'undefined') {
-                const health = await PostgreSQL.GetHealth?.();
-                const parsed = health ? JSON.parse(health) : { connected: false };
-                pgsqlConnectionStatus.value = parsed.connected
-                    ? 'connected'
-                    : 'failed';
-                return parsed;
+            // `adapter` is a live ESM binding, so it reflects whichever
+            // adapter `initAdapter(mode)` constructed at startup. Reading
+            // `VRCXStorage` here would be wrong — the user may have
+            // switched the persisted mode without restarting.
+            if (adapter?.engineType !== 'postgresql') {
+                pgsqlConnectionStatus.value = 'failed';
+                return {
+                    connected: false,
+                    error:
+                        'VRCX is not running in postgresql mode this session. ' +
+                        'Save the engine selection and restart VRCX, then test the connection again.'
+                };
             }
-            pgsqlConnectionStatus.value = 'failed';
-            return {
-                connected: false,
-                error: 'Current engine is sqlite. Switch to postgresql and restart to test connection.'
-            };
+            const health = await PostgreSQL.GetHealth?.();
+            const parsed = health ? JSON.parse(health) : { connected: false };
+            pgsqlConnectionStatus.value = parsed.connected
+                ? 'connected'
+                : 'failed';
+            return parsed;
         } catch (err) {
             pgsqlConnectionStatus.value = 'failed';
             return { connected: false, error: err.message || String(err) };
@@ -1322,22 +1337,28 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     async function testMysqlConnection() {
         mysqlConnectionStatus.value = 'testing';
         try {
-            const mode = await VRCXStorage.Get('VRCX_Database.mode');
-            if (
-                (mode === 'mysql' || mode === 'mariadb') &&
-                typeof MySQL !== 'undefined'
-            ) {
-                const connected = await MySQL.IsConnected?.();
-                mysqlConnectionStatus.value = connected
-                    ? 'connected'
-                    : 'failed';
-                return { connected: !!connected };
+            // Gate on the runtime adapter, not `VRCXStorage.mode`. See
+            // `testPgsqlConnection` for the full rationale: the user may
+            // have persisted `mysql`/`mariadb` without restarting, in
+            // which case `MySQL.Instance` was never `Init()`'d this boot
+            // and `MySQL.IsConnected` returns false for the wrong reason.
+            // `MySQLAdapter.engineType` is `'mysql'` for both `mysql` and
+            // `mariadb` modes (mariadb is a mysql alias), so a single
+            // check covers both.
+            if (adapter?.engineType !== 'mysql') {
+                mysqlConnectionStatus.value = 'failed';
+                return {
+                    connected: false,
+                    error:
+                        'VRCX is not running in mysql/mariadb mode this session. ' +
+                        'Save the engine selection and restart VRCX, then test the connection again.'
+                };
             }
-            mysqlConnectionStatus.value = 'failed';
-            return {
-                connected: false,
-                error: 'Current engine is sqlite. Switch to mysql/mariadb and restart to test connection.'
-            };
+            const connected = await MySQL.IsConnected?.();
+            mysqlConnectionStatus.value = connected
+                ? 'connected'
+                : 'failed';
+            return { connected: !!connected };
         } catch (err) {
             mysqlConnectionStatus.value = 'failed';
             return { connected: false, error: err.message || String(err) };
