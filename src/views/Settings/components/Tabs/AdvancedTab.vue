@@ -264,6 +264,43 @@
                 </AlertDescription>
             </Alert>
 
+            <template v-if="databaseEngine === 'sqlite'">
+                <SettingsItem
+                    :label="t('view.settings.advanced.advanced.database_engine.sqlite_path')"
+                    :description="t('view.settings.advanced.advanced.database_engine.sqlite_path_description')">
+                    <div class="flex items-center gap-2 w-full">
+                        <Input v-model="sqlitePath" class="w-72" :placeholder="t('view.settings.advanced.advanced.database_engine.sqlite_path_placeholder')" />
+                        <Button size="sm" variant="outline" @click="onBrowseSqliteFolder">
+                            <FolderOpen class="h-4 w-4 mr-1" />
+                            {{ t('view.settings.advanced.advanced.database_engine.browse_folder_button') }}
+                        </Button>
+                        <Button size="sm" variant="outline" @click="onBrowseSqliteFile">
+                            <FileUp class="h-4 w-4 mr-1" />
+                            {{ t('view.settings.advanced.advanced.database_engine.browse_file_button') }}
+                        </Button>
+                    </div>
+                </SettingsItem>
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.test_connection')">
+                    <div class="flex items-center gap-2 w-full">
+                        <Button
+                            size="sm"
+                            :variant="sqliteConnectionStatus === 'connected' ? 'default' : sqliteConnectionStatus === 'failed' ? 'destructive' : 'outline'"
+                            :class="sqliteConnectionStatus === 'connected' ? 'bg-green-600 hover:bg-green-600 text-white' : sqliteConnectionStatus === 'failed' ? 'bg-red-600 hover:bg-red-600 text-white' : ''"
+                            :disabled="sqliteConnectionStatus === 'testing'"
+                            @click="onTestSqliteConnection">
+                            <Loader2 v-if="sqliteConnectionStatus === 'testing'" class="h-4 w-4 mr-1 animate-spin" />
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_button') }}
+                        </Button>
+                        <span v-if="sqliteConnectionStatus === 'connected'" class="text-green-500 text-sm truncate">
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_ok') }}
+                        </span>
+                        <span v-if="sqliteConnectionStatus === 'failed' && sqliteConnectionError" class="text-red-500 text-sm truncate max-w-md" :title="sqliteConnectionError">
+                            {{ sqliteConnectionError }}
+                        </span>
+                    </div>
+                </SettingsItem>
+            </template>
+
             <template v-if="databaseEngine === 'postgresql'">
                 <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.pg_host')">
                     <Input v-model="pgsqlHost" class="w-60" />
@@ -534,7 +571,7 @@
 </template>
 
 <script setup>
-    import { Trash2, TriangleAlert } from 'lucide-vue-next';
+    import { Trash2, TriangleAlert, FolderOpen, FileUp, Loader2 } from 'lucide-vue-next';
     import { computed, onMounted, reactive, ref } from 'vue';
     import Noty from 'noty';
     import { Button } from '@/components/ui/button';
@@ -631,7 +668,10 @@
         mysqlPassword,
         mysqlDatabase,
         mysqlConnectionStatus,
-        mysqlMigrationStatus
+        mysqlMigrationStatus,
+        sqlitePath,
+        sqliteConnectionStatus,
+        sqliteConnectionError
     } = storeToRefs(advancedSettingsStore);
 
     const {
@@ -653,6 +693,9 @@
         saveDatabaseEngineConfig,
         testPgsqlConnection,
         testMysqlConnection,
+        testSqliteConnection,
+        browseSqlitePath,
+        browseSqliteFolder,
         migrateToPgsql,
         migrateToMysql
     } = advancedSettingsStore;
@@ -729,14 +772,21 @@
     /**
      * Persist the newly selected engine mode. A restart is required for the
      * C# layer to re-Init the chosen backend; we don't switch adapters at
-     * runtime.
+     * runtime. For sqlite we persist the current `sqlitePath` ref; for
+     * remote engines we persist the matching remote config.
      * @param {string} value
      */
     async function onDatabaseEngineChange(value) {
         const prev = databaseEngine.value;
         databaseEngine.value = value;
         try {
-            await saveDatabaseEngineConfig(value, remoteConfigFor(value));
+            if (value === 'sqlite') {
+                await saveDatabaseEngineConfig('sqlite', null, {
+                    sqlitePath: sqlitePath.value
+                });
+            } else {
+                await saveDatabaseEngineConfig(value, remoteConfigFor(value));
+            }
         } catch (err) {
             console.error('Failed to save database engine config:', err);
             databaseEngine.value = prev;
@@ -747,8 +797,10 @@
      * Build the remote config object for the given engine mode by reading the
      * matching set of refs ({@code pg*} vs {@code mysql*}). Centralised so the
      * change / test-connection / migrate handlers all read the same fields.
-     * @param {string} engine - 'postgresql' | 'mysql'
-     * @returns {{host: string, port: number, username: string, password: string, database: string}}
+     * Returns `null` for sqlite — sqlite has no remote config, its path is
+     * handled separately through the `sqlitePath` ref.
+     * @param {string} engine - 'postgresql' | 'mysql' | 'sqlite'
+     * @returns {{host: string, port: number, username: string, password: string, database: string} | null}
      */
     function remoteConfigFor(engine) {
         if (engine === 'mysql' || engine === 'mariadb') {
@@ -759,6 +811,9 @@
                 password: mysqlPassword.value,
                 database: mysqlDatabase.value
             };
+        }
+        if (engine === 'sqlite') {
+            return null;
         }
         return {
             host: pgsqlHost.value,
@@ -775,13 +830,10 @@
         // the latest values; the live probe runs against the already-Init'd
         // connection from the current boot.
         try {
-            await saveDatabaseEngineConfig(databaseEngine.value, {
-                host: pgsqlHost.value,
-                port: pgsqlPort.value,
-                username: pgsqlUsername.value,
-                password: pgsqlPassword.value,
-                database: pgsqlDatabase.value
-            });
+            await saveDatabaseEngineConfig(
+                databaseEngine.value,
+                remoteConfigFor('postgresql')
+            );
         } catch (err) {
             console.warn('saveDatabaseEngineConfig before test failed:', err);
         }
@@ -795,17 +847,47 @@
      */
     async function onTestMysqlConnection() {
         try {
-            await saveDatabaseEngineConfig(databaseEngine.value, {
-                host: mysqlHost.value,
-                port: mysqlPort.value,
-                username: mysqlUsername.value,
-                password: mysqlPassword.value,
-                database: mysqlDatabase.value
-            });
+            await saveDatabaseEngineConfig(
+                databaseEngine.value,
+                remoteConfigFor('mysql')
+            );
         } catch (err) {
             console.warn('saveDatabaseEngineConfig before test failed:', err);
         }
         await testMysqlConnection();
+    }
+
+    /**
+     * Open the native folder picker for the SQLite database location. The
+     * store appends `\VRCX.sqlite3` and canonicalizes the result.
+     */
+    async function onBrowseSqliteFolder() {
+        await browseSqliteFolder();
+    }
+
+    /**
+     * Open the native file picker for an existing SQLite database file.
+     */
+    async function onBrowseSqliteFile() {
+        await browseSqlitePath();
+    }
+
+    /**
+     * Probe the SQLite database file by new-ing a throwaway adapter in
+     * read-write mode. Persists the current path first so a subsequent
+     * restart uses the probed path, then runs the probe. If the file does
+     * not exist it is created (proving the directory is writable); if it
+     * exists it is opened and validated as a SQLite database.
+     */
+    async function onTestSqliteConnection() {
+        try {
+            await saveDatabaseEngineConfig('sqlite', null, {
+                sqlitePath: sqlitePath.value
+            });
+        } catch (err) {
+            console.warn('saveDatabaseEngineConfig before test failed:', err);
+        }
+        await testSqliteConnection();
     }
 
     /**

@@ -212,7 +212,7 @@ export async function initAdapter(mode = 'sqlite') {
  *
  * @param {object} config
  * @param {string} config.connection - 连接 URI，如 sqlite:///C:/path.db 或 postgresql://host:port/db
- * @param {...object} [config.params] - 额外连接参数（覆盖默认）
+ * @param {...object} [config.params] - 额外连接参数（覆盖默认，如 'Read Only': 'False'）
  * @returns {Promise<import('./EngineAdapter.js').EngineAdapter>}
  */
 async function createAdapter(config) {

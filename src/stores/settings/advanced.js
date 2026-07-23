@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n';
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
 import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
+import { createAdapter } from '../../services/database/adapter/index.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
 import { useModalStore } from '../modal';
@@ -97,6 +98,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const mysqlDatabase = ref('vrcx');
     /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
     const mysqlConnectionStatus = ref('idle');
+    // SQLite database file path. Persisted to VRCX_Database.name (which IS the
+    // path field for sqlite mode — there is no separate sqlitePath key). An
+    // empty value means "use the default AppData location" (handled by the C#
+    // SQLite.Init / ResolveDatabasePath fallback).
+    /** @type {import('vue').Ref<string>} */
+    const sqlitePath = ref('');
+    /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
+    const sqliteConnectionStatus = ref('idle');
+    /** @type {import('vue').Ref<string>} */
+    const sqliteConnectionError = ref('');
     /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
     const mysqlMigrationStatus = ref('idle');
 
@@ -1159,35 +1170,45 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 VRCXStorage.Get('VRCX_Database.password'),
                 VRCXStorage.Get('VRCX_Database.name')
             ]);
-            databaseEngine.value =
+            const normalizedMode =
                 mode === 'postgresql'
                     ? 'postgresql'
                     : mode === 'mysql' || mode === 'mariadb'
                     ? 'mysql'
                     : 'sqlite';
-            pgsqlHost.value = host || 'localhost';
-            pgsqlPort.value = Number(port) || 5432;
-            pgsqlUsername.value = username || 'vrcx';
-            pgsqlPassword.value = password || '';
-            // When mode is sqlite, VRCX_Database.name holds the SQLite file
-            // name — don't clobber the remote database name ref with it. Only
-            // adopt the stored value when it looks like a remote database name
-            // (no path separators, no .db suffix).
-            if (mode !== 'sqlite' && name && !/[\\/]/.test(name) && !/\.db$/i.test(name)) {
-                if (mode === 'postgresql') {
+            databaseEngine.value = normalizedMode;
+            // SQLite path is the single `VRCX_Database.name` field — there is
+            // no separate sqlitePath key. In sqlite mode `name` holds the file
+            // path (or is empty for the default AppData location); in remote
+            // modes `name` holds the remote database name. Load it into the
+            // matching ref so the UI shows the right value for each engine.
+            if (normalizedMode === 'sqlite') {
+                sqlitePath.value = name || '';
+            } else if (name && !/[\\/]/.test(name) && !/\.db$/i.test(name)) {
+                // Looks like a remote database name (no path separators, no
+                // .db suffix) — adopt it into the matching remote ref.
+                if (normalizedMode === 'postgresql') {
                     pgsqlDatabase.value = name;
                 } else {
                     mysqlDatabase.value = name;
                 }
             }
+            pgsqlHost.value = host || 'localhost';
+            pgsqlPort.value = Number(port) || 5432;
+            pgsqlUsername.value = username || 'vrcx';
+            pgsqlPassword.value = password || '';
             // MySQL uses the same shared VRCX_Database.* keys, so mirror host/
             // port/user/pass into the MySQL refs when the active mode is mysql.
-            if (mode === 'mysql' || mode === 'mariadb') {
+            if (normalizedMode === 'mysql') {
                 mysqlHost.value = host || 'localhost';
                 mysqlPort.value = Number(port) || 3306;
                 mysqlUsername.value = username || 'root';
                 mysqlPassword.value = password || '';
             }
+            // Reset the SQLite connection probe state on load — the path may
+            // have changed since last mount and a stale status is misleading.
+            sqliteConnectionStatus.value = 'idle';
+            sqliteConnectionError.value = '';
         } catch (err) {
             console.warn('loadDatabaseEngineConfig failed:', err);
         }
@@ -1198,50 +1219,61 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      * reads these keys at startup to decide which engine to Init, so a
      * restart is required after switching engines.
      *
-     * @param {'sqlite'|'postgresql'|'mysql'} engine
-     * @param {object} [pgConfig]
-     * @param {string} [pgConfig.host]
-     * @param {number} [pgConfig.port]
-     * @param {string} [pgConfig.username]
-     * @param {string} [pgConfig.password]
-     * @param {string} [pgConfig.database]
+     * `VRCX_Database.name` is a single shared field whose meaning depends on
+     * the engine: it is the SQLite file path in `sqlite` mode and the remote
+     * database name in `postgresql`/`mysql` mode. This function writes the
+     * correct value into `name` for the chosen engine and never touches the
+     * remote connection keys (host/port/username/password) when the target is
+     * sqlite, so switching back to SQLite cannot be corrupted by leftover
+     * remote values.
+     *
+     * @param {string} engine - 'sqlite' | 'postgresql' | 'mysql' | 'mariadb'
+     * @param {{host?: string, port?: number, username?: string, password?: string, database?: string}} [remoteConfig]
+     *   remote engine config; REQUIRED for `postgresql`/`mysql`, ignored for
+     *   `sqlite`. Pass `null`/`undefined` for sqlite (the sqlite path comes
+     *   from `sqlitePath` ref / caller).
+     * @param {object} [opts] - extra options.
+     * @param {string} [opts.sqlitePath] - SQLite file path to persist as
+     *   `VRCX_Database.name` when `engine === 'sqlite'`. When omitted for
+     *   sqlite, the current `sqlitePath` ref value is used (may be empty →
+     *   C# falls back to the default AppData location).
      * @returns {Promise<void>}
      */
-    async function saveDatabaseEngineConfig(engine, pgConfig) {
-        // If we are switching away from SQLite, snapshot the SQLite file
-        // name before VRCX_Database.name is repurposed for the remote
-        // database. resolveCurrentSqliteDbPath reads sqlitePath first so the
-        // SQLite → remote migration can still locate the source file after
-        // restart. Applies to both postgresql and mysql/mariadb switches.
-        const isRemoteEngine =
-            engine === 'postgresql' ||
-            engine === 'mysql' ||
-            engine === 'mariadb';
-        if (isRemoteEngine && pgConfig) {
-            const currentMode = await VRCXStorage.Get('VRCX_Database.mode');
-            if (currentMode !== engine) {
-                const currentName = await VRCXStorage.Get(
-                    'VRCX_Database.name'
-                );
-                if (currentName) {
-                    await VRCXStorage.Set(
-                        'VRCX_Database.sqlitePath',
-                        currentName
-                    );
-                }
-            }
+    async function saveDatabaseEngineConfig(engine, remoteConfig, opts = {}) {
+        const normalizedEngine =
+            engine === 'mariadb' ? 'mysql' : /** @type {string} */ (engine);
+        await VRCXStorage.Set('VRCX_Database.mode', normalizedEngine);
+        if (normalizedEngine === 'sqlite') {
+            // Persist the SQLite file path into the shared `name` field.
+            // Do NOT touch host/port/username/password — leaving whatever was
+            // there is harmless (C# SQLite.Init ignores them) and avoids any
+            // risk of overwriting the path with a remote database name.
+            const pathToSave =
+                opts.sqlitePath !== undefined
+                    ? opts.sqlitePath
+                    : sqlitePath.value;
+            await VRCXStorage.Set('VRCX_Database.name', pathToSave || '');
+            return;
         }
-        await VRCXStorage.Set('VRCX_Database.mode', engine);
-        if (pgConfig) {
+        if (remoteConfig) {
             await Promise.all([
-                VRCXStorage.Set('VRCX_Database.host', pgConfig.host),
+                VRCXStorage.Set('VRCX_Database.host', remoteConfig.host),
                 VRCXStorage.Set(
                     'VRCX_Database.port',
-                    String(pgConfig.port)
+                    String(remoteConfig.port)
                 ),
-                VRCXStorage.Set('VRCX_Database.username', pgConfig.username),
-                VRCXStorage.Set('VRCX_Database.password', pgConfig.password),
-                VRCXStorage.Set('VRCX_Database.name', pgConfig.database)
+                VRCXStorage.Set(
+                    'VRCX_Database.username',
+                    remoteConfig.username
+                ),
+                VRCXStorage.Set(
+                    'VRCX_Database.password',
+                    remoteConfig.password
+                ),
+                VRCXStorage.Set(
+                    'VRCX_Database.name',
+                    remoteConfig.database
+                )
             ]);
         }
     }
@@ -1312,23 +1344,267 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         }
     }
 
+    // ── SQLite path picker + connection probe ───────────────────────────
+    //
+    // The SQLite engine uses a single local file. The UI exposes a path
+    // input + a "Browse..." button that opens a native dialog (folder OR
+    // file) and a "Test Connection" button that opens the file through a
+    // throwaway SQLite driver to confirm it is a readable database before
+    // the user commits + restarts.
+    //
+    // `VRCX_Database.name` IS the path field for sqlite mode — there is no
+    // separate sqlitePath key. The `sqlitePath` ref below is a UI-only copy
+    // hydrated from `VRCX_Database.name` by `loadDatabaseEngineConfig` and
+    // written back through `saveDatabaseEngineConfig('sqlite', null,
+    // { sqlitePath })`.
+
+    /** Allowed SQLite file extensions (must match C# `AllowedDatabaseExtensions`). */
+    const SQLITE_ALLOWED_EXTENSIONS = ['.db', '.db3', '.sqlite3'];
+
+    /**
+     * Native browse dialog for the SQLite database path. The user may pick
+     * either a folder or a file:
+     *   - Folder → the canonical path gets `\VRCX.sqlite3` appended, then
+     *     resolved through `AppApi.ResolveDatabaseName` (realpath +
+     *     validation) so the returned value is the final absolute file path.
+     *   - File → the selected file's extension is validated against the
+     *     allowed set (`.db`/`.db3`/`.sqlite3`) before being accepted; an
+     *     invalid extension is rejected with a toast and the ref is left
+     *     unchanged.
+     *
+     * On cancel the ref is left untouched.
+     *
+     * @returns {Promise<void>}
+     */
+    async function browseSqlitePath() {
+        if (state.folderSelectorDialogVisible) return;
+        state.folderSelectorDialogVisible = true;
+        let picked = '';
+        try {
+            // First offer a folder selection (the common case — the app
+            // creates `VRCX.sqlite3` inside it). We reuse the file dialog
+            // with a SQLite filter so the user can also pick an existing
+            // database file in the same dialog.
+            const filter =
+                'SQLite database (*.db;*.db3;*.sqlite3)|*.db;*.db3;*.sqlite3|All files (*.*)|*.*';
+            if (WINDOWS) {
+                picked = await AppApi.OpenFileSelectorDialog(
+                    sqlitePath.value || '',
+                    '.sqlite3',
+                    filter
+                );
+            } else {
+                picked =
+                    (await window.electron?.openFileDialog?.([
+                        {
+                            name: 'SQLite database',
+                            extensions: ['db', 'db3', 'sqlite3']
+                        },
+                        { name: 'All files', extensions: ['*'] }
+                    ])) || '';
+            }
+        } finally {
+            state.folderSelectorDialogVisible = false;
+        }
+        if (!picked) return;
+
+        // Distinguish folder vs file by checking the OS path type. On both
+        // Windows (Cef `OpenFileSelectorDialog`) and Electron the dialog
+        // above is a file picker, so `picked` is always a file path here.
+        // For the folder→append case the UI also exposes a dedicated folder
+        // browse handler (`browseSqliteFolder`).
+        const ext = picked.toLowerCase().match(/(\.[^.\\/]+)$/)?.[1] || '';
+        if (!SQLITE_ALLOWED_EXTENSIONS.includes(ext)) {
+            toast.error(
+                t(
+                    'view.settings.advanced.advanced.database_engine.sqlite_invalid_extension',
+                    {
+                        ext: ext || '(none)',
+                        allowed: SQLITE_ALLOWED_EXTENSIONS.join(', ')
+                    }
+                )
+            );
+            return;
+        }
+        sqlitePath.value = picked;
+        // Reset the probe state — the path changed, the old result is stale.
+        sqliteConnectionStatus.value = 'idle';
+        sqliteConnectionError.value = '';
+    }
+
+    /**
+     * Browse for a *folder* to host the SQLite database. The folder path gets
+     * `\VRCX.sqlite3` appended and then canonicalized through
+     * `AppApi.ResolveDatabaseName` (which performs realpath + the full
+     * validation pipeline). This is the "I want a new DB in this directory"
+     * flow.
+     *
+     * @returns {Promise<void>}
+     */
+    async function browseSqliteFolder() {
+        if (state.folderSelectorDialogVisible) return;
+        state.folderSelectorDialogVisible = true;
+        let folder = '';
+        try {
+            if (WINDOWS) {
+                // Default to the directory of the current path (if any) so
+                // the dialog opens somewhere sensible.
+                const current = sqlitePath.value || '';
+                const initialDir = current.split(/[\\/]/).slice(0, -1).join('\\');
+                folder = await AppApi.OpenFolderSelectorDialog(initialDir);
+            } else {
+                folder =
+                    (await window.electron?.openDirectoryDialog?.()) || '';
+            }
+        } finally {
+            state.folderSelectorDialogVisible = false;
+        }
+        if (!folder) return;
+        // Append the default filename. Normalize separators to the platform
+        // convention before appending.
+        const sep = folder.includes('\\') ? '\\' : '/';
+        let candidate = `${folder}${sep}VRCX.sqlite3`;
+        // Canonicalize + validate through the C# bridge (realpath). This
+        // rejects path traversal, reserved names, etc. and returns the
+        // absolute path the app would actually use.
+        if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
+            try {
+                candidate = await AppApi.ResolveDatabaseName(candidate);
+            } catch (err) {
+                toast.error(
+                    t(
+                        'view.settings.advanced.advanced.database_engine.sqlite_path_invalid',
+                        { error: err.message || String(err) }
+                    )
+                );
+                return;
+            }
+        }
+        sqlitePath.value = candidate;
+        sqliteConnectionStatus.value = 'idle';
+        sqliteConnectionError.value = '';
+    }
+
+    /**
+     * Probe a SQLite database file by new-ing a throwaway `SQLiteAdapter`
+     * through `createAdapter` and running `SELECT 1` against it. This goes
+     * through the same adapter abstraction layer as every other database
+     * operation (migration, CRUD, etc.), so the probe exercises the real
+     * code path the app would use after a restart — not a raw C# shortcut.
+     *
+     * The probe uses **read-write mode** (`Read Only=False`, overriding the
+     * adapter's default `Read Only=True`). This means:
+     *   - If the file does not exist, SQLite creates it (a valid empty
+     *     database). This verifies that the directory is writable, the disk
+     *     is not full, and the path is not blocked by permissions / locks /
+     *     reserved names. The created file is a real SQLite database ready
+     *     for `SQLite.Init` on next restart — no separate "create" step
+     *     needed.
+     *   - If the file exists, it is opened in read-write mode and `SELECT 1`
+     *     confirms it is a readable SQLite database.
+     *   - If the path is invalid (permission denied, disk full, parent
+     *     directory missing, etc.), SQLite throws and the error is surfaced
+     *     to the UI.
+     *
+     * This is the most thorough probe possible without actually running the
+     * full schema init: it proves the path is usable end-to-end.
+     *
+     * When the path is empty, the default AppData location is resolved
+     * through `AppApi.ResolveDatabaseName('')` and probed.
+     *
+     * @returns {Promise<{connected: boolean, error?: string}>}
+     */
+    async function testSqliteConnection() {
+        sqliteConnectionStatus.value = 'testing';
+        sqliteConnectionError.value = '';
+        try {
+            // Resolve the canonical path (realpath + validation) before
+            // constructing the connection URI, so an invalid path fails
+            // with a clear message instead of a raw SQLite open error.
+            // An empty path resolves to the default AppData location.
+            let canonicalPath = sqlitePath.value || '';
+            if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
+                try {
+                    canonicalPath = await AppApi.ResolveDatabaseName(
+                        canonicalPath
+                    );
+                } catch (err) {
+                    sqliteConnectionStatus.value = 'failed';
+                    sqliteConnectionError.value = err.message || String(err);
+                    return {
+                        connected: false,
+                        error: err.message || String(err)
+                    };
+                }
+            }
+            if (!canonicalPath) {
+                sqliteConnectionStatus.value = 'failed';
+                sqliteConnectionError.value = 'Could not resolve database path';
+                return {
+                    connected: false,
+                    error: 'Could not resolve database path'
+                };
+            }
+            // Build a sqlite:/// URI for createAdapter. On Windows the path
+            // may start with a drive letter (C:\...); createAdapter's
+            // SQLiteAdapter._buildConnectionString handles the leading-slash
+            // stripping for drive-letter paths.
+            const uri = `sqlite:///${canonicalPath}`;
+            // new a throwaway adapter in READ-WRITE mode. The adapter's
+            // _buildConnectionString defaults to Read Only=True; we override
+            // it to False so SQLite creates the file if it doesn't exist
+            // (proving the directory is writable) and opens existing files
+            // in read-write mode. This is the same mode SQLite.Init will use
+            // on next restart, so the probe is an end-to-end validation.
+            const probeAdapter = await createAdapter(
+                /** @type {any} */ ({
+                    connection: uri,
+                    'Read Only': 'False'
+                })
+            );
+            let gotRow = false;
+            await probeAdapter.execute(() => {
+                gotRow = true;
+            }, 'SELECT 1');
+            if (gotRow) {
+                sqliteConnectionStatus.value = 'connected';
+                return { connected: true };
+            }
+            sqliteConnectionStatus.value = 'failed';
+            sqliteConnectionError.value = 'No result from SELECT 1';
+            return { connected: false, error: 'No result from SELECT 1' };
+        } catch (err) {
+            sqliteConnectionStatus.value = 'failed';
+            const msg = err.message || String(err);
+            sqliteConnectionError.value = msg;
+            return { connected: false, error: msg };
+        }
+    }
+
     /**
      * Resolve the current SQLite database file path from VRCXStorage. Used as
-     * the migration source when switching from SQLite to PostgreSQL. After
-     * the user switches engine + restarts, `VRCX_Database.name` is
-     * repurposed for the PG database name, so we read the snapshotted
-     * `VRCX_Database.sqlitePath` first (written by
-     * `saveDatabaseEngineConfig` before the switch) and fall back to
-     * `VRCX_Database.name` for legacy configs that never switched.
+     * the migration source when switching from SQLite to a remote engine.
+     *
+     * `VRCX_Database.name` is the single path field — in sqlite mode it holds
+     * the file path, in remote mode it holds the remote database name. When
+     * the user has already switched to a remote engine + restarted, `name`
+     * no longer contains a SQLite path; in that case we fall back to the
+     * default AppData location (the C# `ResolveDatabaseName` / AppApi bridge
+     * resolves an empty name to `Program.ConfigLocation`).
      *
      * @returns {Promise<string>} canonical SQLite db path
      */
     async function resolveCurrentSqliteDbPath() {
-        const dbName =
-            (await VRCXStorage.Get('VRCX_Database.sqlitePath')) ||
-            (await VRCXStorage.Get('VRCX_Database.name'));
+        const dbName = await VRCXStorage.Get('VRCX_Database.name');
         if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
-            return await AppApi.ResolveDatabaseName(dbName || '');
+            try {
+                return await AppApi.ResolveDatabaseName(dbName || '');
+            } catch {
+                // `name` is a remote database name (not a SQLite path) after
+                // a switch + restart — ResolveDatabaseName rejects it. Fall
+                // back to the default location.
+                return await AppApi.ResolveDatabaseName('');
+            }
         }
         // Fallback for vitest / non-CefSharp environments.
         return dbName || '';
@@ -1497,10 +1773,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         mysqlDatabase,
         mysqlConnectionStatus,
         mysqlMigrationStatus,
+        sqlitePath,
+        sqliteConnectionStatus,
+        sqliteConnectionError,
         loadDatabaseEngineConfig,
         saveDatabaseEngineConfig,
         testPgsqlConnection,
         testMysqlConnection,
+        testSqliteConnection,
+        browseSqlitePath,
+        browseSqliteFolder,
         migrateToPgsql,
         migrateToMysql,
         resolveCurrentSqliteDbPath,
