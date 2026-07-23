@@ -330,7 +330,12 @@
                     :label="t('view.settings.advanced.advanced.database_engine.migrate')"
                     :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
                     <div class="flex items-center gap-2">
-                        <Button size="sm" variant="outline" :disabled="pgsqlMigrationStatus === 'migrating'" @click="migrateTargetEngine = 'postgresql'; isMigrateDialogVisible = true">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="pgsqlMigrationStatus === 'migrating' || !pgMigrateGuard.ok"
+                            :title="pgMigrateGuard.message"
+                            @click="migrateTargetEngine = 'postgresql'; isMigrateDialogVisible = true">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
@@ -369,7 +374,12 @@
                     :label="t('view.settings.advanced.advanced.database_engine.migrate')"
                     :description="t('view.settings.advanced.advanced.database_engine.migrate_hint')">
                     <div class="flex items-center gap-2">
-                        <Button size="sm" variant="outline" :disabled="mysqlMigrationStatus === 'migrating'" @click="migrateTargetEngine = 'mysql'; isMigrateDialogVisible = true">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="mysqlMigrationStatus === 'migrating' || !mysqlMigrateGuard.ok"
+                            :title="mysqlMigrateGuard.message"
+                            @click="migrateTargetEngine = 'mysql'; isMigrateDialogVisible = true">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="mysqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
@@ -401,6 +411,14 @@
                     </AlertDescription>
                 </Alert>
 
+                <Alert v-if="!migrateDialogGuard.ok" variant="destructive" class="mb-3">
+                    <TriangleAlert />
+                    <AlertDescription>
+                        {{ t('view.settings.advanced.advanced.database_engine.restart_hint') }}
+                        <span v-if="migrateDialogGuard.message" class="block mt-1 text-xs opacity-90">{{ migrateDialogGuard.message }}</span>
+                    </AlertDescription>
+                </Alert>
+
                 <DialogFooter>
                     <Button variant="outline" size="sm" @click="isMigrateDialogVisible = false">
                         {{ t('confirm.cancel_button') }}
@@ -408,9 +426,10 @@
                     <Button
                         size="sm"
                         :disabled="
-                            migrateTargetEngine === 'postgresql'
+                            (migrateTargetEngine === 'postgresql'
                                 ? pgsqlMigrationStatus === 'migrating'
-                                : mysqlMigrationStatus === 'migrating'
+                                : mysqlMigrationStatus === 'migrating') ||
+                            !migrateDialogGuard.ok
                         "
                         @click="handleMigrate">
                         {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
@@ -697,7 +716,8 @@
         browseSqlitePath,
         browseSqliteFolder,
         migrateToPgsql,
-        migrateToMysql
+        migrateToMysql,
+        canMigrateToRemote
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
@@ -714,6 +734,26 @@
      * @type {import('vue').Ref<'postgresql' | 'mysql'>}
      */
     const migrateTargetEngine = ref('postgresql');
+
+    // Pre-flight guard for the migration buttons (defect 3 fix). The
+    // migration destination is the live singleton adapter, whose connection
+    // was fixed at boot; the form refs may have been edited without a
+    // restart. `canMigrateToRemote` compares the form against the boot-time
+    // snapshot and the runtime engine, returning `{ ok, message }`. These
+    // computeds track the matching set of refs so the button disabled-state
+    // updates live as the user edits host/port/etc. The runtime
+    // `adapter.engineType` is non-reactive but never changes mid-session, so
+    // it does not need to be in the dependency graph.
+    /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
+    const pgMigrateGuard = computed(() => canMigrateToRemote('postgresql'));
+    /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
+    const mysqlMigrateGuard = computed(() => canMigrateToRemote('mysql'));
+    /** Guard for whichever engine the open confirmation dialog targets. */
+    const migrateDialogGuard = computed(() =>
+        migrateTargetEngine.value === 'mysql'
+            ? mysqlMigrateGuard.value
+            : pgMigrateGuard.value
+    );
 
     const cacheSize = reactive({
         cachedUsers: 0,

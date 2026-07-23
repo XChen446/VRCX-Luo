@@ -4,6 +4,37 @@ import configRepository from '../services/config.js';
 import vrcxJsonStorage from '../services/jsonStorage.js';
 import { initAdapter } from '../services/database/adapter/index.js';
 
+/**
+ * Snapshot of the persisted `VRCX_Database.*` keys read at boot, i.e. the
+ * exact connection parameters the C# layer used to `Init()` the active
+ * backend (SQLite / PostgreSQL / MySQL) this session. The renderer-side
+ * adapter singleton was constructed from the same `VRCX_Database.mode`
+ * value, so this snapshot is the authoritative description of where the
+ * live adapter is actually writing.
+ *
+ * The migration UI keeps editable refs (`pgsqlHost`, `mysqlPort`, …) that
+ * the user may change — and even persist via `VRCXStorage.Set` — without
+ * restarting. Until a restart, those edits do NOT reach the running C#
+ * pool / adapter singleton, so a migration triggered from the UI would
+ * silently target the boot-time connection while the form shows the new
+ * values. To block that, the Advanced settings store compares the current
+ * UI refs against this snapshot (see `canMigrateToRemote` in
+ * `stores/settings/advanced.js`); a mismatch means "restart required
+ * before migrating".
+ *
+ * Defaults mirror `loadDatabaseEngineConfig` fallbacks so the comparison
+ * is stable when keys are absent (fresh install / vitest stubs).
+ * @type {{ mode: string, host: string, port: string, username: string, password: string, name: string }}
+ */
+export const bootDbConfig = {
+    mode: 'sqlite',
+    host: 'localhost',
+    port: '',
+    username: '',
+    password: '',
+    name: ''
+};
+
 export async function initInteropApi(isVrOverlay = false) {
     if (isVrOverlay) {
         if (WINDOWS) {
@@ -75,9 +106,30 @@ export async function initInteropApi(isVrOverlay = false) {
         // default). The `typeof === 'string' && mode` guard rejects
         // empty/non-string values without throwing.
         const dbMode = await VRCXStorage.Get('VRCX_Database.mode');
-        await initAdapter(
-            typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite'
-        );
+        // Snapshot the full connection config the C# layer is booting with,
+        // BEFORE any user edit can reach VRCXStorage. This is the source of
+        // truth for "what the live adapter is actually connected to this
+        // session" — see `bootDbConfig` doc above. Read alongside `dbMode`
+        // so the snapshot and the adapter init see a consistent view.
+        const [dbHost, dbPort, dbUser, dbPass, dbName] = await Promise.all([
+            VRCXStorage.Get('VRCX_Database.host'),
+            VRCXStorage.Get('VRCX_Database.port'),
+            VRCXStorage.Get('VRCX_Database.username'),
+            VRCXStorage.Get('VRCX_Database.password'),
+            VRCXStorage.Get('VRCX_Database.name')
+        ]);
+        const bootMode =
+            typeof dbMode === 'string' && dbMode ? dbMode : 'sqlite';
+        bootDbConfig.mode = bootMode;
+        bootDbConfig.host =
+            typeof dbHost === 'string' && dbHost ? dbHost : 'localhost';
+        bootDbConfig.port = typeof dbPort === 'string' ? dbPort : '';
+        bootDbConfig.username =
+            typeof dbUser === 'string' ? dbUser : '';
+        bootDbConfig.password =
+            typeof dbPass === 'string' ? dbPass : '';
+        bootDbConfig.name = typeof dbName === 'string' ? dbName : '';
+        await initAdapter(bootMode);
 
         await configRepository.init();
         new vrcxJsonStorage(VRCXStorage);

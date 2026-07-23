@@ -7,6 +7,7 @@ import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
 import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
 import { adapter, createAdapter } from '../../services/database/adapter/index.js';
+import { bootDbConfig } from '../../plugins/interopApi.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
 import { useModalStore } from '../modal';
@@ -1632,6 +1633,96 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
+     * Pre-flight guard for SQLite → remote migration. Returns whether it is
+     * safe to run `migrateSqliteToRemote` against `targetEngine` right now.
+     *
+     * The migration destination is the live singleton `adapter`, whose
+     * connection was fixed at boot by the C# layer from the then-persisted
+     * `VRCX_Database.*` keys (captured in `bootDbConfig`). The Advanced tab
+     * keeps editable refs (`pgsqlHost`, `mysqlPort`, …) the user may change
+     * — and even persist — without restarting. Until a restart those edits
+     * do NOT reach the running C# pool, so triggering a migration from the
+     * UI would silently target the boot-time connection while the form shows
+     * the new values (defect 3, MEDIUM). This guard blocks that by requiring:
+     *
+     *   1. `adapter.engineType === targetEngine` — the app actually booted in
+     *      the target engine (so the matching C# pool is Init'd). Gating on
+     *      the runtime adapter, not `VRCXStorage.mode`, mirrors
+     *      `testPgsqlConnection` / `testMysqlConnection`: the user may have
+     *      switched the persisted mode without restarting.
+     *   2. The target engine's current UI refs match the boot-time snapshot
+     *      — i.e. the user has not edited host/port/user/pass/database since
+     *      boot (or has edited + restarted, which re-snapshots). A mismatch
+     *      means the form disagrees with where the migration would actually
+     *      write, so we refuse and tell the user to restart.
+     *
+     * `mariadb` is treated as `mysql` (same adapter / wire protocol).
+     *
+     * @param {'postgresql'|'mysql'|'mariadb'} targetEngine
+     * @returns {{ ok: boolean, message: string }} `ok` true when the migration
+     *   may proceed; otherwise `message` explains why (English, consistent with
+     *   the error strings returned by `testPgsqlConnection`).
+     */
+    function canMigrateToRemote(targetEngine) {
+        const target =
+            targetEngine === 'mariadb' ? 'mysql' : targetEngine;
+        const runtimeEngine = adapter?.engineType;
+        if (runtimeEngine !== target) {
+            return {
+                ok: false,
+                message:
+                    `VRCX is not running in ${target} mode this session ` +
+                    `(runtime engine: ${runtimeEngine || 'unknown'}). ` +
+                    'Save the engine selection and restart VRCX, then run the migration again.'
+            };
+        }
+
+        // Resolve the boot-time connection params for this engine from the
+        // snapshot, applying the same defaults as `loadDatabaseEngineConfig`
+        // so a missing persisted key compares equal to its UI ref default.
+        const defaultPort = target === 'mysql' ? 3306 : 5432;
+        const bootHost = bootDbConfig.host || 'localhost';
+        const bootPort = Number(bootDbConfig.port) || defaultPort;
+        const bootUser = bootDbConfig.username || (target === 'mysql' ? 'root' : 'vrcx');
+        const bootPass = bootDbConfig.password || '';
+        const bootDb = bootDbConfig.name || '';
+
+        // Current UI refs for the target engine — what the user sees as the
+        // migration destination in the form.
+        const uiHost =
+            target === 'mysql' ? mysqlHost.value : pgsqlHost.value;
+        const uiPort =
+            target === 'mysql' ? mysqlPort.value : pgsqlPort.value;
+        const uiUser =
+            target === 'mysql' ? mysqlUsername.value : pgsqlUsername.value;
+        const uiPass =
+            target === 'mysql' ? mysqlPassword.value : pgsqlPassword.value;
+        const uiDb =
+            target === 'mysql' ? mysqlDatabase.value : pgsqlDatabase.value;
+
+        const fields = [
+            ['host', bootHost, uiHost],
+            ['port', String(bootPort), String(Number(uiPort) || defaultPort)],
+            ['username', bootUser, uiUser],
+            ['password', bootPass, uiPass],
+            ['database', bootDb, uiDb]
+        ];
+        const mismatch = fields.find(([, b, u]) => b !== u);
+        if (mismatch) {
+            return {
+                ok: false,
+                message:
+                    `The ${target} connection parameters in the form differ ` +
+                    `from the ones VRCX booted with (field "${mismatch[0]}"). ` +
+                    'Restart VRCX so the running backend picks up the new ' +
+                    'values, then run the migration again. Otherwise the ' +
+                    'migration would silently target the previous connection.'
+            };
+        }
+        return { ok: true, message: '' };
+    }
+
+    /**
      * Run the SQLite → PostgreSQL migration. The destination is the live
      * singleton `adapter` (a `PgSQLAdapter` after the user switched engine +
      * restarted). Progress is mirrored into `vrcxStore.databaseUpgradeState`
@@ -1642,6 +1733,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
      */
     async function migrateToPgsql(srcConnStr) {
+        // Pre-flight guard (defect 3): refuse to run unless the live adapter
+        // actually booted in postgresql mode AND the form's connection params
+        // match the boot-time snapshot. Without this, a user who edited
+        // host/port/database without restarting would see the migration
+        // "succeed" while it silently wrote to the previous connection.
+        const guard = canMigrateToRemote('postgresql');
+        if (!guard.ok) {
+            pgsqlMigrationStatus.value = 'failed';
+            throw new Error(guard.message);
+        }
         pgsqlMigrationStatus.value = 'migrating';
         // Surface the migration via the existing DatabaseUpgradeDialog. We
         // mutate the reactive object's properties (rather than replacing the
@@ -1653,28 +1754,22 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             const source = srcConnStr
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
-            const result = await migrateSqliteToRemote(
-                source,
-                {
-                    host: pgsqlHost.value,
-                    port: pgsqlPort.value,
-                    username: pgsqlUsername.value,
-                    password: pgsqlPassword.value,
-                    database: pgsqlDatabase.value
-                },
-                {
-                    onProgress: (p) => {
-                        // Update the dialog's state so the UI can show the
-                        // current table + running row count. We stash these
-                        // on the same reactive object via extra fields the
-                        // dialog doesn't strictly need but won't break on.
-                        vrcxStore.databaseUpgradeState.currentTable =
-                            p.table;
-                        vrcxStore.databaseUpgradeState.rowsCopied =
-                            p.rowsCopied;
-                    }
+            // No `dstConfig` is passed: the destination is always the live
+            // singleton adapter (guarded above to match the form). See
+            // `migrateSqliteToRemote` + defect 3 for why a candidate target
+            // config is no longer accepted.
+            const result = await migrateSqliteToRemote(source, {
+                onProgress: (p) => {
+                    // Update the dialog's state so the UI can show the
+                    // current table + running row count. We stash these
+                    // on the same reactive object via extra fields the
+                    // dialog doesn't strictly need but won't break on.
+                    vrcxStore.databaseUpgradeState.currentTable =
+                        p.table;
+                    vrcxStore.databaseUpgradeState.rowsCopied =
+                        p.rowsCopied;
                 }
-            );
+            });
             pgsqlMigrationStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
             return result;
@@ -1697,6 +1792,14 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
      */
     async function migrateToMysql(srcConnStr) {
+        // Pre-flight guard (defect 3): symmetric to `migrateToPgsql`. Refuse
+        // unless the live adapter booted in mysql/mariadb mode AND the form's
+        // connection params match the boot-time snapshot.
+        const guard = canMigrateToRemote('mysql');
+        if (!guard.ok) {
+            mysqlMigrationStatus.value = 'failed';
+            throw new Error(guard.message);
+        }
         mysqlMigrationStatus.value = 'migrating';
         vrcxStore.databaseUpgradeState.visible = true;
         vrcxStore.databaseUpgradeState.fromVersion = -1;
@@ -1705,24 +1808,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             const source = srcConnStr
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
-            const result = await migrateSqliteToRemote(
-                source,
-                {
-                    host: mysqlHost.value,
-                    port: mysqlPort.value,
-                    username: mysqlUsername.value,
-                    password: mysqlPassword.value,
-                    database: mysqlDatabase.value
-                },
-                {
-                    onProgress: (p) => {
-                        vrcxStore.databaseUpgradeState.currentTable =
-                            p.table;
-                        vrcxStore.databaseUpgradeState.rowsCopied =
-                            p.rowsCopied;
-                    }
+            // No `dstConfig` — destination is the live singleton (guarded
+            // above). See `migrateSqliteToRemote` + defect 3.
+            const result = await migrateSqliteToRemote(source, {
+                onProgress: (p) => {
+                    vrcxStore.databaseUpgradeState.currentTable =
+                        p.table;
+                    vrcxStore.databaseUpgradeState.rowsCopied =
+                        p.rowsCopied;
                 }
-            );
+            });
             mysqlMigrationStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
             return result;
@@ -1806,6 +1901,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         browseSqliteFolder,
         migrateToPgsql,
         migrateToMysql,
+        canMigrateToRemote,
         resolveCurrentSqliteDbPath,
 
         setEnablePrimaryPassword,

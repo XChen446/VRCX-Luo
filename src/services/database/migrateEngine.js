@@ -1,6 +1,6 @@
 // Phase 9 slice S9 (task 9.13) — SQLite → remote-engine cross-engine migration.
 //
-// Provides `migrateSqliteToRemote(srcConnStr, dstConfig, options)` which copies
+// Provides `migrateSqliteToRemote(srcConnStr, options)` which copies
 // every global + user table from a source SQLite database into the currently
 // initialised remote target (PostgreSQL or MySQL/MariaDB). The destination is
 // the singleton `adapter` from `./adapter/index.js` — a `PgSQLAdapter` when
@@ -13,6 +13,16 @@
 // `EngineAdapter` surface (`initGlobalSchema` / `initUserSchema` / `userTable`
 // / `bulkInsert`), which every remote subclass implements, so the same code
 // path serves both PG and MySQL destinations.
+//
+// NOTE: the destination is the live singleton only — there is no `dstConfig`
+// parameter. Callers MUST ensure the engine has been switched + the app
+// restarted so the singleton matches the user's intended target; the UI-side
+// guard `canMigrateToRemote` in `stores/settings/advanced.js` enforces this by
+// comparing the current UI refs against the boot-time config snapshot
+// (`bootDbConfig` from `plugins/interopApi.js`). Passing a candidate target
+// config here would be misleading: it could never override the already-Init'd
+// C# pool, so any mismatch between the form and the running pool would silently
+// route the migration to the wrong host. See defect 3 (MEDIUM) fix.
 //
 // See `docs/PHASE9_PGSQL_DESIGN.md` §6.2 + §11.1 9.13 DoD.
 //
@@ -132,8 +142,15 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * path. `isConnected` (a PgSQLAdapter extension) is probed best-effort when
  * present; subclasses without it are assumed connected after a successful Init.
  *
+ * There is intentionally NO `dstConfig` parameter: the destination is always
+ * the live singleton, whose connection was fixed at boot by the C# layer.
+ * Accepting a candidate target config would let a caller pass values that
+ * disagree with the running pool, creating the illusion that the migration
+ * honours them while it actually writes to the boot-time connection (defect 3).
+ * The caller-side guard `canMigrateToRemote` blocks that case before invoking
+ * this function.
+ *
  * @param {string} srcConnStr - SQLite connection string like 'sqlite:///C:/path/to/old.db'.
- * @param {object} dstConfig - remote engine config { host, port, username, password, database } — informational; the live connection is the singleton.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.
  * @param {number} [options.batchSize=500] - rows per bulkInsert call (PG param limit 65535; 500 rows × ~50 cols is safe; MySQL prepared-statement limit is similar).
  * @param {(p: MigrationProgress) => void} [options.onProgress] - progress callback for UI.
@@ -141,7 +158,6 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 export async function migrateSqliteToRemote(
     srcConnStr,
-    dstConfig,
     options = {}
 ) {
     const { batchSize = 500, onProgress } = options;
@@ -191,10 +207,12 @@ export async function migrateSqliteToRemote(
         );
     }
 
-    // `dstConfig` is informational only — kept in the signature so callers
-    // can pass the same config object they saved to VRCXStorage, and so a
-    // future refactor can build a fresh adapter from it if needed.
-    void dstConfig;
+    // `dstConfig` was removed from the signature (defect 3 fix). The
+    // destination is exclusively the live singleton `adapter`; any candidate
+    // target config the caller might supply could never override the
+    // already-Init'd C# pool, so accepting it would risk silently routing the
+    // migration to the wrong host. The UI guard `canMigrateToRemote` ensures
+    // the running pool matches the user's intended target before we get here.
 
     // ── 1. Build source SQLite adapter (read-only) ───────────────────
     const srcAdapter = await createAdapter({ connection: srcConnStr });
@@ -470,5 +488,4 @@ export { GLOBAL_TABLES, USER_TABLE_NAMES };
  * the engine-agnostic generalisation. The function body is identical:
  * `migrateSqliteToPgsql === migrateSqliteToRemote`.
  */
-const migrateSqliteToPgsql = migrateSqliteToRemote;
-export { migrateSqliteToPgsql };
+const migrateSqliteToPgsql = migrateSqliteToRemote;export { migrateSqliteToPgsql };
