@@ -31,7 +31,7 @@ const FEED_COLUMNS = [
     'previous_current_avatar_thumbnail_image_url'
 ];
 const FEED_COL_STR = FEED_COLUMNS.join(', ');
-const N = (name) => `NULL AS ${name}`; // inline null helper
+const N = (name) => `CAST(NULL AS TEXT) AS ${name}`; // inline null helper — CAST gives TEXT affinity so System.Data.SQLite doesn't NPE on null decltype
 
 /**
  * Build a structured source descriptor for adapter.selectUnion.
