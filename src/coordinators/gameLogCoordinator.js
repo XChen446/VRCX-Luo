@@ -118,7 +118,9 @@ export async function tryLoadPlayerList() {
                 typeof ref1.userId === 'string' &&
                 !userStore.cachedUsers.has(ref1.userId)
             ) {
-                userRequest.getUser({ userId: ref1.userId });
+                userRequest
+                    .getUser({ userId: ref1.userId })
+                    .catch(() => {});
             }
         });
 
@@ -261,7 +263,7 @@ export function addGameLogEntry(gameLog, location) {
                 if (AppDebug.debugGameLog || AppDebug.debugWebRequests) {
                     console.log('Fetching user from gameLog:', userId);
                 }
-                userRequest.getUser({ userId });
+                userRequest.getUser({ userId }).catch(() => {});
             }
             vrStore.updateVRLastLocation();
             instanceStore.getCurrentInstanceUserList();

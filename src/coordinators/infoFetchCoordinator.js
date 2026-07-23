@@ -2,6 +2,7 @@ import { reactive, computed } from 'vue';
 import { database } from '../services/database';
 import { useFriendStore, useTrackedNonFriendsStore, useManualRelationsStore } from '../stores';
 import { userRequest } from '../api';
+import { watchState } from '../services/watchState';
 
 /**
  * 信息抓取补全的全局响应式状态。
@@ -85,6 +86,7 @@ function buildTargetList() {
  */
 export async function runSilentInfoFetch() {
     if (infoFetchState.status === 'running') return;
+    if (!watchState.isLoggedIn) return;
 
     cancelled = false;
     infoFetchState.status = 'running';
