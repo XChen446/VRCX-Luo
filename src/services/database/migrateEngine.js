@@ -34,6 +34,23 @@
 //   - Errors per-table are collected and the run continues — a single broken
 //     table does not abort the whole migration.
 //   - Row-count verification per table; deeper sampling left to S12.
+//   - DATA-INTEGRITY PRIORITY: the 16 global + 22 user base-name whitelists
+//     cover the *known* schema, but the migration MUST NOT silently drop
+//     tables that fall outside them (upstream additions, legacy tables, the
+//     `configs` JSON store, etc.). After the known tables are copied, every
+//     remaining source table is mirrored into the destination: its column
+//     metadata is read from PRAGMA `table_xinfo` and re-emitted as a
+//     `CREATE TABLE IF NOT EXISTS` via the destination adapter's
+//     `createTable` (which applies engine-specific type mapping), then the
+//     rows are copied through the same paged `copyTable` path. Constraints
+//     are mirrored at column-level only (single-col PK inline, composite PK
+//     as a table-level `PRIMARY KEY(...)` clause; UNIQUE/indexes are NOT
+//     re-created — recovery-time concerns). `configs` is copied under its
+//     original name: `bulkInsert('ignore')` preserves the destination's
+//     pre-existing `config:schema_version` (written by `runMigrations`
+//     before this user-triggered migration), so no boot-state pollution;
+//     each mirrored table is warn-logged so operators can see which tables
+//     the safety net preserved.
 
 import { adapter, createAdapter } from './adapter/index.js';
 
@@ -109,7 +126,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 
 /**
  * @typedef {Object} MigrationProgress
- * @property {'global'|'user'} phase
+ * @property {'global'|'user'|'mirror'} phase
  * @property {string} table - destination table identifier (bare name or `account_{prefix}.{name}`)
  * @property {number} current - 1-based index of the current table within its phase
  * @property {number} total - total tables in this phase
@@ -118,8 +135,9 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 
 /**
  * @typedef {Object} MigrationResult
- * @property {number} globalTables - number of global tables processed
- * @property {number} userTables - number of user tables processed (across all prefixes)
+ * @property {number} globalTables - number of known global tables processed
+ * @property {number} userTables - number of known user tables processed (across all prefixes)
+ * @property {number} unknownTables - number of non-whitelist tables mirrored + copied (data-integrity safety net)
  * @property {number} rowsCopied - total rows copied
  * @property {string[]} errors - per-table error messages (empty on full success)
  */
@@ -165,6 +183,7 @@ export async function migrateSqliteToRemote(
     let rowsCopied = 0;
     let globalTables = 0;
     let userTables = 0;
+    let unknownTables = 0;
 
     // ── 0. Guards ────────────────────────────────────────────────────
     // The destination must NOT be a SQLiteAdapter. If it is, the user
@@ -274,28 +293,38 @@ export async function migrateSqliteToRemote(
         }
     }
 
-    // ── 4. Discover user tables from source SQLite ───────────────────
-    // Group by prefix so we call `initUserSchema(prefix)` exactly once per
-    // prefix, then copy each table under that prefix.
+    // ── 4. Discover user tables + unknown tables from source SQLite ──
+    // Known user tables are grouped by prefix so `initUserSchema(prefix)`
+    // runs once per prefix. Tables that match NEITHER the 16 global names
+    // NOR any of the 22 user base-name suffixes are collected separately as
+    // "unknown" — they are mirrored + copied in §6 so no source data is
+    // silently dropped (data-integrity priority). `sqlite_*` are already
+    // excluded by `listTablesTypes`; `configs` is NOT skipped here: it flows
+    // into the unknown bucket and is mirrored under its original name in §6
+    // (merged into the destination's live `configs` via `bulkInsert('ignore')`,
+    // which preserves any keys the new engine already wrote — see §6).
     //
     // M2: reuse `srcSchema` cached in §1 (no second listTablesTypes call).
     const tables = srcSchema;
     /** @type {Map<string, string[]>} prefix -> list of user-table base names */
     const userTablesByPrefix = new Map();
+    /** @type {string[]} non-whitelist table names to mirror in §6 */
+    const unknownTableNames = [];
 
     for (const { tableName } of tables) {
         if (!tableName || GLOBAL_TABLES.includes(tableName)) continue;
-        // SQLite internal tables (sqlite_*) are already filtered out by
-        // listTablesTypes, but be defensive against `configs` etc.
-        if (tableName === 'configs') continue;
 
         const match = matchUserTable(tableName);
-        if (!match) continue;
-        const { prefix, name } = match;
-        if (!userTablesByPrefix.has(prefix)) {
-            userTablesByPrefix.set(prefix, []);
+        if (match) {
+            const { prefix, name } = match;
+            if (!userTablesByPrefix.has(prefix)) {
+                userTablesByPrefix.set(prefix, []);
+            }
+            userTablesByPrefix.get(prefix).push(name);
+        } else {
+            // Unknown table (legacy, upstream-added, configs, ...) — mirror.
+            unknownTableNames.push(tableName);
         }
-        userTablesByPrefix.get(prefix).push(name);
     }
 
     // ── 5. Migrate user tables per prefix ────────────────────────────
@@ -346,9 +375,74 @@ export async function migrateSqliteToRemote(
         }
     }
 
+    // ── 6. Mirror + copy unknown tables (data-integrity safety net) ───
+    // Every source table not covered by the known global/user schema is
+    // recreated on the destination from its PRAGMA `table_xinfo` column
+    // metadata (column-level PK + engine type mapping only; UNIQUE/indexes
+    // are NOT re-created) then copied through the same paged `copyTable`.
+    //
+    // `configs` is copied under its original name (NOT renamed): the live
+    // `configs` table is created empty by `configRepository.init()` on new-
+    // engine boot, then `runMigrations` writes the correct `schema_version`
+    // checkpoint into it BEFORE this user-triggered migration runs. Because
+    // `copyTable` uses `bulkInsert(..., 'ignore')` (ON CONFLICT DO NOTHING /
+    // INSERT IGNORE), the pre-existing `config:schema_version` key in the
+    // destination is preserved and the stale value from the source is
+    // silently skipped — so no boot-state pollution. Other `config:*` keys
+    // the new engine hasn't written yet do get copied in, which is the
+    // intended data-preservation behaviour.
+    //
+    // Each mirrored table is warn-logged so operators can see which tables
+    // fell outside the known schema (upstream additions, legacy tables,
+    // configs) and were preserved by the safety net rather than dropped.
+    if (unknownTableNames.length > 0) {
+        console.warn(
+            `[迁移] 发现 ${unknownTableNames.length} 张非白名单表，将镜像保底复制: ` +
+                unknownTableNames.join(', ')
+        );
+    }
+    const mirrorTotal = unknownTableNames.length;
+    let mirrorIdx = 0;
+    for (const srcTable of unknownTableNames) {
+        mirrorIdx += 1;
+        const dstTable = srcTable;
+        if (typeof onProgress === 'function') {
+            onProgress({
+                phase: 'mirror',
+                table: dstTable,
+                current: mirrorIdx,
+                total: mirrorTotal,
+                rowsCopied
+            });
+        }
+        try {
+            const colDefs = buildMirroredColumns(
+                srcSchemaMap.get(srcTable)
+            );
+            if (colDefs.length > 0) {
+                await adapter.createTable(dstTable, colDefs);
+            }
+            const copied = await copyTable(
+                srcAdapter,
+                adapter,
+                srcTable,
+                dstTable,
+                batchSize,
+                srcSchemaMap
+            );
+            rowsCopied += copied;
+            unknownTables += 1;
+        } catch (err) {
+            errors.push(
+                `mirror:${dstTable}: ${err.message || String(err)}`
+            );
+        }
+    }
+
     return {
         globalTables,
         userTables,
+        unknownTables,
         rowsCopied,
         errors
     };
@@ -477,6 +571,69 @@ async function copyTable(
     }
 
     return totalCopied;
+}
+
+/**
+ * Build structured column definitions for mirroring an unknown source table
+ * onto the destination via `adapter.createTable`.
+ *
+ * Reads the cached PRAGMA `table_xinfo` descriptor and produces
+ * `{ name, type, constraints? }` objects (plus, for composite PKs, a trailing
+ * raw `PRIMARY KEY(...)` string entry) that every adapter's `createTable`
+ * accepts. Engine-specific type mapping is delegated to the destination
+ * adapter's `_mapColumnType` (PG: INTEGER PK → BIGINT GENERATED BY DEFAULT AS
+ * IDENTITY; MySQL: INTEGER → INT, TEXT PK → VARCHAR(255)).
+ *
+ * Scope (per data-integrity decision): column-level PK + type mapping only.
+ * `isHidden` columns (SQLite generated/virtual) are excluded from both the
+ * DDL and the copied rows. UNIQUE constraints and secondary indexes are NOT
+ * re-created — they are recovery-time concerns, not data-preservation ones.
+ *
+ * @param {{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}|undefined} tableMeta
+ *   Cached source schema metadata for the table (from `srcSchemaMap`).
+ * @returns {object[]} column defs for `adapter.createTable` — `{name,type,constraints?}`
+ *   objects, optionally followed by a raw `PRIMARY KEY (...)` string for
+ *   composite PKs (runtime `createTable` already handles `typeof col ===
+ *   'string'` entries; the declared return type stays `object[]` to match the
+ *   base-class signature without modifying it). Empty array if the table has
+ *   no visible columns or no metadata.
+ */
+function buildMirroredColumns(tableMeta) {
+    if (!tableMeta || !Array.isArray(tableMeta.columns)) return [];
+    const visible = tableMeta.columns.filter((c) => !c.isHidden);
+    if (visible.length === 0) return [];
+    const pkCols = visible.filter((c) => c.isPK).map((c) => c.name);
+    /** @type {object[]} */
+    const cols = visible.map((c) => {
+        /** @type {string[]} */
+        const cons = [];
+        if (c.notNull) cons.push('NOT NULL');
+        if (c.defaultValue != null && c.defaultValue !== '') {
+            cons.push(`DEFAULT ${c.defaultValue}`);
+        }
+        // Inline PRIMARY KEY only for single-column PKs; composite PKs are
+        // emitted as a table-level clause below.
+        if (pkCols.length === 1 && c.isPK) cons.push('PRIMARY KEY');
+        /** @type {{name: string, type: string, constraints?: string}} */
+        const def = { name: c.name, type: c.type || 'TEXT' };
+        if (cons.length > 0) def.constraints = cons.join(' ');
+        return def;
+    });
+    if (pkCols.length > 1) {
+        // Table-level composite PK appended as a raw string entry; every
+        // adapter's `createTable` passes `typeof col === 'string'` entries
+        // through verbatim (PG `_mapColumnType` leaves `PRIMARY KEY (...)`
+        // untouched — no INTEGER/TEXT token to rewrite — and MySQL/SQLite
+        // return the string as-is). Cast through `unknown` so `cols`
+        // (declared `object[]` to match the base-class signature, which is
+        // NOT modified) accepts the raw string.
+        cols.push(
+            /** @type {object} */ (
+                /** @type {unknown} */ (`PRIMARY KEY (${pkCols.join(', ')})`)
+            )
+        );
+    }
+    return cols;
 }
 
 export { GLOBAL_TABLES, USER_TABLE_NAMES };
