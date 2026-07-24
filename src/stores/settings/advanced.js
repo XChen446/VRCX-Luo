@@ -5,8 +5,8 @@ import { useI18n } from 'vue-i18n';
 
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
-import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
-import { backupRemoteToSqlite } from '../../services/database/backupEngine.js';
+import { pushFromSqlite } from '../../services/database/pushEngine.js';
+import { pullToSqlite as runPullToSqlite } from '../../services/database/pullEngine.js';
 import {
     adapter,
     createAdapter
@@ -90,8 +90,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const pgsqlDatabase = ref('vrcx');
     /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
     const pgsqlConnectionStatus = ref('idle');
-    /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
-    const pgsqlMigrationStatus = ref('idle');
+    /** @type {import('vue').Ref<'idle'|'pushing'|'done'|'failed'>} */
+    const pgsqlPushStatus = ref('idle');
     // MySQL/MariaDB connection refs — mirror the PgSQL set so the Advanced tab
     // can render a symmetric form + migration control. Default port 3306 is the
     // MySQL/MariaDB convention; the database name defaults to 'vrcx' to match
@@ -113,15 +113,15 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const sqliteConnectionStatus = ref('idle');
     /** @type {import('vue').Ref<string>} */
     const sqliteConnectionError = ref('');
-    /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
-    const mysqlMigrationStatus = ref('idle');
-    // Remote → SQLite backup status. Mirrors the migration status refs so
-    // the Advanced tab can surface a progress indicator + outcome the same
-    // way. Backup is non-destructive (read-only on the remote source, write
-    // to a user-chosen NEW .sqlite3 file), so the status only reflects the
-    // copy operation, not any engine switch.
-    /** @type {import('vue').Ref<'idle'|'backing'|'done'|'failed'>} */
-    const backupStatus = ref('idle');
+    /** @type {import('vue').Ref<'idle'|'pushing'|'done'|'failed'>} */
+    const mysqlPushStatus = ref('idle');
+    // Remote → SQLite pull status. Mirrors the push status refs so the
+    // Advanced tab can surface a progress indicator + outcome the same way.
+    // Pull is non-destructive (read-only on the remote source, write to a
+    // user-chosen NEW .sqlite3 file), so the status only reflects the copy
+    // operation, not any engine switch.
+    /** @type {import('vue').Ref<'idle'|'pulling'|'done'|'failed'>} */
+    const pullStatus = ref('idle');
 
     watch(
         () => watchState.isLoggedIn,
@@ -1633,16 +1633,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Pre-flight guard for SQLite → remote migration. Returns whether it is
-     * safe to run `migrateSqliteToRemote` against `targetEngine` right now.
+     * Pre-flight guard for SQLite → remote push. Returns whether it is
+     * safe to run `pushFromSqlite` against `targetEngine` right now.
      *
      * The migration destination is the live singleton `adapter`, whose
      * connection was fixed at boot by the C# layer from the then-persisted
      * `VRCX_Database.*` keys (captured in `bootDbConfig`). The Advanced tab
      * keeps editable refs (`pgsqlHost`, `mysqlPort`, …) the user may change
      * — and even persist — without restarting. Until a restart those edits
-     * do NOT reach the running C# pool, so triggering a migration from the
-     * UI would silently target the boot-time connection while the form shows
+     * do NOT reach the running C# pool, so triggering a push from the UI
+     * would silently target the boot-time connection while the form shows
      * the new values (defect 3, MEDIUM). This guard blocks that by requiring:
      *
      *   1. `adapter.engineType === targetEngine` — the app actually booted in
@@ -1653,17 +1653,17 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      *   2. The target engine's current UI refs match the boot-time snapshot
      *      — i.e. the user has not edited host/port/user/pass/database since
      *      boot (or has edited + restarted, which re-snapshots). A mismatch
-     *      means the form disagrees with where the migration would actually
+     *      means the form disagrees with where the push would actually
      *      write, so we refuse and tell the user to restart.
      *
      * `mariadb` is treated as `mysql` (same adapter / wire protocol).
      *
      * @param {'postgresql'|'mysql'|'mariadb'} targetEngine
-     * @returns {{ ok: boolean, message: string }} `ok` true when the migration
+     * @returns {{ ok: boolean, message: string }} `ok` true when the push
      *   may proceed; otherwise `message` explains why (English, consistent with
      *   the error strings returned by `testPgsqlConnection`).
      */
-    function canMigrateToRemote(targetEngine) {
+    function canPushToRemote(targetEngine) {
         const target = targetEngine === 'mariadb' ? 'mysql' : targetEngine;
         const runtimeEngine = adapter?.engineType;
         if (runtimeEngine !== target) {
@@ -1721,32 +1721,32 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Run the SQLite → PostgreSQL migration. The destination is the live
+     * Run the SQLite → PostgreSQL push. The destination is the live
      * singleton `adapter` (a `PgSQLAdapter` after the user switched engine +
      * restarted). Progress is mirrored into `vrcxStore.databaseUpgradeState`
      * so the existing `DatabaseUpgradeDialog` (which keys off
-     * `fromVersion === -1`) surfaces a "migration in progress" state.
+     * `fromVersion === -1`) surfaces a "push in progress" state.
      *
      * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
-     * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
+     * @returns {Promise<import('../../services/database/pushEngine.js').PushResult>}
      */
-    async function migrateToPgsql(srcConnStr) {
+    async function pushFromSqliteToPgsql(srcConnStr) {
         // Pre-flight guard (defect 3): refuse to run unless the live adapter
         // actually booted in postgresql mode AND the form's connection params
         // match the boot-time snapshot. Without this, a user who edited
-        // host/port/database without restarting would see the migration
+        // host/port/database without restarting would see the push
         // "succeed" while it silently wrote to the previous connection.
-        const guard = canMigrateToRemote('postgresql');
+        const guard = canPushToRemote('postgresql');
         if (!guard.ok) {
-            pgsqlMigrationStatus.value = 'failed';
+            pgsqlPushStatus.value = 'failed';
             throw new Error(guard.message);
         }
-        pgsqlMigrationStatus.value = 'migrating';
-        // Surface the migration via the existing DatabaseUpgradeDialog. We
+        pgsqlPushStatus.value = 'pushing';
+        // Surface the push via the existing DatabaseUpgradeDialog. We
         // mutate the reactive object's properties (rather than replacing the
         // ref value) to stay within the ESLint store-boundary rule.
         vrcxStore.databaseUpgradeState.visible = true;
-        vrcxStore.databaseUpgradeState.fromVersion = -1; // marks "migration in progress"
+        vrcxStore.databaseUpgradeState.fromVersion = -1; // marks "push in progress"
         vrcxStore.databaseUpgradeState.toVersion = 0;
         try {
             const source = srcConnStr
@@ -1754,9 +1754,9 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
             // No `dstConfig` is passed: the destination is always the live
             // singleton adapter (guarded above to match the form). See
-            // `migrateSqliteToRemote` + defect 3 for why a candidate target
+            // `pushFromSqlite` + defect 3 for why a candidate target
             // config is no longer accepted.
-            const result = await migrateSqliteToRemote(source, {
+            const result = await pushFromSqlite(source, {
                 onProgress: (p) => {
                     // Update the dialog's state so the UI can show the
                     // current table + running row count. We stash these
@@ -1766,37 +1766,37 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
                 }
             });
-            pgsqlMigrationStatus.value = 'done';
+            pgsqlPushStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
             return result;
         } catch (err) {
-            pgsqlMigrationStatus.value = 'failed';
+            pgsqlPushStatus.value = 'failed';
             vrcxStore.databaseUpgradeState.visible = false;
             throw err;
         }
     }
 
     /**
-     * Run the SQLite → MySQL/MariaDB migration. Symmetric to `migrateToPgsql`;
-     * the underlying `migrateSqliteToRemote` is engine-agnostic and only
+     * Run the SQLite → MySQL/MariaDB push. Symmetric to `pushFromSqliteToPgsql`;
+     * the underlying `pushFromSqlite` is engine-agnostic and only
      * requires the live singleton `adapter` to be a `MySQLAdapter` (which it
      * is after the user switched engine + restarted so the C# `MySQL.Instance`
      * pool is initialised). The same `DatabaseUpgradeDialog` surfaces
      * progress.
      *
      * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
-     * @returns {Promise<import('../../services/database/migrateEngine.js').MigrationResult>}
+     * @returns {Promise<import('../../services/database/pushEngine.js').PushResult>}
      */
-    async function migrateToMysql(srcConnStr) {
-        // Pre-flight guard (defect 3): symmetric to `migrateToPgsql`. Refuse
+    async function pushFromSqliteToMysql(srcConnStr) {
+        // Pre-flight guard (defect 3): symmetric to `pushFromSqliteToPgsql`. Refuse
         // unless the live adapter booted in mysql/mariadb mode AND the form's
         // connection params match the boot-time snapshot.
-        const guard = canMigrateToRemote('mysql');
+        const guard = canPushToRemote('mysql');
         if (!guard.ok) {
-            mysqlMigrationStatus.value = 'failed';
+            mysqlPushStatus.value = 'failed';
             throw new Error(guard.message);
         }
-        mysqlMigrationStatus.value = 'migrating';
+        mysqlPushStatus.value = 'pushing';
         vrcxStore.databaseUpgradeState.visible = true;
         vrcxStore.databaseUpgradeState.fromVersion = -1;
         vrcxStore.databaseUpgradeState.toVersion = 0;
@@ -1805,18 +1805,18 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
             // No `dstConfig` — destination is the live singleton (guarded
-            // above). See `migrateSqliteToRemote` + defect 3.
-            const result = await migrateSqliteToRemote(source, {
+            // above). See `pushFromSqlite` + defect 3.
+            const result = await pushFromSqlite(source, {
                 onProgress: (p) => {
                     vrcxStore.databaseUpgradeState.currentTable = p.table;
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
                 }
             });
-            mysqlMigrationStatus.value = 'done';
+            mysqlPushStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
             return result;
         } catch (err) {
-            mysqlMigrationStatus.value = 'failed';
+            mysqlPushStatus.value = 'failed';
             vrcxStore.databaseUpgradeState.visible = false;
             throw err;
         }
@@ -1854,21 +1854,21 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Pre-flight guard for remote → SQLite backup. Returns whether it is
-     * safe to run `backupRemoteToSqlite` right now. The backup source is
+     * Pre-flight guard for remote → SQLite pull. Returns whether it is
+     * safe to run `pullToSqlite` right now. The pull source is
      * the live singleton `adapter`, whose connection was fixed at boot by
      * the C# layer; we only require that the runtime engine is a remote
-     * engine (postgresql or mysql), NOT sqlite. Unlike the migration guard
-     * `canMigrateToRemote`, we do NOT compare the form's connection params
-     * against the boot-time snapshot because the backup only READS from
+     * engine (postgresql or mysql), NOT sqlite. Unlike the push guard
+     * `canPushToRemote`, we do NOT compare the form's connection params
+     * against the boot-time snapshot because the pull only READS from
      * the source — a param mismatch would mean reading from the wrong
      * host, but since the user already booted + connected successfully,
-     * the boot-time connection IS the one they want to back up. The form
-     * edits are irrelevant to a read-only backup.
+     * the boot-time connection IS the one they want to pull. The form
+     * edits are irrelevant to a read-only pull.
      *
      * @returns {{ ok: boolean, message: string }}
      */
-    function canBackupFromRemote() {
+    function canPullFromRemote() {
         const runtimeEngine = adapter?.engineType;
         if (runtimeEngine !== 'postgresql' && runtimeEngine !== 'mysql') {
             return {
@@ -1876,33 +1876,33 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 message:
                     `VRCX is not running in a remote database mode this session ` +
                     `(runtime engine: ${runtimeEngine || 'unknown'}). ` +
-                    'Switch to PostgreSQL or MySQL, restart VRCX, then run the backup again.'
+                    'Switch to PostgreSQL or MySQL, restart VRCX, then run the pull again.'
             };
         }
         return { ok: true, message: '' };
     }
 
     /**
-     * Open the native Save-As dialog and back up the live remote database
+     * Open the native Save-As dialog and pull the live remote database
      * to the user-chosen NEW `.sqlite3` file. The dialog defaults to the
-     * VRCX AppData directory (`%appdata%/VRCX` on Windows) so the backup
+     * VRCX AppData directory (`%appdata%/VRCX` on Windows) so the pull
      * lands next to the original `VRCX.sqlite3` for easy management, and
-     * forces the `.sqlite3` extension. The backup is non-destructive: it
+     * forces the `.sqlite3` extension. The pull is non-destructive: it
      * only reads from the remote source and writes to the new file.
      *
      * Progress is mirrored into `vrcxStore.databaseUpgradeState` so the
      * existing `DatabaseUpgradeDialog` (which keys off `fromVersion === -1`)
-     * surfaces a "backup in progress" state, same as the migration flow.
+     * surfaces a "pull in progress" state, same as the push flow.
      *
-     * @returns {Promise<import('../../services/database/backupEngine.js').BackupResult|undefined>}
+     * @returns {Promise<import('../../services/database/pullEngine.js').PullResult|undefined>}
      *   `undefined` if the user cancelled the Save-As dialog.
      */
-    async function backupToSqlite() {
+    async function pullToSqlite() {
         // Pre-flight guard: refuse unless the live adapter booted in a
         // remote engine mode.
-        const guard = canBackupFromRemote();
+        const guard = canPullFromRemote();
         if (!guard.ok) {
-            backupStatus.value = 'failed';
+            pullStatus.value = 'failed';
             throw new Error(guard.message);
         }
         // ── 1. Open the Save-As dialog ──
@@ -1947,7 +1947,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         // extension, but validate defensively (same rule as `browseSqlitePath`).
         const ext = picked.toLowerCase().match(/(\.[^.\\/]+)$/)?.[1] || '';
         if (!SQLITE_ALLOWED_EXTENSIONS.includes(ext)) {
-            backupStatus.value = 'failed';
+            pullStatus.value = 'failed';
             toast.error(
                 t(
                     'view.settings.advanced.advanced.database_engine.sqlite_invalid_extension',
@@ -1960,24 +1960,24 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             return undefined;
         }
 
-        // ── 3. Run the backup ──
-        backupStatus.value = 'backing';
+        // ── 3. Run the pull ──
+        pullStatus.value = 'pulling';
         vrcxStore.databaseUpgradeState.visible = true;
         vrcxStore.databaseUpgradeState.fromVersion = -1;
         vrcxStore.databaseUpgradeState.toVersion = 0;
         try {
             const dstConnStr = `sqlite:///${picked}`;
-            const result = await backupRemoteToSqlite(dstConnStr, {
+            const result = await runPullToSqlite(dstConnStr, {
                 onProgress: (p) => {
                     vrcxStore.databaseUpgradeState.currentTable = p.table;
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
                 }
             });
-            backupStatus.value = 'done';
+            pullStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
             return result;
         } catch (err) {
-            backupStatus.value = 'failed';
+            pullStatus.value = 'failed';
             vrcxStore.databaseUpgradeState.visible = false;
             throw err;
         }
@@ -2036,15 +2036,15 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         pgsqlPassword,
         pgsqlDatabase,
         pgsqlConnectionStatus,
-        pgsqlMigrationStatus,
+        pgsqlPushStatus,
         mysqlHost,
         mysqlPort,
         mysqlUsername,
         mysqlPassword,
         mysqlDatabase,
         mysqlConnectionStatus,
-        mysqlMigrationStatus,
-        backupStatus,
+        mysqlPushStatus,
+        pullStatus,
         sqlitePath,
         sqliteConnectionStatus,
         sqliteConnectionError,
@@ -2055,12 +2055,12 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         testSqliteConnection,
         browseSqlitePath,
         browseSqliteFolder,
-        migrateToPgsql,
-        migrateToMysql,
-        canMigrateToRemote,
+        pushFromSqliteToPgsql,
+        pushFromSqliteToMysql,
+        canPushToRemote,
         resolveCurrentSqliteDbPath,
-        backupToSqlite,
-        canBackupFromRemote,
+        pullToSqlite,
+        canPullFromRemote,
 
         setEnablePrimaryPassword,
         setEnablePrimaryPasswordConfigRepository,

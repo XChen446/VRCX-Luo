@@ -1,15 +1,15 @@
-// Phase 9 slice S9 (task 9.13) — SQLite → remote-engine cross-engine migration.
+// Phase 9 slice S9 (task 9.13) — SQLite → remote-engine cross-engine push.
 //
-// Provides `migrateSqliteToRemote(srcConnStr, options)` which copies
-// every global + user table from a source SQLite database into the currently
-// initialised remote target (PostgreSQL or MySQL/MariaDB). The destination is
-// the singleton `adapter` from `./adapter/index.js` — a `PgSQLAdapter` when
-// `VRCX_Database.mode === 'postgresql'` or a `MySQLAdapter` when mode is
-// `'mysql'`/`'mariadb'`, each saved + the app restarted so the C#
+// Provides `pushFromSqlite(srcConnStr, options)` which copies every
+// global + user table from a source SQLite database into the currently
+// initialised remote target (PostgreSQL or MySQL/MariaDB). The destination
+// is the singleton `adapter` from `./adapter/index.js` — a `PgSQLAdapter`
+// when `VRCX_Database.mode === 'postgresql'` or a `MySQLAdapter` when mode
+// is `'mysql'`/`'mariadb'`, each saved + the app restarted so the C#
 // `PostgreSQL.Instance` / `MySQL.Instance` pool is initialised before the
-// renderer boots. `migrateSqliteToPgsql` is kept as a backward-compatible alias.
+// renderer boots.
 //
-// The migration body is engine-agnostic: it only touches the abstract
+// The push body is engine-agnostic: it only touches the abstract
 // `EngineAdapter` surface (`initGlobalSchema` / `initUserSchema` / `userTable`
 // / `bulkInsert`), which every remote subclass implements, so the same code
 // path serves both PG and MySQL destinations.
@@ -17,12 +17,12 @@
 // NOTE: the destination is the live singleton only — there is no `dstConfig`
 // parameter. Callers MUST ensure the engine has been switched + the app
 // restarted so the singleton matches the user's intended target; the UI-side
-// guard `canMigrateToRemote` in `stores/settings/advanced.js` enforces this by
+// guard `canPushToRemote` in `stores/settings/advanced.js` enforces this by
 // comparing the current UI refs against the boot-time config snapshot
 // (`bootDbConfig` from `plugins/interopApi.js`). Passing a candidate target
 // config here would be misleading: it could never override the already-Init'd
 // C# pool, so any mismatch between the form and the running pool would silently
-// route the migration to the wrong host. See defect 3 (MEDIUM) fix.
+// route the push to the wrong host. See defect 3 (MEDIUM) fix.
 //
 // See `docs/PHASE9_PGSQL_DESIGN.md` §6.2 + §11.1 9.13 DoD.
 //
@@ -32,11 +32,11 @@
 //   - `id` / `session_id` columns are copied verbatim (SELECT * includes
 //     them, bulkInsert writes them through).
 //   - Errors per-table are collected and the run continues — a single broken
-//     table does not abort the whole migration.
+//     table does not abort the whole push.
 //   - Row-count verification per table; deeper sampling left to S12.
 //   - DATA-INTEGRITY PRIORITY: the 16 global + 22 user base-name whitelists
-//     cover the *known* schema, but the migration MUST NOT silently drop
-//     tables that fall outside them (upstream additions, legacy tables, the
+//     cover the *known* schema, but the push MUST NOT silently drop tables
+//     that fall outside them (upstream additions, legacy tables, the
 //     `configs` JSON store, etc.). After the known tables are copied, every
 //     remaining source table is mirrored into the destination: its column
 //     metadata is read from PRAGMA `table_xinfo` and re-emitted as a
@@ -48,9 +48,9 @@
 //     re-created — recovery-time concerns). `configs` is copied under its
 //     original name: `bulkInsert('ignore')` preserves the destination's
 //     pre-existing `config:schema_version` (written by `runMigrations`
-//     before this user-triggered migration), so no boot-state pollution;
-//     each mirrored table is warn-logged so operators can see which tables
-//     the safety net preserved.
+//     before this user-triggered push), so no boot-state pollution; each
+//     mirrored table is warn-logged so operators can see which tables the
+//     safety net preserved.
 
 import { adapter, createAdapter } from './adapter/index.js';
 
@@ -58,7 +58,7 @@ import { adapter, createAdapter } from './adapter/index.js';
  * 16 global tables (public schema) — mirrors `SQLiteAdapter.initGlobalSchema`
  * (L985-1049), `PgSQLAdapter.initGlobalSchema` (L1293-1341) and
  * `MySQLAdapter.initGlobalSchema` table-for-table. Order matches the
- * schema-init order so the migration log reads naturally.
+ * schema-init order so the push log reads naturally.
  * @type {string[]}
  */
 const GLOBAL_TABLES = [
@@ -125,7 +125,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 );
 
 /**
- * @typedef {Object} MigrationProgress
+ * @typedef {Object} PushProgress
  * @property {'global'|'user'|'mirror'} phase
  * @property {string} table - destination table identifier (bare name or `account_{prefix}.{name}`)
  * @property {number} current - 1-based index of the current table within its phase
@@ -134,7 +134,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * @typedef {Object} MigrationResult
+ * @typedef {Object} PushResult
  * @property {number} globalTables - number of known global tables processed
  * @property {number} userTables - number of known user tables processed (across all prefixes)
  * @property {number} unknownTables - number of non-whitelist tables mirrored + copied (data-integrity safety net)
@@ -143,7 +143,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * Migrate data from a SQLite database to a remote-engine target
+ * Push data from a SQLite database to a remote-engine target
  * (PostgreSQL or MySQL/MariaDB).
  *
  * The destination is the singleton `adapter` from `./adapter/index.js`, which
@@ -163,18 +163,18 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * There is intentionally NO `dstConfig` parameter: the destination is always
  * the live singleton, whose connection was fixed at boot by the C# layer.
  * Accepting a candidate target config would let a caller pass values that
- * disagree with the running pool, creating the illusion that the migration
+ * disagree with the running pool, creating the illusion that the push
  * honours them while it actually writes to the boot-time connection (defect 3).
- * The caller-side guard `canMigrateToRemote` blocks that case before invoking
+ * The caller-side guard `canPushToRemote` blocks that case before invoking
  * this function.
  *
  * @param {string} srcConnStr - SQLite connection string like 'sqlite:///C:/path/to/old.db'.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.
  * @param {number} [options.batchSize=500] - rows per bulkInsert call (PG param limit 65535; 500 rows × ~50 cols is safe; MySQL prepared-statement limit is similar).
- * @param {(p: MigrationProgress) => void} [options.onProgress] - progress callback for UI.
- * @returns {Promise<MigrationResult>}
+ * @param {(p: PushProgress) => void} [options.onProgress] - progress callback for UI.
+ * @returns {Promise<PushResult>}
  */
-export async function migrateSqliteToRemote(
+export async function pushFromSqlite(
     srcConnStr,
     options = {}
 ) {
@@ -191,7 +191,7 @@ export async function migrateSqliteToRemote(
     // silently corrupt the live SQLite database.
     //
     // Original M1 fix (QA M1 + Security M1) used `dropUserSchema` as a
-    // PgSQLAdapter-only discriminator, but that made the migration
+    // PgSQLAdapter-only discriminator, but that made the push
     // Pg-only and excluded MySQLAdapter (which deliberately has no
     // `dropUserSchema` because MySQL stores user tables flat under a
     // `prefix_` naming scheme rather than in per-account schemas). To treat
@@ -204,9 +204,9 @@ export async function migrateSqliteToRemote(
         ).engineType;
     if (!engine || engine === 'sqlite' || engine === 'unknown') {
         throw new Error(
-            'migrateSqliteToRemote: destination adapter is the default SQLite engine. ' +
+            'pushFromSqlite: destination adapter is the default SQLite engine. ' +
                 'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
-                'restart the app before running the migration.'
+                'restart the app before running the push.'
         );
     }
     // M4 (QA M4): `isConnected` is a PgSQLAdapter-only extension (not on the
@@ -221,7 +221,7 @@ export async function migrateSqliteToRemote(
         !adapterAny.isConnected()
     ) {
         throw new Error(
-            `migrateSqliteToRemote: ${engine} backend is not connected. ` +
+            `pushFromSqlite: ${engine} backend is not connected. ` +
                 'Check VRCX_Database.host/port/credentials and restart the app.'
         );
     }
@@ -230,8 +230,8 @@ export async function migrateSqliteToRemote(
     // destination is exclusively the live singleton `adapter`; any candidate
     // target config the caller might supply could never override the
     // already-Init'd C# pool, so accepting it would risk silently routing the
-    // migration to the wrong host. The UI guard `canMigrateToRemote` ensures
-    // the running pool matches the user's intended target before we get here.
+    // push to the wrong host. The UI guard `canPushToRemote` ensures the
+    // running pool matches the user's intended target before we get here.
 
     // ── 1. Build source SQLite adapter (read-only) ───────────────────
     const srcAdapter = await createAdapter({ connection: srcConnStr });
@@ -261,7 +261,7 @@ export async function migrateSqliteToRemote(
     // throughput vs. a single wrapped transaction (PG fsync per batch).
     // This is an accepted known limitation for Phase 9 minimal scope.
 
-    // ── 3. Migrate global tables (16, public schema) ─────────────────
+    // ── 3. Push global tables (16, public schema) ─────────────────
     const globalTotal = GLOBAL_TABLES.length;
     let globalIdx = 0;
     for (const tableName of GLOBAL_TABLES) {
@@ -327,7 +327,7 @@ export async function migrateSqliteToRemote(
         }
     }
 
-    // ── 5. Migrate user tables per prefix ────────────────────────────
+    // ── 5. Push user tables per prefix ────────────────────────────
     const userTotal = Array.from(userTablesByPrefix.values()).reduce(
         (acc, arr) => acc + arr.length,
         0
@@ -384,7 +384,7 @@ export async function migrateSqliteToRemote(
     // `configs` is copied under its original name (NOT renamed): the live
     // `configs` table is created empty by `configRepository.init()` on new-
     // engine boot, then `runMigrations` writes the correct `schema_version`
-    // checkpoint into it BEFORE this user-triggered migration runs. Because
+    // checkpoint into it BEFORE this user-triggered push runs. Because
     // `copyTable` uses `bulkInsert(..., 'ignore')` (ON CONFLICT DO NOTHING /
     // INSERT IGNORE), the pre-existing `config:schema_version` key in the
     // destination is preserved and the stale value from the source is
@@ -484,9 +484,9 @@ function matchUserTable(tableName) {
  *
  * M2 (Performance MEDIUM-1): column metadata is read from the caller-
  * supplied `srcSchemaMap` (cached once at the top of
- * `migrateSqliteToPgsql`) instead of re-querying `listTablesTypes()` per
+ * `pushFromSqlite`) instead of re-querying `listTablesTypes()` per
  * table — eliminates 1521 SQLite / 2964 PG redundant queries across a
- * 38-table migration.
+ * 38-table push.
  *
  * HIGH-1-perf (Performance HIGH-1): the previous implementation called
  * `srcAdapter.select(srcTable, colList)` which materialises the ENTIRE
@@ -633,12 +633,3 @@ function buildMirroredColumns(tableMeta) {
 }
 
 export { GLOBAL_TABLES, USER_TABLE_NAMES };
-
-/**
- * Backward-compatible alias for {@link migrateSqliteToRemote}. Kept so the
- * pre-merge PgSQL-only call site (`advanced.js` `migrateToPgsql`) and any
- * external callers/tests referencing the historical name keep working after
- * the engine-agnostic generalisation. The function body is identical:
- * `migrateSqliteToPgsql === migrateSqliteToRemote`.
- */
-const migrateSqliteToPgsql = migrateSqliteToRemote;export { migrateSqliteToPgsql };

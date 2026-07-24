@@ -1,14 +1,14 @@
-// Remote → SQLite backup engine.
+// Remote → SQLite pull engine.
 //
-// Provides `backupRemoteToSqlite(dstConnStr, options)` which copies every
+// Provides `pullToSqlite(dstConnStr, options)` which copies every
 // global + user table from the currently-initialised remote singleton
 // adapter (PostgreSQL or MySQL/MariaDB) into a NEW SQLite database file
 // the user picks via a native Save-As dialog. This is the symmetric
-// counterpart to `migrateEngine.js`'s `migrateSqliteToRemote`: the
-// migration copies SQLite → remote (live singleton), the backup copies
-// remote (live singleton) → SQLite (new throwaway file). The backup is
-// non-destructive — it never touches the running remote database; it only
-// reads from it and writes to the user-chosen `.sqlite3` file.
+// counterpart to `pushEngine.js`'s `pushFromSqlite`: the push copies
+// SQLite → remote (live singleton), the pull copies remote (live
+// singleton) → SQLite (new throwaway file). The pull is non-destructive
+// — it never touches the running remote database; it only reads from it
+// and writes to the user-chosen `.sqlite3` file.
 //
 // The backup body is engine-agnostic: it only touches the abstract
 // `EngineAdapter` surface (`listTablesTypes` / `listGlobalTablesTypes` /
@@ -21,11 +21,11 @@
 // back to deriving global tables from the `GLOBAL_TABLES` whitelist for
 // MySQL/SQLite (which enumerate all tables flatly through `listTablesTypes`).
 //
-// Design constraints honoured here (mirrors `migrateEngine.js`):
+// Design constraints honoured here (mirrors `pushEngine.js`):
 //   - The source is the live singleton `adapter` only — there is no
 //     `srcConfig` parameter. Callers MUST ensure the engine has been
 //     switched + restarted so the singleton matches the user's intended
-//     source; the UI-side guard `canBackupFromRemote` in
+//     source; the UI-side guard `canPullFromRemote` in
 //     `stores/settings/advanced.js` enforces this by checking
 //     `adapter.engineType` is a remote engine (not 'sqlite'/'unknown').
 //   - `id` / `session_id` columns are copied verbatim (SELECT * includes
@@ -50,7 +50,7 @@
 import { adapter, createAdapter } from './adapter/index.js';
 
 /**
- * 16 global tables (public schema) — mirrors `migrateEngine.js`'s
+ * 16 global tables (public schema) — mirrors `pushEngine.js`'s
  * `GLOBAL_TABLES` and `SQLiteAdapter.initGlobalSchema` /
  * `PgSQLAdapter.initGlobalSchema` / `MySQLAdapter.initGlobalSchema`
  * table-for-table. Used to split the flat MySQL/SQLite `listTablesTypes`
@@ -77,7 +77,7 @@ const GLOBAL_TABLES = [
 ];
 
 /**
- * 22 user-table base names — mirrors `migrateEngine.js`'s `USER_TABLE_NAMES`.
+ * 22 user-table base names — mirrors `pushEngine.js`'s `USER_TABLE_NAMES`.
  * In the source MySQL DB these live flat as `${prefix}_${name}`; in a
  * source PG DB they live in the `account_${prefix}` schema as just
  * `${name}`. Sorted longest-first when matching so e.g.
@@ -115,7 +115,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 );
 
 /**
- * @typedef {Object} BackupProgress
+ * @typedef {Object} PullProgress
  * @property {'global'|'user'|'mirror'} phase
  * @property {string} table - destination table identifier (bare name or `account_{prefix}.{name}`)
  * @property {number} current - 1-based index of the current table within its phase
@@ -124,7 +124,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * @typedef {Object} BackupResult
+ * @typedef {Object} PullResult
  * @property {number} globalTables - number of known global tables processed
  * @property {number} userTables - number of known user tables processed (across all prefixes)
  * @property {number} unknownTables - number of non-whitelist tables mirrored + copied (data-integrity safety net)
@@ -133,7 +133,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * Back up data from the live remote-engine singleton adapter to a NEW
+ * Pull data from the live remote-engine singleton adapter into a NEW
  * SQLite database file.
  *
  * The source is the singleton `adapter` from `./adapter/index.js`, which
@@ -142,7 +142,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * when mode is `'mysql'`/`'mariadb'` (C# `MySQL` initialised). Callers
  * must ensure the engine has been switched + the app restarted before
  * invoking this function; otherwise the source reads will go to the live
- * SQLite adapter and the "backup" would be SQLite → SQLite (useless).
+ * SQLite adapter and the "pull" would be SQLite → SQLite (useless).
  * We guard against this by refusing to run when the singleton's
  * `engineType` is `'sqlite'` (or the abstract `'unknown'`).
  *
@@ -160,10 +160,10 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * @param {string} dstConnStr - SQLite connection string like 'sqlite:///C:/path/to/backup.sqlite3'.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.
  * @param {number} [options.batchSize=500] - rows per bulkInsert call.
- * @param {(p: BackupProgress) => void} [options.onProgress] - progress callback for UI.
- * @returns {Promise<BackupResult>}
+ * @param {(p: PullProgress) => void} [options.onProgress] - progress callback for UI.
+ * @returns {Promise<PullResult>}
  */
-export async function backupRemoteToSqlite(dstConnStr, options = {}) {
+export async function pullToSqlite(dstConnStr, options = {}) {
     const { batchSize = 500, onProgress } = options;
     const errors = [];
     let rowsCopied = 0;
@@ -181,7 +181,7 @@ export async function backupRemoteToSqlite(dstConnStr, options = {}) {
         ).engineType;
     if (!engine || engine === 'sqlite' || engine === 'unknown') {
         throw new Error(
-            'backupRemoteToSqlite: source adapter is the default SQLite engine. ' +
+            'pullToSqlite: source adapter is the default SQLite engine. ' +
                 'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
                 'restart the app before running the backup.'
         );
@@ -192,7 +192,7 @@ export async function backupRemoteToSqlite(dstConnStr, options = {}) {
         !adapterAny.isConnected()
     ) {
         throw new Error(
-            `backupRemoteToSqlite: ${engine} backend is not connected. ` +
+            `pullToSqlite: ${engine} backend is not connected. ` +
                 'Check VRCX_Database.host/port/credentials and restart the app.'
         );
     }
@@ -257,7 +257,7 @@ export async function backupRemoteToSqlite(dstConnStr, options = {}) {
     } else {
         // MySQL (and the SQLite fallback, which we refuse above but keep
         // for robustness): enumerate all tables flatly, then split via
-        // the whitelists. This mirrors `migrateEngine.js` §4.
+        // the whitelists. This mirrors `pushEngine.js` §4.
         const allTables = await adapter.listTablesTypes();
         /** @type {Map<string, string[]>} prefix -> list of user-table base names */
         const userTablesByPrefix = new Map();
@@ -421,7 +421,7 @@ export async function backupRemoteToSqlite(dstConnStr, options = {}) {
 
 /**
  * Match a flat SQLite/MySQL table name against the 22 known user-table
- * base names. Symmetric to `migrateEngine.js`'s `matchUserTable`.
+ * base names. Symmetric to `pushEngine.js`'s `matchUserTable`.
  *
  * @param {string} tableName - flat table name like `abc_feed_gps`.
  * @returns {{prefix: string, name: string}|null}
@@ -480,7 +480,7 @@ function splitPgUserTable(table) {
  * Copy all rows from `srcTable` (remote) to `dstTable` (SQLite), in
  * batches of `batchSize`. Reads the source in paged `LIMIT/OFFSET` chunks
  * and writes each batch via `bulkInsert(..., 'ignore')` so memory stays
- * bounded. Symmetric to `migrateEngine.js`'s `copyTable`.
+ * bounded. Symmetric to `pushEngine.js`'s `copyTable`.
  *
  * @param {import('./adapter/EngineAdapter.js').EngineAdapter} srcAdapter
  * @param {import('./adapter/EngineAdapter.js').EngineAdapter} dstAdapter
@@ -544,7 +544,7 @@ async function copyTable(
 /**
  * Build structured column definitions for mirroring an unknown source table
  * onto the destination via `adapter.createTable`. Symmetric to
- * `migrateEngine.js`'s `buildMirroredColumns`.
+ * `pushEngine.js`'s `buildMirroredColumns`.
  *
  * @param {{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}|undefined} tableMeta
  * @returns {object[]} column defs for `createTable`

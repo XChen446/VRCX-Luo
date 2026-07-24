@@ -353,17 +353,17 @@
                         <Button
                             size="sm"
                             variant="outline"
-                            :disabled="pgsqlMigrationStatus === 'migrating' || !pgMigrateGuard.ok"
-                            :title="pgMigrateGuard.message"
+                            :disabled="pgsqlPushStatus === 'pushing' || !pgPushGuard.ok"
+                            :title="pgPushGuard.message"
                             @click="
-                                migrateTargetEngine = 'postgresql';
-                                isMigrateDialogVisible = true;
+                                pushTargetEngine = 'postgresql';
+                                isPushDialogVisible = true;
                             ">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
-                        <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
-                        <span v-if="pgsqlMigrationStatus === 'done'" class="text-green-500">✓</span>
-                        <span v-if="pgsqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="pgsqlPushStatus === 'pushing'" class="text-yellow-500">…</span>
+                        <span v-if="pgsqlPushStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="pgsqlPushStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
                 <SettingsItem
@@ -373,15 +373,15 @@
                         <Button
                             size="sm"
                             variant="outline"
-                            :disabled="backupStatus === 'backing' || !backupGuard.ok"
-                            :title="backupGuard.message"
-                            @click="onBackupToSqlite">
+                            :disabled="pullStatus === 'pulling' || !pullGuard.ok"
+                            :title="pullGuard.message"
+                            @click="onPullToSqlite">
                             <DatabaseBackup class="h-4 w-4 mr-1" />
                             {{ t('view.settings.advanced.advanced.database_engine.backup_button') }}
                         </Button>
-                        <span v-if="backupStatus === 'backing'" class="text-yellow-500">…</span>
-                        <span v-if="backupStatus === 'done'" class="text-green-500">✓</span>
-                        <span v-if="backupStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="pullStatus === 'pulling'" class="text-yellow-500">…</span>
+                        <span v-if="pullStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="pullStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
             </template>
@@ -418,17 +418,17 @@
                         <Button
                             size="sm"
                             variant="outline"
-                            :disabled="mysqlMigrationStatus === 'migrating' || !mysqlMigrateGuard.ok"
-                            :title="mysqlMigrateGuard.message"
+                            :disabled="mysqlPushStatus === 'pushing' || !mysqlPushGuard.ok"
+                            :title="mysqlPushGuard.message"
                             @click="
-                                migrateTargetEngine = 'mysql';
-                                isMigrateDialogVisible = true;
+                                pushTargetEngine = 'mysql';
+                                isPushDialogVisible = true;
                             ">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
-                        <span v-if="mysqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
-                        <span v-if="mysqlMigrationStatus === 'done'" class="text-green-500">✓</span>
-                        <span v-if="mysqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="mysqlPushStatus === 'pushing'" class="text-yellow-500">…</span>
+                        <span v-if="mysqlPushStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="mysqlPushStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
                 <SettingsItem
@@ -438,25 +438,25 @@
                         <Button
                             size="sm"
                             variant="outline"
-                            :disabled="backupStatus === 'backing' || !backupGuard.ok"
-                            :title="backupGuard.message"
-                            @click="onBackupToSqlite">
+                            :disabled="pullStatus === 'pulling' || !pullGuard.ok"
+                            :title="pullGuard.message"
+                            @click="onPullToSqlite">
                             <DatabaseBackup class="h-4 w-4 mr-1" />
                             {{ t('view.settings.advanced.advanced.database_engine.backup_button') }}
                         </Button>
-                        <span v-if="backupStatus === 'backing'" class="text-yellow-500">…</span>
-                        <span v-if="backupStatus === 'done'" class="text-green-500">✓</span>
-                        <span v-if="backupStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="pullStatus === 'pulling'" class="text-yellow-500">…</span>
+                        <span v-if="pullStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="pullStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
             </template>
         </SettingsGroup>
 
         <Dialog
-            :open="isMigrateDialogVisible"
+            :open="isPushDialogVisible"
             @update:open="
                 (open) => {
-                    if (!open) isMigrateDialogVisible = false;
+                    if (!open) isPushDialogVisible = false;
                 }
             ">
             <DialogContent class="x-dialog sm:max-w-md">
@@ -471,28 +471,28 @@
                     </AlertDescription>
                 </Alert>
 
-                <Alert v-if="!migrateDialogGuard.ok" variant="destructive" class="mb-3">
+                <Alert v-if="!pushDialogGuard.ok" variant="destructive" class="mb-3">
                     <TriangleAlert />
                     <AlertDescription>
                         {{ t('view.settings.advanced.advanced.database_engine.restart_hint') }}
-                        <span v-if="migrateDialogGuard.message" class="block mt-1 text-xs opacity-90">{{
-                            migrateDialogGuard.message
+                        <span v-if="pushDialogGuard.message" class="block mt-1 text-xs opacity-90">{{
+                            pushDialogGuard.message
                         }}</span>
                     </AlertDescription>
                 </Alert>
 
                 <DialogFooter>
-                    <Button variant="outline" size="sm" @click="isMigrateDialogVisible = false">
+                    <Button variant="outline" size="sm" @click="isPushDialogVisible = false">
                         {{ t('confirm.cancel_button') }}
                     </Button>
                     <Button
                         size="sm"
                         :disabled="
-                            (migrateTargetEngine === 'postgresql'
-                                ? pgsqlMigrationStatus === 'migrating'
-                                : mysqlMigrationStatus === 'migrating') || !migrateDialogGuard.ok
+                            (pushTargetEngine === 'postgresql'
+                                ? pgsqlPushStatus === 'pushing'
+                                : mysqlPushStatus === 'pushing') || !pushDialogGuard.ok
                         "
-                        @click="handleMigrate">
+                        @click="handlePush">
                         {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                     </Button>
                 </DialogFooter>
@@ -741,15 +741,15 @@
         pgsqlPassword,
         pgsqlDatabase,
         pgsqlConnectionStatus,
-        pgsqlMigrationStatus,
+        pgsqlPushStatus,
         mysqlHost,
         mysqlPort,
         mysqlUsername,
         mysqlPassword,
         mysqlDatabase,
         mysqlConnectionStatus,
-        mysqlMigrationStatus,
-        backupStatus,
+        mysqlPushStatus,
+        pullStatus,
         sqlitePath,
         sqliteConnectionStatus,
         sqliteConnectionError
@@ -777,50 +777,50 @@
         testSqliteConnection,
         browseSqlitePath,
         browseSqliteFolder,
-        migrateToPgsql,
-        migrateToMysql,
-        canMigrateToRemote,
-        backupToSqlite,
-        canBackupFromRemote
+        pushFromSqliteToPgsql,
+        pushFromSqliteToMysql,
+        canPushToRemote,
+        pullToSqlite,
+        canPullFromRemote
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
     const visits = ref(null);
     const selectedPurgePeriod = ref('180');
     const isPurgeDialogVisible = ref(false);
-    const isMigrateDialogVisible = ref(false);
+    const isPushDialogVisible = ref(false);
     /**
-     * Which remote engine the migration confirmation dialog is targeting.
-     * Set by the migrate buttons (`'postgresql'` / `'mysql'`) before opening
-     * the dialog, then read by `handleMigrate` to dispatch to the right store
+     * Which remote engine the push confirmation dialog is targeting.
+     * Set by the push buttons (`'postgresql'` / `'mysql'`) before opening
+     * the dialog, then read by `handlePush` to dispatch to the right store
      * action. Defaults to `'postgresql'` for backward compatibility with the
      * original PgSQL-only flow.
      * @type {import('vue').Ref<'postgresql' | 'mysql'>}
      */
-    const migrateTargetEngine = ref('postgresql');
+    const pushTargetEngine = ref('postgresql');
 
-    // Pre-flight guard for the migration buttons (defect 3 fix). The
-    // migration destination is the live singleton adapter, whose connection
-    // was fixed at boot; the form refs may have been edited without a
-    // restart. `canMigrateToRemote` compares the form against the boot-time
-    // snapshot and the runtime engine, returning `{ ok, message }`. These
-    // computeds track the matching set of refs so the button disabled-state
-    // updates live as the user edits host/port/etc. The runtime
-    // `adapter.engineType` is non-reactive but never changes mid-session, so
-    // it does not need to be in the dependency graph.
+    // Pre-flight guard for the push buttons (defect 3 fix). The push
+    // destination is the live singleton adapter, whose connection was fixed
+    // at boot; the form refs may have been edited without a restart.
+    // `canPushToRemote` compares the form against the boot-time snapshot and
+    // the runtime engine, returning `{ ok, message }`. These computeds track
+    // the matching set of refs so the button disabled-state updates live as
+    // the user edits host/port/etc. The runtime `adapter.engineType` is
+    // non-reactive but never changes mid-session, so it does not need to be
+    // in the dependency graph.
     /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
-    const pgMigrateGuard = computed(() => canMigrateToRemote('postgresql'));
+    const pgPushGuard = computed(() => canPushToRemote('postgresql'));
     /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
-    const mysqlMigrateGuard = computed(() => canMigrateToRemote('mysql'));
+    const mysqlPushGuard = computed(() => canPushToRemote('mysql'));
     /** Guard for whichever engine the open confirmation dialog targets. */
-    const migrateDialogGuard = computed(() =>
-        migrateTargetEngine.value === 'mysql' ? mysqlMigrateGuard.value : pgMigrateGuard.value
+    const pushDialogGuard = computed(() =>
+        pushTargetEngine.value === 'mysql' ? mysqlPushGuard.value : pgPushGuard.value
     );
-    /** Pre-flight guard for the remote → SQLite backup button. Returns
-     * `{ ok, message }` from `canBackupFromRemote` — ok only when the live
+    /** Pre-flight guard for the remote → SQLite pull button. Returns
+     * `{ ok, message }` from `canPullFromRemote` — ok only when the live
      * adapter booted in a remote engine (postgresql or mysql). */
     /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
-    const backupGuard = computed(() => canBackupFromRemote());
+    const pullGuard = computed(() => canPullFromRemote());
 
     const cacheSize = reactive({
         cachedUsers: 0,
@@ -993,26 +993,26 @@
 
     /**
     /**
-     * Close the confirmation dialog and kick off the migration, dispatched by
-     * `migrateTargetEngine`. Mirrors the `handlePurge` /
-     * `isMigrateDialogVisible` pattern used for avatar feed purging so the
+     * Close the confirmation dialog and kick off the push, dispatched by
+     * `pushTargetEngine`. Mirrors the `handlePurge` /
+     * `isPushDialogVisible` pattern used for avatar feed purging so the
      * user must confirm before a destructive operation.
      */
-    function handleMigrate() {
-        isMigrateDialogVisible.value = false;
-        onMigrate();
+    function handlePush() {
+        isPushDialogVisible.value = false;
+        onPush();
     }
 
     /**
-     * Run the SQLite to remote (PostgreSQL or MySQL) migration. Dispatched by
-     * `migrateTargetEngine`; the destination is the live singleton adapter,
+     * Run the SQLite to remote (PostgreSQL or MySQL) push. Dispatched by
+     * `pushTargetEngine`; the destination is the live singleton adapter,
      * which is the matching remote adapter only after the user switched
      * engine + restarted. If they have not, the store action will throw with
      * a clear message. Noty notifications surface the outcome in the UI in
      * addition to the console log.
      */
-    async function onMigrate() {
-        const storeAction = migrateTargetEngine.value === 'mysql' ? migrateToMysql : migrateToPgsql;
+    async function onPush() {
+        const storeAction = pushTargetEngine.value === 'mysql' ? pushFromSqliteToMysql : pushFromSqliteToPgsql;
         try {
             const result = await storeAction();
             if (result.errors.length > 0) {
@@ -1043,16 +1043,16 @@
     }
 
     /**
-     * Back up the live remote database (PostgreSQL or MySQL) to a NEW
+     * Pull the live remote database (PostgreSQL or MySQL) to a NEW
      * `.sqlite3` file the user picks via a native Save-As dialog. The
      * store action opens the dialog, validates the extension, and runs
-     * `backupRemoteToSqlite`. Noty notifications surface the outcome in
+     * `pullToSqlite`. Noty notifications surface the outcome in
      * the UI in addition to the console log. A cancelled Save-As dialog
      * is a no-op (no notification).
      */
-    async function onBackupToSqlite() {
+    async function onPullToSqlite() {
         try {
-            const result = await backupToSqlite();
+            const result = await pullToSqlite();
             // `undefined` means the user cancelled the Save-As dialog —
             // no notification, no log entry.
             if (!result) return;

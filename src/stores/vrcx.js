@@ -80,7 +80,7 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         fromVersion: 0,
         toVersion: 0,
         // Phase 9 §6.2 — extra fields populated by the SQLite → PgSQL
-        // migration pipeline (`migrateToPgsql` in advanced.js). The
+        // push pipeline (`pushFromSqliteToPgsql` in advanced.js). The
         // DatabaseUpgradeDialog ignores them; they're surfaced here so a
         // future dialog tweak can show per-table progress without changing
         // the ref's shape.

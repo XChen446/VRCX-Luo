@@ -18,9 +18,9 @@ import { initAdapter } from '../services/database/adapter/index.js';
  * pool / adapter singleton, so a migration triggered from the UI would
  * silently target the boot-time connection while the form shows the new
  * values. To block that, the Advanced settings store compares the current
- * UI refs against this snapshot (see `canMigrateToRemote` in
+ * UI refs against this snapshot (see `canPushToRemote` in
  * `stores/settings/advanced.js`); a mismatch means "restart required
- * before migrating".
+ * before pushing".
  *
  * Defaults mirror `loadDatabaseEngineConfig` fallbacks so the comparison
  * is stable when keys are absent (fresh install / vitest stubs).
