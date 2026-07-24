@@ -47,7 +47,7 @@ if (!isDotNetInstalled()) {
 const VRCX_URI_PREFIX = 'vrcx';
 let isOverlayActive = false;
 let appIsQuitting = false;
-const rootDir = app.getAppPath();
+const rootDir = path.resolve(__dirname, '..');
 
 let tray = null;
 let trayIcon = null;
@@ -85,15 +85,25 @@ if (!fs.existsSync(userDataPath)) {
 }
 app.setPath('userData', userDataPath);
 
-const armPath = path.join(rootDir, 'build/Electron/VRCX-Electron-arm64.cjs');
-if (process.arch === 'arm64' && fs.existsSync(armPath)) {
-    require(armPath);
-} else {
-    require(path.join(rootDir, 'build/Electron/VRCX-Electron.cjs'));
-}
-
 const InteropApi = require('./InteropApi');
 const interopApi = new InteropApi();
+
+try {
+    const armPath = path.join(rootDir, 'build/Electron/VRCX-Electron-arm64.cjs');
+    if (process.arch === 'arm64' && fs.existsSync(armPath)) {
+        require(armPath);
+    } else {
+        require(path.join(rootDir, 'build/Electron/VRCX-Electron.cjs'));
+    }
+    interopApi.getDotNetObject('ProgramElectron').PreInit(version, args);
+    interopApi.getDotNetObject('VRCXStorage').Load();
+    interopApi.getDotNetObject('ProgramElectron').Init();
+} catch (e) {
+    console.error('[bootstrap] .NET init failed:', e);
+    const logPath = path.join(app.getPath('userData'), 'bootstrap-error.log');
+    try { fs.writeFileSync(logPath, e && e.stack ? e.stack : String(e)); } catch (_) {}
+    throw e;
+}
 
 const OVERLAY_WRIST_FRAME_WIDTH = 512;
 const OVERLAY_WRIST_FRAME_HEIGHT = 512;
@@ -114,9 +124,6 @@ function createOverlayWindowShm() {
     fs.writeFileSync(OVERLAY_SHM_PATH, Buffer.alloc(OVERLAY_FRAME_SIZE + 1));
 }
 
-interopApi.getDotNetObject('ProgramElectron').PreInit(version, args);
-interopApi.getDotNetObject('VRCXStorage').Load();
-interopApi.getDotNetObject('ProgramElectron').Init();
 // HIGH-2 fix: Electron 路径下 VRCXStorage.Get/GetBackup 通过 Proxy(ipc-electron/interopApi.js)返回 Promise,
 // 必须用 async IIFE 包裹数据库初始化段(CommonJS 模块不支持顶层 await),加 await 避免把 Promise 当 string 用。
 (async () => {
@@ -165,7 +172,12 @@ interopApi.getDotNetObject('ProgramElectron').Init();
         );
         interopApi.getDotNetObject('SQLite').Init();
     }
-})();
+})().catch(e => {
+    const msg = '[bootstrap] Fatal error: ' + (e && e.stack ? e.stack : e);
+    console.error(msg);
+    try { fs.writeFileSync(path.join(app.getPath('userData'), 'bootstrap-error.log'), msg); } catch (_) {}
+    process.exit(1);
+});
 interopApi.getDotNetObject('AppApiElectron').Init();
 interopApi.getDotNetObject('Discord').Init();
 interopApi.getDotNetObject('WebApi').Init();
