@@ -44,6 +44,8 @@ build/            → build output (gitignored)
 - **Globals** (readonly): `CefSharp`, `VRCX`, `VRCXStorage`, `SQLite`, `LogWatcher`, `Discord`, `AppApi`, `WebApi`, `WINDOWS`, `LINUX`, `VERSION`, `NIGHTLY`, `AppDebug` — available in browser context via CefSharp bindings
 - **Platform define**: `WINDOWS=true` / `LINUX=true` set at build time via `PLATFORM` env var; vitest defaults to `WINDOWS=true`
 - **Path alias**: `@/` → `src/`
+- **Modularity**: 所有新增接口/代码文件必须遵循现有代码风格和严格的层级组织，不得写成一团乱麻。L3 及以上数据库读写优先使用 `adapter.*` 方法，基类已冻结，禁止修改。
+- **Tasklist**: 项目任务清单在 https://github.com/XChen446/VRCX-Luo/issues/3 。AI 可通过 `gh` CLI 查询/保存/读取，但**禁止写入**（勾选/编辑/评论），除非得到执行者明确授权。若 AI 认为某项可勾选完成，应汇报给执行者等待确认。
 
 ## Testing
 
