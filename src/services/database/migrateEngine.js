@@ -478,10 +478,6 @@ function matchUserTable(tableName) {
 }
 
 /**
- * @typedef {import('./adapter/SQLiteAdapter.js').SQLiteAdapter | import('./adapter/PgSQLAdapter.js').PgSQLAdapter} AnyAdapter
- */
-
-/**
  * Copy all rows from `srcTable` (SQLite) to `dstTable` (PG), in batches of
  * `batchSize`. Reads the source in paged `LIMIT/OFFSET` chunks and writes
  * each batch via `bulkInsert(..., 'ignore')` so memory stays bounded.
@@ -506,8 +502,8 @@ function matchUserTable(tableName) {
  * Row-count verification: after the copy, `dst.count === src.count`. On
  * mismatch, an error is thrown (caught by the caller and recorded).
  *
- * @param {AnyAdapter} srcAdapter
- * @param {AnyAdapter} dstAdapter
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} srcAdapter
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} dstAdapter
  * @param {string} srcTable - source table identifier (SQLite flat).
  * @param {string} dstTable - destination table identifier (bare or `schema.name`).
  * @param {number} batchSize - rows per bulkInsert call.

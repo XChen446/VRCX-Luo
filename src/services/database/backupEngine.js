@@ -477,17 +477,13 @@ function splitPgUserTable(table) {
 }
 
 /**
- * @typedef {import('./adapter/SQLiteAdapter.js').SQLiteAdapter | import('./adapter/PgSQLAdapter.js').PgSQLAdapter | import('./adapter/MySQLAdapter.js').MySQLAdapter} AnyAdapter
- */
-
-/**
  * Copy all rows from `srcTable` (remote) to `dstTable` (SQLite), in
  * batches of `batchSize`. Reads the source in paged `LIMIT/OFFSET` chunks
  * and writes each batch via `bulkInsert(..., 'ignore')` so memory stays
  * bounded. Symmetric to `migrateEngine.js`'s `copyTable`.
  *
- * @param {AnyAdapter} srcAdapter
- * @param {AnyAdapter} dstAdapter
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} srcAdapter
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} dstAdapter
  * @param {string} srcTable - source table identifier (PG: schema-qualified; MySQL: flat).
  * @param {string} dstTable - destination table identifier (SQLite flat).
  * @param {number} batchSize - rows per bulkInsert call.
