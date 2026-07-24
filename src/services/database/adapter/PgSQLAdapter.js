@@ -114,7 +114,9 @@ class PgSQLAdapter extends EngineAdapter {
             const newSql = sql.replace(
                 /@([A-Za-z_][A-Za-z0-9_]*)/g,
                 (match, ident) => {
-                    if (!Object.prototype.hasOwnProperty.call(normArgs, ident)) {
+                    if (
+                        !Object.prototype.hasOwnProperty.call(normArgs, ident)
+                    ) {
                         return match;
                     }
                     if (!keyToIndex.has(ident)) {
@@ -1649,6 +1651,45 @@ class PgSQLAdapter extends EngineAdapter {
         const tables = await this.listTables('%');
         const result = [];
         for (const table of tables) {
+            const columns = await this._describeColumns(table);
+            result.push({ tableName: table, columns });
+        }
+        return result;
+    }
+
+    /**
+     * Enumerate the global (public-schema) tables with their column metadata.
+     *
+     * PgSQL-specific extension (not on the base class nor on SQLiteAdapter /
+     * MySQLAdapter, which enumerate ALL tables — global + user — flatly via
+     * `listTablesTypes`). PostgreSQL keeps user tables in per-account
+     * `account_*` schemas and global tables in the `public` schema, so
+     * `listTablesTypes` only returns `account_*` tables (per its JSDoc:
+     * "only `account_*` schema tables are enumerated — global tables in
+     * `public` are not included"). The remote→SQLite backup engine needs to
+     * copy BOTH global and user tables, so it calls this method for the
+     * global half and `listTablesTypes` for the user half.
+     *
+     * Returns the same `{ tableName, columns }` shape as
+     * `listTablesTypes`, with `tableName` schema-qualified as
+     * `public.{name}` so the entries can be fed straight back into SQL
+     * identifiers (same convention as `listTables`).
+     *
+     * @returns {Promise<Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>>}
+     */
+    async listGlobalTablesTypes() {
+        // Enumerate every table in the `public` schema explicitly. The 16
+        // global tables don't share a single LIKE prefix (gamelog_*, cache_*,
+        // favorite_*, *_memos, avatar_tags), so a direct schemaname filter is
+        // simpler and more robust than multiple LIKE passes.
+        const publicTables = [];
+        await this.execute(
+            (row) => publicTables.push(`${row[0]}.${row[1]}`),
+            `SELECT schemaname, tablename FROM pg_catalog.pg_tables WHERE schemaname = @schema`,
+            { schema: 'public' }
+        );
+        const result = [];
+        for (const table of publicTables) {
             const columns = await this._describeColumns(table);
             result.push({ tableName: table, columns });
         }

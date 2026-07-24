@@ -49,6 +49,18 @@ namespace VRCX
         public abstract Task<string> OpenFileSelectorDialog(string defaultPath = "", string defaultExt = "",
             string defaultFilter = "All files (*.*)|*.*");
 
+        /// <summary>
+        /// Open a native Save-As dialog so the user can choose a NEW file path
+        /// to save to. Returns the chosen absolute path, or an empty string if
+        /// the user cancelled. The caller is responsible for writing the file.
+        /// </summary>
+        /// <param name="defaultPath">Suggested file path (directory or full path) to pre-fill the dialog.</param>
+        /// <param name="defaultExt">Default extension appended if the user omits one (without leading dot, e.g. "sqlite3").</param>
+        /// <param name="defaultFilter">WinForms-style filter string, e.g. "SQLite database (*.sqlite3)|*.sqlite3".</param>
+        /// <returns>Chosen absolute file path, or "" on cancel.</returns>
+        public abstract Task<string> SaveFileSelectorDialog(string defaultPath = "", string defaultExt = "",
+            string defaultFilter = "All files (*.*)|*.*");
+
         // GameHandler
         public abstract void OnProcessStateChanged(MonitoredProcess monitoredProcess);
         public abstract void CheckGameRunning();

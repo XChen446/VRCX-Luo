@@ -356,5 +356,63 @@ namespace VRCX
 
             return await tcs.Task;
         }
+
+        public override async Task<string> SaveFileSelectorDialog(string defaultPath = "", string defaultExt = "", string defaultFilter = "All files (*.*)|*.*")
+        {
+            var tcs = new TaskCompletionSource<string>();
+            var staThread = new Thread(() =>
+            {
+                try
+                {
+                    using (var saveFileDialog = new System.Windows.Forms.SaveFileDialog())
+                    {
+                        // If defaultPath is a directory, use it as InitialDirectory
+                        // and leave FileName empty; if it is a full path, split it
+                        // into InitialDirectory + FileName so the dialog pre-fills
+                        // the suggested name.
+                        if (!string.IsNullOrEmpty(defaultPath))
+                        {
+                            if (Directory.Exists(defaultPath))
+                            {
+                                saveFileDialog.InitialDirectory = defaultPath;
+                            }
+                            else
+                            {
+                                var dir = Path.GetDirectoryName(defaultPath);
+                                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                                {
+                                    saveFileDialog.InitialDirectory = dir;
+                                }
+                                saveFileDialog.FileName = Path.GetFileName(defaultPath);
+                            }
+                        }
+
+                        saveFileDialog.DefaultExt = defaultExt;
+                        saveFileDialog.Filter = defaultFilter;
+                        // OverwritePrompt is true by default; confirm the user
+                        // wants to overwrite if the file already exists.
+
+                        var dialogResult = saveFileDialog.ShowDialog(MainForm.nativeWindow);
+                        if (dialogResult == DialogResult.OK && !string.IsNullOrEmpty(saveFileDialog.FileName))
+                        {
+                            tcs.SetResult(saveFileDialog.FileName);
+                        }
+                        else
+                        {
+                            tcs.SetResult("");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    tcs.SetException(ex);
+                }
+            });
+
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.Start();
+
+            return await tcs.Task;
+        }
     }
 }

@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('electron', {
         ),
     openFileDialog: (filters) => ipcRenderer.invoke('dialog:openFile', filters),
     openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
+    saveFileDialog: (defaultPath, filters) =>
+        ipcRenderer.invoke('dialog:saveFile', defaultPath, filters),
     onWindowPositionChanged: (callback) =>
         registerManagedListener('setWindowPosition', callback),
     onWindowSizeChanged: (callback) =>

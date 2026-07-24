@@ -120,49 +120,49 @@ interopApi.getDotNetObject('ProgramElectron').Init();
 // HIGH-2 fix: Electron 路径下 VRCXStorage.Get/GetBackup 通过 Proxy(ipc-electron/interopApi.js)返回 Promise,
 // 必须用 async IIFE 包裹数据库初始化段(CommonJS 模块不支持顶层 await),加 await 避免把 Promise 当 string 用。
 (async () => {
-    var mode = await interopApi.getDotNetObject('VRCXStorage').Get('VRCX_Database.mode');
-    if (!mode)
-    {
+    var mode = await interopApi
+        .getDotNetObject('VRCXStorage')
+        .Get('VRCX_Database.mode');
+    if (!mode) {
         // 主配置缺失 VRCX_Database.mode,优先从 .bak 恢复(对应 Phase 0.4 Backup 机制)。
         // 决策 #1:.bak 恢复后不在 Init 阶段写回主配置,延迟到主账号登录成功后再回写
         //         (与 .bak 生成/使用的"登录成功才持久化"语义一致)。
         // 决策 #4:仅针对关键配置项 VRCX_Database.mode 检测 .bak 恢复。
-        try
-        {
-            var bakJson = await interopApi.getDotNetObject('VRCXStorage').GetBackup();
-            if (bakJson && bakJson !== '{}')
-            {
+        try {
+            var bakJson = await interopApi
+                .getDotNetObject('VRCXStorage')
+                .GetBackup();
+            if (bakJson && bakJson !== '{}') {
                 var bak = JSON.parse(bakJson);
-                if (bak['VRCX_Database.mode'])
-                {
+                if (bak['VRCX_Database.mode']) {
                     mode = bak['VRCX_Database.mode'];
-                    console.warn('[bootstrap] VRCX_Database.mode recovered from .bak (deferred write-back until primary login):', mode);
+                    console.warn(
+                        '[bootstrap] VRCX_Database.mode recovered from .bak (deferred write-back until primary login):',
+                        mode
+                    );
                 }
             }
-        }
-        catch (e)
-        {
-            console.warn('[bootstrap] Failed to parse .bak for VRCX_Database.mode, will fall back to fresh init:', e && e.message);
+        } catch (e) {
+            console.warn(
+                '[bootstrap] Failed to parse .bak for VRCX_Database.mode, will fall back to fresh init:',
+                e && e.message
+            );
         }
     }
-    if (mode === 'sqlite')
-    {
+    if (mode === 'sqlite') {
         interopApi.getDotNetObject('SQLite').Init();
-    }
-    else if (mode === 'mysql' || mode === 'mariadb')
-    {
+    } else if (mode === 'mysql' || mode === 'mariadb') {
         interopApi.getDotNetObject('MySQL').Init();
-    }
-    else if (mode === 'postgresql')
-    {
+    } else if (mode === 'postgresql') {
         interopApi.getDotNetObject('PostgreSQL').Init();
     }
     // 三个引擎分支之后:mode='postgresql' 之外的未知 mode / .bak 也无 mode / .bak 损坏 → else fallback to SQLite
-    else
-    {
+    else {
         // 决策 #2:极端情况 — .bak 无 mode / .bak 损坏 / 真正全新安装,
         //         直接认定为需要 init 初始化(启动新 SQLite 实例)。
-        console.warn('[bootstrap] VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance');
+        console.warn(
+            '[bootstrap] VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance'
+        );
         interopApi.getDotNetObject('SQLite').Init();
     }
 })();
@@ -256,30 +256,50 @@ ipcMain.handle('dialog:openDirectory', async () => {
     return null;
 });
 
-ipcMain.handle('notification:showNotification', (event, title, body, icon, silent) => {
-    if (!areDesktopNotificationsEnabled()) {
-        return;
-    }
+ipcMain.handle(
+    'dialog:saveFile',
+    async (_event, defaultPath = '', filters = null) => {
+        const result = await dialog.showSaveDialog(mainWindow, {
+            defaultPath: defaultPath || undefined,
+            filters: filters || [
+                { name: 'SQLite database', extensions: ['sqlite3'] }
+            ]
+        });
 
-    if (activeNotification) {
-        activeNotification.close();
-    }
-
-    const notification = new Notification({
-        title,
-        body,
-        icon,
-        silent: !!silent
-    });
-    notification.on('close', () => {
-        if (activeNotification === notification) {
-            notification.removeAllListeners();
-            activeNotification = null;
+        if (!result.canceled && result.filePath) {
+            return result.filePath;
         }
-    });
-    activeNotification = notification;
-    notification.show();
-});
+        return null;
+    }
+);
+
+ipcMain.handle(
+    'notification:showNotification',
+    (event, title, body, icon, silent) => {
+        if (!areDesktopNotificationsEnabled()) {
+            return;
+        }
+
+        if (activeNotification) {
+            activeNotification.close();
+        }
+
+        const notification = new Notification({
+            title,
+            body,
+            icon,
+            silent: !!silent
+        });
+        notification.on('close', () => {
+            if (activeNotification === notification) {
+                notification.removeAllListeners();
+                activeNotification = null;
+            }
+        });
+        activeNotification = notification;
+        notification.show();
+    }
+);
 
 ipcMain.handle('app:restart', () => {
     if (process.platform === 'linux') {
@@ -569,7 +589,6 @@ function writeOverlayFrame(imageBuffer) {
         }
     }
 }
-
 
 function destroyTray() {
     if (tray) {

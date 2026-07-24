@@ -6,7 +6,11 @@ import { useI18n } from 'vue-i18n';
 import { logWebRequest } from '../../services/appConfig';
 import { database } from '../../services/database';
 import { migrateSqliteToRemote } from '../../services/database/migrateEngine.js';
-import { adapter, createAdapter } from '../../services/database/adapter/index.js';
+import { backupRemoteToSqlite } from '../../services/database/backupEngine.js';
+import {
+    adapter,
+    createAdapter
+} from '../../services/database/adapter/index.js';
 import { bootDbConfig } from '../../plugins/interopApi.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
@@ -111,6 +115,13 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const sqliteConnectionError = ref('');
     /** @type {import('vue').Ref<'idle'|'migrating'|'done'|'failed'>} */
     const mysqlMigrationStatus = ref('idle');
+    // Remote → SQLite backup status. Mirrors the migration status refs so
+    // the Advanced tab can surface a progress indicator + outcome the same
+    // way. Backup is non-destructive (read-only on the remote source, write
+    // to a user-chosen NEW .sqlite3 file), so the status only reflects the
+    // copy operation, not any engine switch.
+    /** @type {import('vue').Ref<'idle'|'backing'|'done'|'failed'>} */
+    const backupStatus = ref('idle');
 
     watch(
         () => watchState.isLoggedIn,
@@ -642,8 +653,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         if (lastCleanupStr) {
             const lastCleanup = new Date(lastCleanupStr);
             const daysSinceLastCleanup =
-                (now.getTime() - lastCleanup.getTime()) /
-                (1000 * 60 * 60 * 24);
+                (now.getTime() - lastCleanup.getTime()) / (1000 * 60 * 60 * 24);
             if (daysSinceLastCleanup < 7) return;
         }
 
@@ -1157,27 +1167,21 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      */
     async function loadDatabaseEngineConfig() {
         try {
-            const [
-                mode,
-                host,
-                port,
-                username,
-                password,
-                name
-            ] = await Promise.all([
-                VRCXStorage.Get('VRCX_Database.mode'),
-                VRCXStorage.Get('VRCX_Database.host'),
-                VRCXStorage.Get('VRCX_Database.port'),
-                VRCXStorage.Get('VRCX_Database.username'),
-                VRCXStorage.Get('VRCX_Database.password'),
-                VRCXStorage.Get('VRCX_Database.name')
-            ]);
+            const [mode, host, port, username, password, name] =
+                await Promise.all([
+                    VRCXStorage.Get('VRCX_Database.mode'),
+                    VRCXStorage.Get('VRCX_Database.host'),
+                    VRCXStorage.Get('VRCX_Database.port'),
+                    VRCXStorage.Get('VRCX_Database.username'),
+                    VRCXStorage.Get('VRCX_Database.password'),
+                    VRCXStorage.Get('VRCX_Database.name')
+                ]);
             const normalizedMode =
                 mode === 'postgresql'
                     ? 'postgresql'
                     : mode === 'mysql' || mode === 'mariadb'
-                    ? 'mysql'
-                    : 'sqlite';
+                      ? 'mysql'
+                      : 'sqlite';
             databaseEngine.value = normalizedMode;
             // SQLite path is the single `VRCX_Database.name` field — there is
             // no separate sqlitePath key. In sqlite mode `name` holds the file
@@ -1272,10 +1276,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                     'VRCX_Database.password',
                     remoteConfig.password
                 ),
-                VRCXStorage.Set(
-                    'VRCX_Database.name',
-                    remoteConfig.database
-                )
+                VRCXStorage.Set('VRCX_Database.name', remoteConfig.database)
             ]);
         }
     }
@@ -1356,9 +1357,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 };
             }
             const connected = await MySQL.IsConnected?.();
-            mysqlConnectionStatus.value = connected
-                ? 'connected'
-                : 'failed';
+            mysqlConnectionStatus.value = connected ? 'connected' : 'failed';
             return { connected: !!connected };
         } catch (err) {
             mysqlConnectionStatus.value = 'failed';
@@ -1472,11 +1471,13 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 // Default to the directory of the current path (if any) so
                 // the dialog opens somewhere sensible.
                 const current = sqlitePath.value || '';
-                const initialDir = current.split(/[\\/]/).slice(0, -1).join('\\');
+                const initialDir = current
+                    .split(/[\\/]/)
+                    .slice(0, -1)
+                    .join('\\');
                 folder = await AppApi.OpenFolderSelectorDialog(initialDir);
             } else {
-                folder =
-                    (await window.electron?.openDirectoryDialog?.()) || '';
+                folder = (await window.electron?.openDirectoryDialog?.()) || '';
             }
         } finally {
             state.folderSelectorDialogVisible = false;
@@ -1547,9 +1548,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             let canonicalPath = sqlitePath.value || '';
             if (typeof AppApi !== 'undefined' && AppApi.ResolveDatabaseName) {
                 try {
-                    canonicalPath = await AppApi.ResolveDatabaseName(
-                        canonicalPath
-                    );
+                    canonicalPath =
+                        await AppApi.ResolveDatabaseName(canonicalPath);
                 } catch (err) {
                     sqliteConnectionStatus.value = 'failed';
                     sqliteConnectionError.value = err.message || String(err);
@@ -1664,8 +1664,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      *   the error strings returned by `testPgsqlConnection`).
      */
     function canMigrateToRemote(targetEngine) {
-        const target =
-            targetEngine === 'mariadb' ? 'mysql' : targetEngine;
+        const target = targetEngine === 'mariadb' ? 'mysql' : targetEngine;
         const runtimeEngine = adapter?.engineType;
         if (runtimeEngine !== target) {
             return {
@@ -1683,16 +1682,15 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         const defaultPort = target === 'mysql' ? 3306 : 5432;
         const bootHost = bootDbConfig.host || 'localhost';
         const bootPort = Number(bootDbConfig.port) || defaultPort;
-        const bootUser = bootDbConfig.username || (target === 'mysql' ? 'root' : 'vrcx');
+        const bootUser =
+            bootDbConfig.username || (target === 'mysql' ? 'root' : 'vrcx');
         const bootPass = bootDbConfig.password || '';
         const bootDb = bootDbConfig.name || '';
 
         // Current UI refs for the target engine — what the user sees as the
         // migration destination in the form.
-        const uiHost =
-            target === 'mysql' ? mysqlHost.value : pgsqlHost.value;
-        const uiPort =
-            target === 'mysql' ? mysqlPort.value : pgsqlPort.value;
+        const uiHost = target === 'mysql' ? mysqlHost.value : pgsqlHost.value;
+        const uiPort = target === 'mysql' ? mysqlPort.value : pgsqlPort.value;
         const uiUser =
             target === 'mysql' ? mysqlUsername.value : pgsqlUsername.value;
         const uiPass =
@@ -1764,10 +1762,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                     // current table + running row count. We stash these
                     // on the same reactive object via extra fields the
                     // dialog doesn't strictly need but won't break on.
-                    vrcxStore.databaseUpgradeState.currentTable =
-                        p.table;
-                    vrcxStore.databaseUpgradeState.rowsCopied =
-                        p.rowsCopied;
+                    vrcxStore.databaseUpgradeState.currentTable = p.table;
+                    vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
                 }
             });
             pgsqlMigrationStatus.value = 'done';
@@ -1812,10 +1808,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             // above). See `migrateSqliteToRemote` + defect 3.
             const result = await migrateSqliteToRemote(source, {
                 onProgress: (p) => {
-                    vrcxStore.databaseUpgradeState.currentTable =
-                        p.table;
-                    vrcxStore.databaseUpgradeState.rowsCopied =
-                        p.rowsCopied;
+                    vrcxStore.databaseUpgradeState.currentTable = p.table;
+                    vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
                 }
             });
             mysqlMigrationStatus.value = 'done';
@@ -1823,6 +1817,167 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             return result;
         } catch (err) {
             mysqlMigrationStatus.value = 'failed';
+            vrcxStore.databaseUpgradeState.visible = false;
+            throw err;
+        }
+    }
+
+    /**
+     * Resolve the default directory for the SQLite backup Save-As dialog.
+     * On Windows this is `%appdata%/VRCX` (the C# `Program.AppDataDirectory`
+     * where `VRCX.sqlite3` lives by default); on other platforms it is the
+     * equivalent VRCX config directory. We resolve it through
+     * `AppApi.ResolveDatabaseName('')` — the C# bridge resolves an empty
+     * name to `Program.ConfigLocation` (the default database file path),
+     * then we strip the trailing `VRCX.sqlite3` filename to get the
+     * containing directory. Falls back to the empty string (dialog default)
+     * when the bridge is unavailable (vitest / non-CefSharp environments).
+     *
+     * @returns {Promise<string>} default directory path, or '' if unresolvable
+     */
+    async function resolveDefaultBackupDir() {
+        if (typeof AppApi === 'undefined' || !AppApi.ResolveDatabaseName) {
+            return '';
+        }
+        try {
+            // ResolveDatabaseName('') → Program.ConfigLocation, which is
+            // `<AppDataDirectory>/VRCX.sqlite3`. Strip the trailing
+            // filename to get the directory.
+            const dbPath = await AppApi.ResolveDatabaseName('');
+            if (!dbPath) return '';
+            const sep = dbPath.includes('\\') ? '\\' : '/';
+            const lastSep = dbPath.lastIndexOf(sep);
+            return lastSep >= 0 ? dbPath.slice(0, lastSep) : dbPath;
+        } catch {
+            return '';
+        }
+    }
+
+    /**
+     * Pre-flight guard for remote → SQLite backup. Returns whether it is
+     * safe to run `backupRemoteToSqlite` right now. The backup source is
+     * the live singleton `adapter`, whose connection was fixed at boot by
+     * the C# layer; we only require that the runtime engine is a remote
+     * engine (postgresql or mysql), NOT sqlite. Unlike the migration guard
+     * `canMigrateToRemote`, we do NOT compare the form's connection params
+     * against the boot-time snapshot because the backup only READS from
+     * the source — a param mismatch would mean reading from the wrong
+     * host, but since the user already booted + connected successfully,
+     * the boot-time connection IS the one they want to back up. The form
+     * edits are irrelevant to a read-only backup.
+     *
+     * @returns {{ ok: boolean, message: string }}
+     */
+    function canBackupFromRemote() {
+        const runtimeEngine = adapter?.engineType;
+        if (runtimeEngine !== 'postgresql' && runtimeEngine !== 'mysql') {
+            return {
+                ok: false,
+                message:
+                    `VRCX is not running in a remote database mode this session ` +
+                    `(runtime engine: ${runtimeEngine || 'unknown'}). ` +
+                    'Switch to PostgreSQL or MySQL, restart VRCX, then run the backup again.'
+            };
+        }
+        return { ok: true, message: '' };
+    }
+
+    /**
+     * Open the native Save-As dialog and back up the live remote database
+     * to the user-chosen NEW `.sqlite3` file. The dialog defaults to the
+     * VRCX AppData directory (`%appdata%/VRCX` on Windows) so the backup
+     * lands next to the original `VRCX.sqlite3` for easy management, and
+     * forces the `.sqlite3` extension. The backup is non-destructive: it
+     * only reads from the remote source and writes to the new file.
+     *
+     * Progress is mirrored into `vrcxStore.databaseUpgradeState` so the
+     * existing `DatabaseUpgradeDialog` (which keys off `fromVersion === -1`)
+     * surfaces a "backup in progress" state, same as the migration flow.
+     *
+     * @returns {Promise<import('../../services/database/backupEngine.js').BackupResult|undefined>}
+     *   `undefined` if the user cancelled the Save-As dialog.
+     */
+    async function backupToSqlite() {
+        // Pre-flight guard: refuse unless the live adapter booted in a
+        // remote engine mode.
+        const guard = canBackupFromRemote();
+        if (!guard.ok) {
+            backupStatus.value = 'failed';
+            throw new Error(guard.message);
+        }
+        // ── 1. Open the Save-As dialog ──
+        // Default to `<AppDataDirectory>/VRCX.sqlite3` so the suggested
+        // filename is `VRCX.sqlite3` in the VRCX config directory. The
+        // user can rename it (e.g. `VRCX-backup-20260724.sqlite3`); the
+        // dialog forces the `.sqlite3` extension via the filter + defaultExt.
+        const defaultDir = await resolveDefaultBackupDir();
+        const defaultFileName = 'VRCX.sqlite3';
+        const defaultPath = defaultDir
+            ? `${defaultDir}${defaultDir.includes('\\') ? '\\' : '/'}${defaultFileName}`
+            : defaultFileName;
+        const filter =
+            'SQLite database (*.sqlite3)|*.sqlite3|All files (*.*)|*.*';
+        let picked = '';
+        if (state.folderSelectorDialogVisible) return undefined;
+        state.folderSelectorDialogVisible = true;
+        try {
+            if (WINDOWS) {
+                picked = await AppApi.SaveFileSelectorDialog(
+                    defaultPath,
+                    '.sqlite3',
+                    filter
+                );
+            } else {
+                picked =
+                    (await window.electron?.saveFileDialog?.(defaultPath, [
+                        {
+                            name: 'SQLite database',
+                            extensions: ['sqlite3']
+                        },
+                        { name: 'All files', extensions: ['*'] }
+                    ])) || '';
+            }
+        } finally {
+            state.folderSelectorDialogVisible = false;
+        }
+        if (!picked) return undefined; // user cancelled
+
+        // ── 2. Validate the extension ──
+        // The dialog filter + defaultExt should guarantee a `.sqlite3`
+        // extension, but validate defensively (same rule as `browseSqlitePath`).
+        const ext = picked.toLowerCase().match(/(\.[^.\\/]+)$/)?.[1] || '';
+        if (!SQLITE_ALLOWED_EXTENSIONS.includes(ext)) {
+            backupStatus.value = 'failed';
+            toast.error(
+                t(
+                    'view.settings.advanced.advanced.database_engine.sqlite_invalid_extension',
+                    {
+                        ext: ext || '(none)',
+                        allowed: SQLITE_ALLOWED_EXTENSIONS.join(', ')
+                    }
+                )
+            );
+            return undefined;
+        }
+
+        // ── 3. Run the backup ──
+        backupStatus.value = 'backing';
+        vrcxStore.databaseUpgradeState.visible = true;
+        vrcxStore.databaseUpgradeState.fromVersion = -1;
+        vrcxStore.databaseUpgradeState.toVersion = 0;
+        try {
+            const dstConnStr = `sqlite:///${picked}`;
+            const result = await backupRemoteToSqlite(dstConnStr, {
+                onProgress: (p) => {
+                    vrcxStore.databaseUpgradeState.currentTable = p.table;
+                    vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
+                }
+            });
+            backupStatus.value = 'done';
+            vrcxStore.databaseUpgradeState.visible = false;
+            return result;
+        } catch (err) {
+            backupStatus.value = 'failed';
             vrcxStore.databaseUpgradeState.visible = false;
             throw err;
         }
@@ -1889,6 +2044,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         mysqlDatabase,
         mysqlConnectionStatus,
         mysqlMigrationStatus,
+        backupStatus,
         sqlitePath,
         sqliteConnectionStatus,
         sqliteConnectionError,
@@ -1903,6 +2059,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         migrateToMysql,
         canMigrateToRemote,
         resolveCurrentSqliteDbPath,
+        backupToSqlite,
+        canBackupFromRemote,
 
         setEnablePrimaryPassword,
         setEnablePrimaryPasswordConfigRepository,

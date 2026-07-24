@@ -45,6 +45,10 @@ declare global {
                 filters?: Array<{ name: string; extensions: string[] }>
             ) => Promise<string>;
             openDirectoryDialog: () => Promise<string>;
+            saveFileDialog: (
+                defaultPath?: string,
+                filters?: Array<{ name: string; extensions: string[] }>
+            ) => Promise<string>;
             desktopNotification: (
                 displayName: string,
                 body?: string,
@@ -144,10 +148,7 @@ declare global {
     const PostgreSQL: {
         Execute: (sql: string, args: any[] | null) => Promise<any[]>;
         ExecuteJson: (sql: string, args: any[] | null) => Promise<string>;
-        ExecuteNonQuery: (
-            sql: string,
-            args: any[] | null
-        ) => Promise<number>;
+        ExecuteNonQuery: (sql: string, args: any[] | null) => Promise<number>;
         IsConnected: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
     };
@@ -264,6 +265,11 @@ declare global {
         ): Promise<void>;
         OpenFolderSelectorDialog(defaultPath?: string): Promise<string>;
         OpenFileSelectorDialog(
+            defaultPath?: string,
+            defaultExt?: string,
+            defaultFilter?: string
+        ): Promise<string>;
+        SaveFileSelectorDialog(
             defaultPath?: string,
             defaultExt?: string,
             defaultFilter?: string

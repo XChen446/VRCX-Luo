@@ -1429,9 +1429,12 @@
                         "test_connection_button": "测试",
                         "test_connection_ok": "正常",
                         "migrate": "数据迁移",
-                        "migrate_button": "从 SQLite 迁移并切换",
+                        "migrate_button": "从 SQLite 迁移",
                         "migrate_hint": "搬迁大表可能耗时较长，建议在应用空闲时操作。每批数据自动提交（无整体事务包裹），数据量较大时速度较慢。",
-                        "restart_hint": "切换引擎或修改连接参数后需重启应用生效。迁移前请先切换到目标引擎（PostgreSQL 或 MySQL）并重启。"
+                        "restart_hint": "切换引擎或修改连接参数后需重启应用生效。迁移前请先切换到目标引擎（PostgreSQL 或 MySQL）并重启。",
+                        "backup": "备份到 SQLite",
+                        "backup_button": "备份到 SQLite",
+                        "backup_hint": "将当前远程数据库的全部数据导出到一个新建的 .sqlite3 文件。仅读取远程库，不影响在线数据。默认保存到 VRCX 配置目录。"
                     },
                     "database_cleanup": {
                         "header": "数据库清理",

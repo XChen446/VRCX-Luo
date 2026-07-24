@@ -24,7 +24,7 @@
                 :description="t('view.settings.advanced.advanced.self_invite.description')">
                 <Switch :model-value="selfInviteOverride" @update:modelValue="setSelfInviteOverride" />
             </SettingsItem>
-            
+
             <SettingsItem :label="t('view.settings.advanced.advanced.auto_join_group_certification.header')">
                 <Switch :model-value="autoJoinGroupCertification" @update:modelValue="setAutoJoinGroupCertification" />
             </SettingsItem>
@@ -269,7 +269,12 @@
                     :label="t('view.settings.advanced.advanced.database_engine.sqlite_path')"
                     :description="t('view.settings.advanced.advanced.database_engine.sqlite_path_description')">
                     <div class="flex items-center gap-2 w-full">
-                        <Input v-model="sqlitePath" class="w-72" :placeholder="t('view.settings.advanced.advanced.database_engine.sqlite_path_placeholder')" />
+                        <Input
+                            v-model="sqlitePath"
+                            class="w-72"
+                            :placeholder="
+                                t('view.settings.advanced.advanced.database_engine.sqlite_path_placeholder')
+                            " />
                         <Button size="sm" variant="outline" @click="onBrowseSqliteFolder">
                             <FolderOpen class="h-4 w-4 mr-1" />
                             {{ t('view.settings.advanced.advanced.database_engine.browse_folder_button') }}
@@ -284,8 +289,20 @@
                     <div class="flex items-center gap-2 w-full">
                         <Button
                             size="sm"
-                            :variant="sqliteConnectionStatus === 'connected' ? 'default' : sqliteConnectionStatus === 'failed' ? 'destructive' : 'outline'"
-                            :class="sqliteConnectionStatus === 'connected' ? 'bg-green-600 hover:bg-green-600 text-white' : sqliteConnectionStatus === 'failed' ? 'bg-red-600 hover:bg-red-600 text-white' : ''"
+                            :variant="
+                                sqliteConnectionStatus === 'connected'
+                                    ? 'default'
+                                    : sqliteConnectionStatus === 'failed'
+                                      ? 'destructive'
+                                      : 'outline'
+                            "
+                            :class="
+                                sqliteConnectionStatus === 'connected'
+                                    ? 'bg-green-600 hover:bg-green-600 text-white'
+                                    : sqliteConnectionStatus === 'failed'
+                                      ? 'bg-red-600 hover:bg-red-600 text-white'
+                                      : ''
+                            "
                             :disabled="sqliteConnectionStatus === 'testing'"
                             @click="onTestSqliteConnection">
                             <Loader2 v-if="sqliteConnectionStatus === 'testing'" class="h-4 w-4 mr-1 animate-spin" />
@@ -294,7 +311,10 @@
                         <span v-if="sqliteConnectionStatus === 'connected'" class="text-green-500 text-sm truncate">
                             {{ t('view.settings.advanced.advanced.database_engine.test_connection_ok') }}
                         </span>
-                        <span v-if="sqliteConnectionStatus === 'failed' && sqliteConnectionError" class="text-red-500 text-sm truncate max-w-md" :title="sqliteConnectionError">
+                        <span
+                            v-if="sqliteConnectionStatus === 'failed' && sqliteConnectionError"
+                            class="text-red-500 text-sm truncate max-w-md"
+                            :title="sqliteConnectionError">
                             {{ sqliteConnectionError }}
                         </span>
                     </div>
@@ -335,12 +355,33 @@
                             variant="outline"
                             :disabled="pgsqlMigrationStatus === 'migrating' || !pgMigrateGuard.ok"
                             :title="pgMigrateGuard.message"
-                            @click="migrateTargetEngine = 'postgresql'; isMigrateDialogVisible = true">
+                            @click="
+                                migrateTargetEngine = 'postgresql';
+                                isMigrateDialogVisible = true;
+                            ">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="pgsqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
                         <span v-if="pgsqlMigrationStatus === 'done'" class="text-green-500">✓</span>
                         <span v-if="pgsqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+                <SettingsItem
+                    :label="t('view.settings.advanced.advanced.database_engine.backup')"
+                    :description="t('view.settings.advanced.advanced.database_engine.backup_hint')">
+                    <div class="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="backupStatus === 'backing' || !backupGuard.ok"
+                            :title="backupGuard.message"
+                            @click="onBackupToSqlite">
+                            <DatabaseBackup class="h-4 w-4 mr-1" />
+                            {{ t('view.settings.advanced.advanced.database_engine.backup_button') }}
+                        </Button>
+                        <span v-if="backupStatus === 'backing'" class="text-yellow-500">…</span>
+                        <span v-if="backupStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="backupStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
             </template>
@@ -379,12 +420,33 @@
                             variant="outline"
                             :disabled="mysqlMigrationStatus === 'migrating' || !mysqlMigrateGuard.ok"
                             :title="mysqlMigrateGuard.message"
-                            @click="migrateTargetEngine = 'mysql'; isMigrateDialogVisible = true">
+                            @click="
+                                migrateTargetEngine = 'mysql';
+                                isMigrateDialogVisible = true;
+                            ">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="mysqlMigrationStatus === 'migrating'" class="text-yellow-500">…</span>
                         <span v-if="mysqlMigrationStatus === 'done'" class="text-green-500">✓</span>
                         <span v-if="mysqlMigrationStatus === 'failed'" class="text-red-500">✗</span>
+                    </div>
+                </SettingsItem>
+                <SettingsItem
+                    :label="t('view.settings.advanced.advanced.database_engine.backup')"
+                    :description="t('view.settings.advanced.advanced.database_engine.backup_hint')">
+                    <div class="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            :disabled="backupStatus === 'backing' || !backupGuard.ok"
+                            :title="backupGuard.message"
+                            @click="onBackupToSqlite">
+                            <DatabaseBackup class="h-4 w-4 mr-1" />
+                            {{ t('view.settings.advanced.advanced.database_engine.backup_button') }}
+                        </Button>
+                        <span v-if="backupStatus === 'backing'" class="text-yellow-500">…</span>
+                        <span v-if="backupStatus === 'done'" class="text-green-500">✓</span>
+                        <span v-if="backupStatus === 'failed'" class="text-red-500">✗</span>
                     </div>
                 </SettingsItem>
             </template>
@@ -399,9 +461,7 @@
             ">
             <DialogContent class="x-dialog sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>{{
-                        t('view.settings.advanced.advanced.database_engine.migrate')
-                    }}</DialogTitle>
+                    <DialogTitle>{{ t('view.settings.advanced.advanced.database_engine.migrate') }}</DialogTitle>
                 </DialogHeader>
 
                 <Alert variant="warning" class="mb-3">
@@ -415,7 +475,9 @@
                     <TriangleAlert />
                     <AlertDescription>
                         {{ t('view.settings.advanced.advanced.database_engine.restart_hint') }}
-                        <span v-if="migrateDialogGuard.message" class="block mt-1 text-xs opacity-90">{{ migrateDialogGuard.message }}</span>
+                        <span v-if="migrateDialogGuard.message" class="block mt-1 text-xs opacity-90">{{
+                            migrateDialogGuard.message
+                        }}</span>
                     </AlertDescription>
                 </Alert>
 
@@ -428,8 +490,7 @@
                         :disabled="
                             (migrateTargetEngine === 'postgresql'
                                 ? pgsqlMigrationStatus === 'migrating'
-                                : mysqlMigrationStatus === 'migrating') ||
-                            !migrateDialogGuard.ok
+                                : mysqlMigrationStatus === 'migrating') || !migrateDialogGuard.ok
                         "
                         @click="handleMigrate">
                         {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
@@ -590,7 +651,7 @@
 </template>
 
 <script setup>
-    import { Trash2, TriangleAlert, FolderOpen, FileUp, Loader2 } from 'lucide-vue-next';
+    import { Trash2, TriangleAlert, FolderOpen, FileUp, Loader2, DatabaseBackup } from 'lucide-vue-next';
     import { computed, onMounted, reactive, ref } from 'vue';
     import Noty from 'noty';
     import { Button } from '@/components/ui/button';
@@ -688,6 +749,7 @@
         mysqlDatabase,
         mysqlConnectionStatus,
         mysqlMigrationStatus,
+        backupStatus,
         sqlitePath,
         sqliteConnectionStatus,
         sqliteConnectionError
@@ -717,7 +779,9 @@
         browseSqliteFolder,
         migrateToPgsql,
         migrateToMysql,
-        canMigrateToRemote
+        canMigrateToRemote,
+        backupToSqlite,
+        canBackupFromRemote
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
@@ -750,10 +814,13 @@
     const mysqlMigrateGuard = computed(() => canMigrateToRemote('mysql'));
     /** Guard for whichever engine the open confirmation dialog targets. */
     const migrateDialogGuard = computed(() =>
-        migrateTargetEngine.value === 'mysql'
-            ? mysqlMigrateGuard.value
-            : pgMigrateGuard.value
+        migrateTargetEngine.value === 'mysql' ? mysqlMigrateGuard.value : pgMigrateGuard.value
     );
+    /** Pre-flight guard for the remote → SQLite backup button. Returns
+     * `{ ok, message }` from `canBackupFromRemote` — ok only when the live
+     * adapter booted in a remote engine (postgresql or mysql). */
+    /** @type {import('vue').ComputedRef<{ ok: boolean, message: string }>} */
+    const backupGuard = computed(() => canBackupFromRemote());
 
     const cacheSize = reactive({
         cachedUsers: 0,
@@ -870,10 +937,7 @@
         // the latest values; the live probe runs against the already-Init'd
         // connection from the current boot.
         try {
-            await saveDatabaseEngineConfig(
-                databaseEngine.value,
-                remoteConfigFor('postgresql')
-            );
+            await saveDatabaseEngineConfig(databaseEngine.value, remoteConfigFor('postgresql'));
         } catch (err) {
             console.warn('saveDatabaseEngineConfig before test failed:', err);
         }
@@ -887,10 +951,7 @@
      */
     async function onTestMysqlConnection() {
         try {
-            await saveDatabaseEngineConfig(
-                databaseEngine.value,
-                remoteConfigFor('mysql')
-            );
+            await saveDatabaseEngineConfig(databaseEngine.value, remoteConfigFor('mysql'));
         } catch (err) {
             console.warn('saveDatabaseEngineConfig before test failed:', err);
         }
@@ -951,10 +1012,7 @@
      * addition to the console log.
      */
     async function onMigrate() {
-        const storeAction =
-            migrateTargetEngine.value === "mysql"
-                ? migrateToMysql
-                : migrateToPgsql;
+        const storeAction = migrateTargetEngine.value === 'mysql' ? migrateToMysql : migrateToPgsql;
         try {
             const result = await storeAction();
             if (result.errors.length > 0) {
@@ -980,6 +1038,47 @@
             new Noty({
                 type: 'error',
                 text: `Migration failed: ${err.message || err}`
+            }).show();
+        }
+    }
+
+    /**
+     * Back up the live remote database (PostgreSQL or MySQL) to a NEW
+     * `.sqlite3` file the user picks via a native Save-As dialog. The
+     * store action opens the dialog, validates the extension, and runs
+     * `backupRemoteToSqlite`. Noty notifications surface the outcome in
+     * the UI in addition to the console log. A cancelled Save-As dialog
+     * is a no-op (no notification).
+     */
+    async function onBackupToSqlite() {
+        try {
+            const result = await backupToSqlite();
+            // `undefined` means the user cancelled the Save-As dialog —
+            // no notification, no log entry.
+            if (!result) return;
+            if (result.errors.length > 0) {
+                console.warn('Backup completed with errors:', result.errors);
+                new Noty({
+                    type: 'warning',
+                    text: `Backup completed with ${result.errors.length} error(s)`
+                }).show();
+            } else {
+                new Noty({
+                    type: 'success',
+                    text: `Backup done: ${result.globalTables} global tables, ${result.userTables} user tables, ${result.rowsCopied} rows copied`
+                }).show();
+            }
+            console.log(
+                `Backup done: ${result.globalTables} global tables, ` +
+                    `${result.userTables} user tables, ` +
+                    `${result.rowsCopied} rows copied, ` +
+                    `${result.errors.length} errors.`
+            );
+        } catch (err) {
+            console.error('Backup failed:', err);
+            new Noty({
+                type: 'error',
+                text: `Backup failed: ${err.message || err}`
             }).show();
         }
     }
