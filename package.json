@@ -201,5 +201,12 @@
             "category": "public.app-category.utilities",
             "executableName": "VRCX"
         }
+    },
+    "allowScripts": {
+        "vue-demi@0.14.10": true,
+        "@sentry/cli@2.58.5": true,
+        "electron@40.9.2": true,
+        "electron-winstaller@5.4.0": true,
+        "core-js@3.47.0": true
     }
 }
