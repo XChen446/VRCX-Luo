@@ -135,9 +135,12 @@ declare global {
     };
 
     const SQLite: {
-        Execute: (sql: string, args: string) => Promise<any[]>;
+        Execute: (sql: string, args: any, connId?: number) => Promise<any[]>;
         ExecuteJson: (...args: any[]) => Promise<string>;
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
+        BeginTransaction: () => number;
+        CommitTransaction: (connId: number) => void;
+        RollbackTransaction: (connId: number) => void;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -146,9 +149,12 @@ declare global {
     // positional `object[]` bound by `$N`; `IsConnected`/`GetHealth` are
     // status probes used by PgSQLAdapter health checks.
     const PostgreSQL: {
-        Execute: (sql: string, args: any[] | null) => Promise<any[]>;
-        ExecuteJson: (sql: string, args: any[] | null) => Promise<string>;
-        ExecuteNonQuery: (sql: string, args: any[] | null) => Promise<number>;
+        Execute: (sql: string, args: any[] | null, connId?: number) => Promise<any[]>;
+        ExecuteJson: (sql: string, args: any[] | null, connId?: number) => Promise<string>;
+        ExecuteNonQuery: (sql: string, args: any[] | null, connId?: number) => Promise<number>;
+        BeginTransaction: () => number;
+        CommitTransaction: (connId: number) => void;
+        RollbackTransaction: (connId: number) => void;
         IsConnected: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
     };
@@ -439,9 +445,12 @@ declare global {
     const MySQL: {
         Init: () => void;
         Exit: () => void;
-        Execute: (sql: string, args: any) => Promise<any[]>;
+        Execute: (sql: string, args: any, connId?: number) => Promise<any[]>;
         ExecuteJson: (...args: any[]) => Promise<string>;
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
+        BeginTransaction: () => number;
+        CommitTransaction: (connId: number) => void;
+        RollbackTransaction: (connId: number) => void;
         /**
          * Reports whether the shared MySQL/MariaDB connection is open. Bound
          * via CefSharp (desktop) or Electron main-process IPC; in vitest it is

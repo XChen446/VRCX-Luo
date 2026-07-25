@@ -37,7 +37,7 @@ class EngineAdapter {
      * pinned 连接(事务中)还是默认池(事务外)。
      * 实例属性,每个 adapter 实例独立,srcAdapter/dstAdapter 天然隔离。
      * @type {number[]}
-     * @private
+     * @protected
      */
     _txStack = [];
 
