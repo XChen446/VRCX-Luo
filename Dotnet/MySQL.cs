@@ -31,6 +31,16 @@ namespace VRCX
         private readonly Lock m_ConnectionLock;
         private MySqlConnection m_Connection;
 
+        // ── Transaction pinning ────────────────────────────────────────────
+        // MySQL 单连接模式(同 SQLite):_pinnedConnId 单槽 + sliding Timer
+        // 防泄漏。Execute/ExecuteNonQuery 不需要路由(单连接天然统一),
+        // 但接收 connId 用于重置 Timer。与 PostgreSQL.cs 对称。
+        private readonly object _txLock = new();
+        private long _nextConnId;
+        private long? _pinnedConnId;
+        private Timer _txTimer;
+        private const int TX_IDLE_MS = 30000;
+
         static MySQL()
         {
             Instance = new MySQL();
@@ -181,8 +191,9 @@ namespace VRCX
         /// Executes a SELECT/PRAGMA-like statement and returns rows as
         /// object arrays. Used by the Windows/CefSharp JS bridge.
         /// </summary>
-        public object[][] Execute(string sql, IDictionary<string, object>? args = null)
+        public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue) ResetTxTimer(connId.Value);
             lock (m_ConnectionLock)
             {
                 using var command = new MySqlCommand(sql, m_Connection);
@@ -212,8 +223,9 @@ namespace VRCX
         /// Executes an INSERT/UPDATE/DELETE/DDL statement and returns the
         /// number of rows affected.
         /// </summary>
-        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue) ResetTxTimer(connId.Value);
             lock (m_ConnectionLock)
             {
                 using var command = new MySqlCommand(sql, m_Connection);
@@ -290,6 +302,75 @@ namespace VRCX
                     name = "@" + name;
 
                 command.Parameters.AddWithValue(name, arg.Value ?? DBNull.Value);
+            }
+        }
+
+        // ── Transaction pinning ───────────────────────────────────────────
+        // MySQL 单连接模式(同 SQLite):BEGIN/COMMIT/ROLLBACK 通过 SQL 语句
+        // 管理事务,_pinnedConnId 单槽 + sliding Timer 防泄漏。
+        // 与 PostgreSQL.cs 的 _pinned Map 对称,保持三引擎 C# API 一致。
+
+        public long BeginTransaction()
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId.HasValue)
+                    throw new InvalidOperationException("事务进行中,不支持嵌套");
+                var connId = Interlocked.Increment(ref _nextConnId);
+                ExecuteNonQuery("BEGIN");
+                _pinnedConnId = connId;
+                _txTimer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+                return connId;
+            }
+        }
+
+        public void CommitTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId)
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,无法 commit");
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("COMMIT"); }
+                catch { }
+            }
+        }
+
+        public void RollbackTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId) return;
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("ROLLBACK"); }
+                catch { }
+            }
+        }
+
+        private void ResetTxTimer(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId == connId && _txTimer != null)
+                {
+                    _txTimer.Change(TX_IDLE_MS, -1);
+                }
+            }
+        }
+
+        private void OnTxTimeout(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId) return;
+                Console.Error.WriteLine(
+                    $"[MySQL] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("ROLLBACK"); } catch { }
             }
         }
     }

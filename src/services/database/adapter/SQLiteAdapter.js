@@ -159,6 +159,7 @@ class SQLiteAdapter extends EngineAdapter {
     /** Execute raw SQL with row callback. Normalizes named-param keys. */
     async execute(callback, sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -173,14 +174,14 @@ class SQLiteAdapter extends EngineAdapter {
                 if (args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await SQLite.ExecuteJson(sql, args);
+                const json = await SQLite.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
                 });
                 return;
             }
-            const data = await SQLite.Execute(sql, args);
+            const data = await SQLite.Execute(sql, args, connId);
             data.forEach((row) => {
                 callback(row);
             });
@@ -197,6 +198,7 @@ class SQLiteAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -207,7 +209,7 @@ class SQLiteAdapter extends EngineAdapter {
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
             }
-            return await SQLite.ExecuteNonQuery(sql, args);
+            return await SQLite.ExecuteNonQuery(sql, args, connId);
         } catch (e) {
             await this.handleSQLiteError(e);
         }
@@ -1064,42 +1066,41 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     // ── Transaction ──────────────────────────────────────────────────
-    // SQLite 单连接模式:事务由 BEGIN/COMMIT/ROLLBACK SQL 管理,
-    // connId 无路由意义(单连接天然在事务态),返回 0 作为占位。
+    // SQLite 单连接模式:BEGIN/COMMIT/ROLLBACK 通过 C# 的
+    // BeginTransaction/CommitTransaction/RollbackTransaction 管理,
+    // C# 侧 _pinnedConnId 单槽 + sliding Timer 防泄漏。
+    // execute/executeNonQuery 读栈顶 connId 传给 C# 重置 Timer
+    // (单连接无需路由,但保持三引擎 JS 层统一)。
 
     /**
      * @override
-     * @returns {Promise<number>} 0(单连接无需 pin)
+     * @returns {Promise<number>} C# 返回的真实 connId
      * @protected
      */
     async _doBegin() {
-        await this.executeNonQuery('BEGIN');
-        return 0;
+        return SQLite.BeginTransaction();
     }
 
     /**
      * @override
-     * @param {number} _connId
+     * @param {number} connId
      * @protected
      */
-    async _doCommit(_connId) {
-        await this.executeNonQuery('COMMIT');
+    async _doCommit(connId) {
+        SQLite.CommitTransaction(connId);
     }
 
     /**
      * @override
-     * @param {number} _connId
+     * @param {number} connId
      * @protected
      */
-    async _doRollback(_connId) {
+    async _doRollback(connId) {
         try {
-            await this.executeNonQuery('ROLLBACK');
+            SQLite.RollbackTransaction(connId);
         } catch (e) {
-            // ROLLBACK without active transaction (SQLite 抛 "no
-            // transaction is active") — withTransaction 的 catch 块
-            // 可能无条件调用,此时静默忽略(与 PG 超时回滚后 rollback
-            // no-op 语义一致)。
-            if (!String(e?.message || '').match(/no transaction/i)) {
+            // C# 侧已超时回滚的 connId 静默 no-op;其他错误重新抛出
+            if (!String(e?.message || '').includes('已超时')) {
                 throw e;
             }
         }

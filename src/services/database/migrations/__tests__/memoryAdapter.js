@@ -28,6 +28,7 @@ class MemorySQLiteAdapter extends SQLiteAdapter {
     constructor(db) {
         super();
         this._db = db;
+        this._memConnId = 0;
     }
 
     /** @override */
@@ -55,6 +56,34 @@ class MemorySQLiteAdapter extends SQLiteAdapter {
         // SQL. The runner ignores the return value for these statements.
         this._db.exec(sql);
         return 0;
+    }
+
+    // ── Transaction overrides (node:sqlite in-memory mode) ────────────
+    // MemorySQLiteAdapter 测试环境没有 C# SQLite 全局实例,override
+    // _doBegin/_doCommit/_doRollback 回退到 SQL 语句模式(通过
+    // executeNonQuery 发 BEGIN/COMMIT/ROLLBACK),返回递增 connId
+    // 占位(无 C# sliding Timer,但 withTransaction 的栈管理仍生效)。
+
+    /** @override @protected */
+    async _doBegin() {
+        await this.executeNonQuery('BEGIN');
+        return ++this._memConnId;
+    }
+
+    /** @override @protected */
+    async _doCommit(_connId) {
+        await this.executeNonQuery('COMMIT');
+    }
+
+    /** @override @protected */
+    async _doRollback(_connId) {
+        try {
+            await this.executeNonQuery('ROLLBACK');
+        } catch (e) {
+            if (!String(e?.message || '').match(/no transaction/i)) {
+                throw e;
+            }
+        }
     }
 }
 

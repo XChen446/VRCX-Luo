@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
@@ -13,6 +14,17 @@ namespace VRCX
         public static SQLite Instance;
         private readonly ReaderWriterLockSlim m_ConnectionLock;
         private SQLiteConnection m_Connection;
+
+        // ── Transaction pinning ────────────────────────────────────────────
+        // SQLite 只有一条物理连接 m_Connection,pin 的本质是"标记当前
+        // 在事务中"+ sliding 超时防泄漏。Execute/ExecuteNonQuery 不需要
+        // 路由(单连接天然统一),但接收 connId 用于重置 sliding Timer。
+        // 与 PostgreSQL.cs 的 _pinned Map 对称,保持三引擎 C# 层 API 一致。
+        private readonly object _txLock = new();
+        private long _nextConnId;
+        private long? _pinnedConnId;
+        private Timer _txTimer;
+        private const int TX_IDLE_MS = 30000;
 
         private static readonly Dictionary<string, string> DefaultOptions = new()
         {
@@ -350,8 +362,9 @@ namespace VRCX
             return JsonSerializer.Serialize(result);
         }
 
-        public object[][] Execute(string sql, IDictionary<string, object>? args = null)
+        public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue) ResetTxTimer(connId.Value);
             m_ConnectionLock.EnterReadLock();
             try
             {
@@ -383,8 +396,9 @@ namespace VRCX
             }
         }
 
-        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue) ResetTxTimer(connId.Value);
             var result = -1;
             m_ConnectionLock.EnterWriteLock();
             try
@@ -475,6 +489,88 @@ namespace VRCX
             }
 
             return command.ExecuteNonQuery();
+        }
+
+        // ── Transaction pinning ───────────────────────────────────────────
+        // SQLite 单连接模式:BEGIN/COMMIT/ROLLBACK 通过 SQL 语句管理事务,
+        // _pinnedConnId 单槽 + sliding Timer 仅用于防泄漏(与 PG 的
+        // _pinned Map 对称,保持三引擎 C# API 一致)。
+
+        /// <summary>
+        /// 发 BEGIN 语句 + 标记 pinned + 启动 sliding 超时 Timer。
+        /// 返回递增 connId 供 JS 传入后续 Execute/ExecuteNonQuery 重置 Timer。
+        /// </summary>
+        public long BeginTransaction()
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId.HasValue)
+                    throw new InvalidOperationException("事务进行中,不支持嵌套");
+                var connId = Interlocked.Increment(ref _nextConnId);
+                ExecuteNonQuery("BEGIN");
+                _pinnedConnId = connId;
+                _txTimer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+                return connId;
+            }
+        }
+
+        /// <summary>
+        /// 发 COMMIT 语句 + 清除 pin + 销毁 Timer。COMMIT 失败仍清 pin
+        /// (连接已回到非事务态或已损坏,下次调用需重新 begin)。
+        /// </summary>
+        public void CommitTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId)
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,无法 commit");
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("COMMIT"); }
+                catch { /* COMMIT 失败:连接状态不确定,清 pin 让下次重试 */ }
+            }
+        }
+
+        /// <summary>
+        /// 发 ROLLBACK 语句 + 清除 pin + 销毁 Timer。connId 已超时回滚
+        /// 时静默 no-op(与 PG 语义一致),withTransaction 的 catch 可
+        /// 无条件调用。
+        /// </summary>
+        public void RollbackTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId) return;  // 已超时,no-op
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("ROLLBACK"); }
+                catch { /* ROLLBACK 失败:忽略,连接可能已损坏 */ }
+            }
+        }
+
+        private void ResetTxTimer(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId == connId && _txTimer != null)
+                {
+                    _txTimer.Change(TX_IDLE_MS, -1);
+                }
+            }
+        }
+
+        private void OnTxTimeout(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinnedConnId != connId) return;
+                Console.Error.WriteLine(
+                    $"[SQLite] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
+                _txTimer?.Dispose();
+                _pinnedConnId = null;
+                try { ExecuteNonQuery("ROLLBACK"); } catch { }
+            }
         }
     }
 }

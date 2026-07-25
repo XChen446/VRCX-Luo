@@ -157,6 +157,7 @@ class MySQLAdapter extends EngineAdapter {
      */
     async execute(callback, sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -173,14 +174,14 @@ class MySQLAdapter extends EngineAdapter {
                 if (args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await MySQL.ExecuteJson(sql, args);
+                const json = await MySQL.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
                 });
                 return;
             }
-            const data = await MySQL.Execute(sql, args);
+            const data = await MySQL.Execute(sql, args, connId);
             data.forEach((row) => {
                 callback(row);
             });
@@ -198,6 +199,7 @@ class MySQLAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -208,7 +210,7 @@ class MySQLAdapter extends EngineAdapter {
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
             }
-            return await MySQL.ExecuteNonQuery(sql, args);
+            return await MySQL.ExecuteNonQuery(sql, args, connId);
         } catch (e) {
             await this.handleMySqlError(e);
         }
@@ -615,39 +617,38 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     // ── Transaction ──────────────────────────────────────────────────
-    // MySQL 单连接模式(同 SQLite):事务由 BEGIN/COMMIT/ROLLBACK SQL
-    // 管理,connId 无路由意义,返回 0 占位。
+    // MySQL 单连接模式(同 SQLite):BEGIN/COMMIT/ROLLBACK 通过 C# 的
+    // BeginTransaction/CommitTransaction/RollbackTransaction 管理,
+    // C# 侧 _pinnedConnId 单槽 + sliding Timer 防泄漏。
 
     /**
      * @override
-     * @returns {Promise<number>} 0(单连接无需 pin)
+     * @returns {Promise<number>} C# 返回的真实 connId
      * @protected
      */
     async _doBegin() {
-        await this.executeNonQuery('BEGIN');
-        return 0;
+        return MySQL.BeginTransaction();
     }
 
     /**
      * @override
-     * @param {number} _connId
+     * @param {number} connId
      * @protected
      */
-    async _doCommit(_connId) {
-        await this.executeNonQuery('COMMIT');
+    async _doCommit(connId) {
+        MySQL.CommitTransaction(connId);
     }
 
     /**
      * @override
-     * @param {number} _connId
+     * @param {number} connId
      * @protected
      */
-    async _doRollback(_connId) {
+    async _doRollback(connId) {
         try {
-            await this.executeNonQuery('ROLLBACK');
+            MySQL.RollbackTransaction(connId);
         } catch (e) {
-            // ROLLBACK without active transaction — 静默忽略。
-            if (!String(e?.message || '').match(/no transaction/i)) {
+            if (!String(e?.message || '').includes('已超时')) {
                 throw e;
             }
         }

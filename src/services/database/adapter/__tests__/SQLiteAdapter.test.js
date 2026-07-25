@@ -908,29 +908,59 @@ describe('DDL — createTable / createIndex / alterTable* / dropTable', () => {
 // 6. Transaction
 // ─────────────────────────────────────────────────────────────────────────
 
-describe('Transaction — begin / commit / rollback', () => {
-    test('begin() + commit() persists inserts', async () => {
+describe('Transaction — beginTransaction / commit / rollback', () => {
+    test('beginTransaction + commit persists inserts', async () => {
         await seedTable('users', 0);
-        await adapter.begin();
+        const connId = await adapter.beginTransaction();
         await adapter.insert('users', { id: 1, name: 'a', age: 10 });
-        await adapter.commit();
+        await adapter.commit(connId);
         const rows = await adapter.select('users', ['id']);
         expect(rows).toHaveLength(1);
     });
 
-    test('begin() + rollback() discards inserts', async () => {
+    test('beginTransaction + rollback discards inserts', async () => {
         await seedTable('users', 0);
-        await adapter.begin();
+        const connId = await adapter.beginTransaction();
         await adapter.insert('users', { id: 1, name: 'a', age: 10 });
-        await adapter.rollback();
+        await adapter.rollback(connId);
         const rows = await adapter.select('users', ['id']);
         expect(rows).toHaveLength(0);
     });
 
-    test('nested begin() throws (SQLite does not support nested transactions)', async () => {
-        await adapter.begin();
-        await expect(adapter.begin()).rejects.toThrow();
-        await adapter.rollback(); // cleanup so afterEach doesn't see a leaked txn
+    test('nested beginTransaction throws (not supported)', async () => {
+        await adapter.beginTransaction();
+        await expect(adapter.beginTransaction()).rejects.toThrow(/嵌套/);
+        await adapter.rollback(0); // cleanup so afterEach doesn't see a leaked txn
+    });
+
+    test('withTransaction commits on success', async () => {
+        await seedTable('users', 0);
+        await adapter.withTransaction(async () => {
+            await adapter.insert('users', { id: 1, name: 'a', age: 10 });
+            await adapter.insert('users', { id: 2, name: 'b', age: 20 });
+        });
+        const rows = await adapter.select('users', ['id']);
+        expect(rows).toHaveLength(2);
+    });
+
+    test('withTransaction rolls back on error', async () => {
+        await seedTable('users', 0);
+        await expect(
+            adapter.withTransaction(async () => {
+                await adapter.insert('users', { id: 1, name: 'a', age: 10 });
+                throw new Error('boom');
+            })
+        ).rejects.toThrow('boom');
+        const rows = await adapter.select('users', ['id']);
+        expect(rows).toHaveLength(0);
+    });
+
+    test('withTransaction rejects nested call', async () => {
+        await expect(
+            adapter.withTransaction(async () => {
+                await adapter.withTransaction(async () => {});
+            })
+        ).rejects.toThrow(/嵌套/);
     });
 });
 
