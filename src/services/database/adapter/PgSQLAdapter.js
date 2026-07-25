@@ -947,6 +947,15 @@ class PgSQLAdapter extends EngineAdapter {
         PostgreSQL.RollbackTransaction(connId);
     }
 
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        PostgreSQL.KeepAliveTransaction(connId);
+    }
+
     // ── Maintenance ───────────────────────────────────────────────────
 
     /** VACUUM ANALYZE — reclaim storage + refresh planner stats. */

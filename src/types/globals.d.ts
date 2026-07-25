@@ -141,6 +141,7 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
+        KeepAliveTransaction: (connId: number) => void;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -155,6 +156,7 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
+        KeepAliveTransaction: (connId: number) => void;
         IsConnected: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
     };
@@ -451,6 +453,7 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
+        KeepAliveTransaction: (connId: number) => void;
         /**
          * Reports whether the shared MySQL/MariaDB connection is open. Bound
          * via CefSharp (desktop) or Electron main-process IPC; in vitest it is

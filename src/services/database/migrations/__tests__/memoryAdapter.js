@@ -85,6 +85,11 @@ class MemorySQLiteAdapter extends SQLiteAdapter {
             }
         }
     }
+
+    /** @override @protected — no-op(无 C# sliding Timer) */
+    async _doKeepAlive(_connId) {
+        // MemorySQLiteAdapter 测试环境没有 C# Timer,keepAlive 无需操作
+    }
 }
 
 export { MemorySQLiteAdapter };

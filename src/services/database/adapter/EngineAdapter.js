@@ -516,6 +516,25 @@ class EngineAdapter {
     }
 
     /**
+     * 引擎级事务心跳钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.KeepAliveTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:同上,调对应 C# 方法
+     * - MemorySQLiteAdapter:no-op(无 C# Timer)
+     *
+     * 已超时回滚的 connId 静默 no-op,不抛错(C# 侧 TryGetValue 失败
+     * 不抛错,JS 侧也不检查栈——调用方可能在 await 用户交互后调
+     * keepAlive,此时事务可能已被超时回滚,应静默忽略)。
+     *
+     * @abstract
+     * @param {number} _connId
+     * @returns {Promise<void>}
+     * @protected
+     */
+    _doKeepAlive(_connId) {
+        throw new Error('abstract');
+    }
+
+    /**
      * 开启一个事务,返回 connId 并 push 到 `_txStack`。
      * execute/executeNonQuery 读栈顶决定走 pinned 连接还是默认池。
      * 必须配对调用 commit(connId) 或 rollback(connId) 以 pop 栈。
@@ -576,6 +595,45 @@ class EngineAdapter {
     }
 
     /**
+     * 重置当前事务的 sliding idle timer,不执行任何 SQL。
+     *
+     * 用于 withTransaction 体内 await 长时间非 DB 操作(如用户确认
+     * 对话框、输入框等待)时,防止 60s idle 超时自动回滚。调用后
+     * Timer 重新从 TX_IDLE_MS 开始计时。
+     *
+     * 已超时回滚的事务静默 no-op,不抛错——调用方可能在 await
+     * 用户交互后才发现事务已被回收,此时 keepAlive 无意义但不
+     * 应阻断流程(后续的 SQL 调用会抛 "connId 已超时回滚",
+     * withTransaction 的 catch 会 rollback + 重新抛出)。
+     *
+     * 推荐在 withTransaction 体内、每段可能超过 60s 的非 DB
+     * await 前调用:
+     * ```
+     * await adapter.withTransaction(async () => {
+     *     await adapter.insert(...);
+     *     adapter.keepAlive();           // ← 续命
+     *     const ok = await dialog.confirm(...);  // 用户慢慢想
+     *     if (!ok) throw new Error('用户取消');
+     *     adapter.keepAlive();           // ← 续命
+     *     await adapter.update(...);
+     * });
+     * ```
+     *
+     * ⚠️ 注意:keepAlive 是逃生舱,不是鼓励在事务内做长交互。
+     * 事务应尽可能短——长时间持有事务锁会阻塞其他操作。能拆到
+     * 事务外确认的,优先拆出去(乐观锁模式)。
+     */
+    async keepAlive() {
+        const connId = this._txStack.at(-1);
+        if (connId === undefined) return;
+        try {
+            await this._doKeepAlive(connId);
+        } catch {
+            // 已超时回滚的 connId 静默忽略
+        }
+    }
+
+    /**
      * 在事务中执行 `fn`。自动管理 connId 的获取/提交/回滚 + `_txStack`
      * 的 push/pop。业务代码在 `fn` 内部调用的 execute/insert/bulkInsert
      * 等方法会自动走 pinned 连接(读栈顶 connId),无需显式传 connId。
@@ -583,6 +641,21 @@ class EngineAdapter {
      * - 成功:commit + pop 栈
      * - 抛错:rollback + pop 栈 + 重新抛出
      * - 嵌套:栈非空时抛错(不支持嵌套事务)
+     *
+     * ⚠️ 事务内禁止 await 用户交互(对话框、输入框等)。C# 侧有
+     * 60 秒 idle 超时自动回滚,用户不在电脑前会导致事务被静默
+     * 回滚,后续 SQL 抛 "connId 已超时回滚" 错误。如必须在事务
+     * 内等待用户,需在每段可能超时的 await 前调用 `keepAlive()`
+     * 续命;但更推荐将用户交互拆到事务外(乐观锁模式):
+     * ```
+     * // ✅ 推荐:事务外确认
+     * const data = await adapter.select(...);
+     * const ok = await dialog.confirm(data);
+     * if (!ok) return;
+     * await adapter.withTransaction(async () => {
+     *     await adapter.update(...);
+     * });
+     * ```
      *
      * @optional
      * @template T

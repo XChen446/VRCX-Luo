@@ -430,6 +430,23 @@ namespace VRCX
             }
         }
 
+        /// <summary>
+        /// Reset the sliding idle timer for the transaction pinned to
+        /// <paramref name="connId"/> without executing any SQL. Use this
+        /// when the JS side needs to await a long-running non-DB operation
+        /// (e.g. user confirmation dialog) inside a withTransaction block
+        /// to prevent the 60s idle timeout from auto-rolling-back.
+        /// No-op (does not throw) if the connId has already timed out.
+        /// </summary>
+        public void KeepAliveTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinned.TryGetValue(connId, out var h))
+                    h.Timer.Change(TX_IDLE_MS, -1);
+            }
+        }
+
         private void OnTxTimeout(long connId)
         {
             lock (_txLock)

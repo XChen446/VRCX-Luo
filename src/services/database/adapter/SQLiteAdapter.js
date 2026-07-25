@@ -1106,6 +1106,15 @@ class SQLiteAdapter extends EngineAdapter {
         }
     }
 
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        SQLite.KeepAliveTransaction(connId);
+    }
+
     /** VACUUM — reclaim storage. */
     vacuum() {
         return this.executeNonQuery('VACUUM');

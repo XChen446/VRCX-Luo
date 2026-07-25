@@ -20,6 +20,7 @@ SQLite.cs / MySQL.cs 的单连接 + lock 模式虽然事务能跑,但有隐患:�
 - `BeginTransaction()`:借连接 + BEGIN + 标记 pin + 启动 sliding Timer,返回递增 connId
 - `CommitTransaction(connId)`:COMMIT + 还池 + 清 Timer
 - `RollbackTransaction(connId)`:ROLLBACK + 还池 + 清 Timer(已超时则 no-op)
+- `KeepAliveTransaction(connId)`:重置 sliding Timer,不执行 SQL(用于 withTransaction 体内 await 长时间非 DB 操作时续命;已超时则 no-op)
 - `Execute`/`ExecuteNonQuery`/`ExecuteJson` 加可选 `long? connId` 尾参:
   - connId 有值:PG 走 pinned 连接 + 重置 Timer;SQLite/MySQL 重置 Timer(单连接无需路由)
   - connId 无值:走默认池/单连接,行为与改造前一致(零回归)
@@ -40,12 +41,28 @@ EngineAdapter 基类:
   beginTransaction()  → 检查栈非空(嵌套拒绝)→ _doBegin() → push connId
   commit(connId)       → _doCommit(connId) → finally pop 栈
   rollback(connId)     → _doRollback(connId) → finally pop 栈
+  keepAlive()          → 读栈顶 connId → _doKeepAlive(connId) → 重置 C# Timer
   withTransaction(fn)   → beginTransaction → fn → commit(抛错则 rollback)
 
   execute/executeNonQuery 实现(子类):
     const connId = this._txStack.at(-1)  // 读栈顶
     // 传给 C# 决定走 pinned 连接还是默认池
 ```
+
+### keepAlive() — 事务心跳续命
+
+`keepAlive()` 是逃生舱方法,用于 withTransaction 体内 await
+长时间非 DB 操作(用户确认对话框、输入框等待)时重置 C# 侧
+sliding idle timer,防止 60s 超时自动回滚。
+
+- 读栈顶 connId,委托 `_doKeepAlive(connId)` → C#
+  `KeepAliveTransaction(connId)` 重置 Timer
+- 事务外调用(栈空)静默 no-op
+- 已超时回滚的 connId 静默 no-op(C# 侧 TryGetValue 失败不抛错)
+
+⚠️ keepAlive 是逃生舱,不是鼓励在事务内做长交互。事务应尽可能
+短——长时间持有事务锁会阻塞其他操作。能拆到事务外确认的,优先
+拆出去(乐观锁模式)。详见 withTransaction JSDoc 警告。
 
 ### API 可见性:@private 标注(2026-07-25 补充)
 

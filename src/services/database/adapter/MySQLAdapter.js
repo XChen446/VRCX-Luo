@@ -654,6 +654,15 @@ class MySQLAdapter extends EngineAdapter {
         }
     }
 
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        MySQL.KeepAliveTransaction(connId);
+    }
+
     // ── SQL fragments (engine-specific syntax) ───────────────────────
 
     /**
