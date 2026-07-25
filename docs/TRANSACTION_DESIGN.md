@@ -12,9 +12,9 @@ SQLite.cs / MySQL.cs 的单连接 + lock 模式虽然事务能跑,但有隐患:�
 
 | 引擎 | 池实现 | pin 机制 |
 |---|---|---|
-| PostgreSQL | `NpgsqlDataSource` 池 | `_pinned` ConcurrentDictionary<long, TxHolder>,借出连接持有不还 |
-| SQLite | 单条 `m_Connection` | `_pinnedConnId` 单槽 |
-| MySQL | 单条 `m_Connection` | `_pinnedConnId` 单槽 |
+| PostgreSQL | `NpgsqlDataSource` 池 | `_pinned` ConcurrentDictionary<long, TxHolder> |
+| SQLite | ADO.NET `Pooling=True` 池(System.Data.SQLite) | `_pinned` ConcurrentDictionary<long, TxHolder> |
+| MySQL | MySqlConnector 内置池(`Pooling=True`) | `_pinned` ConcurrentDictionary<long, TxHolder> |
 
 三引擎都暴露:
 - `BeginTransaction()`:借连接 + BEGIN + 标记 pin + 启动 sliding Timer,返回递增 connId

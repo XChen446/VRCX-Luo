@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
@@ -9,11 +10,13 @@ namespace VRCX
     /// <summary>
     /// MySQL / MariaDB connection manager and query executor.
     ///
-    /// Mirrors the public surface of <see cref="SQLite"/> so that the JS
+    /// Mirrors the public surface of <see cref="PostgreSQL"/> so that the JS
     /// adapter layer can switch engines without changing its call shape:
-    ///   - Init() reads VRCX_Database.* config and opens the connection.
-    ///   - Exit() closes/disposes the connection.
-    ///   - Execute/ExecuteNonQuery/ExecuteJson run parameterised SQL.
+    ///   - Init() reads VRCX_Database.* config and builds the connection string.
+    ///   - Exit() clears the connection string (pool stays alive until process exit).
+    ///   - Execute/ExecuteNonQuery/ExecuteJson run parameterised SQL on a fresh
+    ///     pooled connection each call (MySqlConnector pools automatically via the
+    ///     connection string; `using` returns the connection to the pool).
     ///
     /// Built on MySqlConnector, which natively supports both MySQL and
     /// MariaDB (protocol-compatible). Both 'mysql' and 'mariadb' modes
@@ -21,25 +24,33 @@ namespace VRCX
     /// SQL dialect, connection string format, and error codes are
     /// identical across both servers.
     ///
-    /// This is intentionally a thin wrapper (Phase 8.1); dialect adaptation
-    /// for DDL, schema init and SQL fragments lives in MySQLAdapter.js.
+    /// Transaction pinning: BeginTransaction borrows a pooled connection and
+    /// holds it in a TxHolder across multiple Execute/ExecuteNonQuery calls so
+    /// that BEGIN ... INSERT ... COMMIT run on the SAME physical connection.
+    /// A sliding idle timer (TX_IDLE_MS) auto-rolls-back if JS forgets to
+    /// commit. See docs/TRANSACTION_DESIGN.md.
     /// </summary>
     public class MySQL
     {
         public static MySQL Instance;
 
-        private readonly Lock m_ConnectionLock;
-        private MySqlConnection m_Connection;
+        private string _connectionString;
+        private bool _initialized;
 
         // ── Transaction pinning ────────────────────────────────────────────
-        // MySQL 单连接模式(同 SQLite):_pinnedConnId 单槽 + sliding Timer
-        // 防泄漏。Execute/ExecuteNonQuery 不需要路由(单连接天然统一),
-        // 但接收 connId 用于重置 Timer。与 PostgreSQL.cs 对称。
+        // 与 PostgreSQL.cs 对称:_pinned Map 持有借出的连接,sliding Timer
+        // 防泄漏。connId 有值时 Execute/ExecuteNonQuery 走 pinned 连接 +
+        // 重置 Timer;无值时走池自动派发。
         private readonly object _txLock = new();
+        private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
         private long _nextConnId;
-        private long? _pinnedConnId;
-        private Timer _txTimer;
         private const int TX_IDLE_MS = 30000;
+
+        private sealed class TxHolder
+        {
+            public MySqlConnection Conn = null!;
+            public Timer Timer = null!;
+        }
 
         static MySQL()
         {
@@ -48,7 +59,6 @@ namespace VRCX
 
         public MySQL()
         {
-            m_ConnectionLock = new Lock();
         }
 
         /// <summary>
@@ -96,13 +106,18 @@ namespace VRCX
                 UseAffectedRows = true,
                 SslMode = MySqlSslMode.Preferred,
                 ConnectionTimeout = 15,
-                DefaultCommandTimeout = 30
+                DefaultCommandTimeout = 30,
+                // MySqlConnector 默认启用池化;显式设置 Pooling=True 让意图清晰。
+                // 池大小默认 100,空闲连接保留 300 秒(与 PG Npgsql 池对齐)。
+                Pooling = true,
+                MaximumPoolSize = 100,
+                ConnectionIdleTimeout = 300
             };
 
             ApplyUserOptions(builder);
 
-            m_Connection = new MySqlConnection(builder.ConnectionString);
-            m_Connection.Open();
+            _connectionString = builder.ConnectionString;
+            _initialized = true;
         }
 
         /// <summary>
@@ -147,34 +162,38 @@ namespace VRCX
         }
 
         /// <summary>
-        /// Closes and disposes the shared connection.
+        /// Clears the connection string + initialised flag. The
+        /// MySqlConnector pool stays alive until process exit (connections
+        /// in the pool are returned lazily); new calls after Exit() will
+        /// fail with a "not initialised" error.
         /// </summary>
         public void Exit()
         {
-            lock (m_ConnectionLock)
+            _initialized = false;
+            _connectionString = null;
+            // 清理任何残留的 pinned 事务连接
+            lock (_txLock)
             {
-                m_Connection?.Close();
-                m_Connection?.Dispose();
-                m_Connection = null;
+                foreach (var kv in _pinned)
+                {
+                    try { kv.Value.Timer?.Dispose(); } catch { }
+                    try { kv.Value.Conn?.Dispose(); } catch { }
+                }
+                _pinned.Clear();
             }
         }
 
         /// <summary>
-        /// Reports whether the shared connection is currently open. Mirrors
+        /// Reports whether the backend has been initialised. Mirrors
         /// <see cref="PostgreSQL.IsConnected"/> so the renderer-side
         /// <c>testMysqlConnection</c> store action can probe backend health
-        /// symmetrically with PostgreSQL. Safe to call before <see cref="Init"/>
-        /// (returns <c>false</c>) and after <see cref="Exit"/> (returns
-        /// <c>false</c>). Acquires <see cref="m_ConnectionLock"/> so the read
-        /// can't race a concurrent <c>Exit</c>/<c>Init</c> swap.
+        /// symmetrically with PostgreSQL. Does not probe the network —
+        /// callers use <see cref="Ping"/> for a liveness check.
         /// </summary>
-        /// <returns><c>true</c> if <see cref="m_Connection"/> is non-null and <see cref="MySqlConnection.State"/> is <see cref="System.Data.ConnectionState.Open"/>.</returns>
+        /// <returns><c>true</c> if initialised with a connection string.</returns>
         public bool IsConnected()
         {
-            lock (m_ConnectionLock)
-            {
-                return m_Connection != null && m_Connection.State == System.Data.ConnectionState.Open;
-            }
+            return _initialized && !string.IsNullOrEmpty(_connectionString);
         }
 
         /// <summary>
@@ -188,50 +207,59 @@ namespace VRCX
         }
 
         /// <summary>
-        /// Executes a SELECT/PRAGMA-like statement and returns rows as
-        /// object arrays. Used by the Windows/CefSharp JS bridge.
+        /// Execute a query on a fresh pooled connection and return rows as
+        /// positional arrays. When <paramref name="connId"/> is present the
+        /// query runs on the pinned transaction connection + resets the
+        /// sliding idle timer.
         /// </summary>
         public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            if (connId.HasValue) ResetTxTimer(connId.Value);
-            lock (m_ConnectionLock)
+            if (connId.HasValue)
             {
-                using var command = new MySqlCommand(sql, m_Connection);
-                AddParameters(command, args);
-
-                using var reader = command.ExecuteReader();
-                var result = new List<object[]>();
-                while (reader.Read())
-                {
-                    var values = new object[reader.FieldCount];
-                    for (var i = 0; i < reader.FieldCount; i++)
-                    {
-                        // IsDBNull guard: DBNull.Value serialises to "{}" via
-                        // System.Text.Json and is the wrong value for the JS
-                        // bridge. Map NULL columns to null explicitly so both
-                        // the CefSharp (object[][]) and JSON entry points see
-                        // JS null instead of an empty object.
-                        values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                    }
-                    result.Add(values);
-                }
-                return result.ToArray();
+                return ExecutePinned(connId.Value, sql, args);
             }
+            EnsureInitialized();
+            using var connection = new MySqlConnection(_connectionString);
+            connection.Open();
+            using var command = new MySqlCommand(sql, connection);
+            AddParameters(command, args);
+
+            using var reader = command.ExecuteReader();
+            var result = new List<object[]>();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    // IsDBNull guard: DBNull.Value serialises to "{}" via
+                    // System.Text.Json and is the wrong value for the JS
+                    // bridge. Map NULL columns to null explicitly so both
+                    // the CefSharp (object[][]) and JSON entry points see
+                    // JS null instead of an empty object.
+                    values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                }
+                result.Add(values);
+            }
+            return result.ToArray();
         }
 
         /// <summary>
-        /// Executes an INSERT/UPDATE/DELETE/DDL statement and returns the
-        /// number of rows affected.
+        /// Execute a non-query on a fresh pooled connection and return rows
+        /// affected. When <paramref name="connId"/> is present the statement
+        /// runs on the pinned transaction connection + resets the timer.
         /// </summary>
         public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            if (connId.HasValue) ResetTxTimer(connId.Value);
-            lock (m_ConnectionLock)
+            if (connId.HasValue)
             {
-                using var command = new MySqlCommand(sql, m_Connection);
-                AddParameters(command, args);
-                return command.ExecuteNonQuery();
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
             }
+            EnsureInitialized();
+            using var connection = new MySqlConnection(_connectionString);
+            connection.Open();
+            using var command = new MySqlCommand(sql, connection);
+            AddParameters(command, args);
+            return command.ExecuteNonQuery();
         }
 
         /// <summary>
@@ -305,58 +333,128 @@ namespace VRCX
             }
         }
 
-        // ── Transaction pinning ───────────────────────────────────────────
-        // MySQL 单连接模式(同 SQLite):BEGIN/COMMIT/ROLLBACK 通过 SQL 语句
-        // 管理事务,_pinnedConnId 单槽 + sliding Timer 防泄漏。
-        // 与 PostgreSQL.cs 的 _pinned Map 对称,保持三引擎 C# API 一致。
+        // ── Transaction pinning implementation ───────────────────────────────
+        // 与 PostgreSQL.cs 对称:BeginTransaction 借一条 pooled 连接,持有在
+        // TxHolder 中;ExecutePinned/ExecuteNonQueryPinned 按 connId 查 holder,
+        // 在持有的连接上执行 SQL + 重置 sliding timer;Commit/Rollback 终结
+        // 事务并还池。sliding timer 自动回滚空闲超时的事务防泄漏。
 
-        public long BeginTransaction()
+        private void EnsureInitialized()
         {
-            lock (_txLock)
-            {
-                if (_pinnedConnId.HasValue)
-                    throw new InvalidOperationException("事务进行中,不支持嵌套");
-                var connId = Interlocked.Increment(ref _nextConnId);
-                ExecuteNonQuery("BEGIN");
-                _pinnedConnId = connId;
-                _txTimer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
-                return connId;
-            }
+            if (!_initialized || string.IsNullOrEmpty(_connectionString))
+                throw new InvalidOperationException(
+                    "MySQL backend not initialised. Call Init() first.");
         }
 
+        private static MySqlCommand CreateTxCommand(TxHolder h, string sql, IDictionary<string, object>? args)
+        {
+            var command = h.Conn.CreateCommand();
+            command.CommandText = sql;
+            AddParameters(command, args);
+            return command;
+        }
+
+        private object[][] ExecutePinned(long connId, string sql, IDictionary<string, object>? args)
+        {
+            if (!_pinned.TryGetValue(connId, out var h))
+                throw new InvalidOperationException(
+                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            using var command = CreateTxCommand(h, sql, args);
+            using var reader = command.ExecuteReader();
+            var result = new List<object[]>();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                }
+                result.Add(values);
+            }
+            return result.ToArray();
+        }
+
+        private int ExecuteNonQueryPinned(long connId, string sql, IDictionary<string, object>? args)
+        {
+            if (!_pinned.TryGetValue(connId, out var h))
+                throw new InvalidOperationException(
+                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            using var command = CreateTxCommand(h, sql, args);
+            return command.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// Borrow a pooled connection, BEGIN a transaction on it, and return
+        /// a connId that JS passes back on subsequent Execute/ExecuteNonQuery
+        /// calls to keep them on the same physical connection. A sliding
+        /// idle timer auto-rolls-back after TX_IDLE_MS of inactivity.
+        /// </summary>
+        public long BeginTransaction()
+        {
+            EnsureInitialized();
+            var connId = Interlocked.Increment(ref _nextConnId);
+            var conn = new MySqlConnection(_connectionString);
+            conn.Open();
+            var holder = new TxHolder { Conn = conn };
+            using (var beginCmd = conn.CreateCommand())
+            {
+                beginCmd.CommandText = "BEGIN";
+                beginCmd.ExecuteNonQuery();
+            }
+            holder.Timer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
+        }
+
+        /// <summary>
+        /// COMMIT the transaction pinned to <paramref name="connId"/> and
+        /// return the connection to the pool. Throws if the connId has
+        /// already been timed out / rolled back.
+        /// </summary>
         public void CommitTransaction(long connId)
         {
             lock (_txLock)
             {
-                if (_pinnedConnId != connId)
+                if (!_pinned.TryRemove(connId, out var h))
                     throw new InvalidOperationException(
                         $"connId={connId} 已超时回滚或不存在,无法 commit");
-                _txTimer?.Dispose();
-                _pinnedConnId = null;
-                // COMMIT 异常上抛(与 PG 对齐)
-                ExecuteNonQuery("COMMIT");
+                h.Timer.Dispose();
+                try
+                {
+                    using var cmd = h.Conn.CreateCommand();
+                    cmd.CommandText = "COMMIT";
+                    cmd.ExecuteNonQuery();
+                }
+                finally
+                {
+                    h.Conn.Dispose();
+                }
             }
         }
 
+        /// <summary>
+        /// ROLLBACK the transaction pinned to <paramref name="connId"/> and
+        /// return the connection to the pool. No-op if the connId has
+        /// already been timed out / rolled back.
+        /// </summary>
         public void RollbackTransaction(long connId)
         {
             lock (_txLock)
             {
-                if (_pinnedConnId != connId) return;
-                _txTimer?.Dispose();
-                _pinnedConnId = null;
-                try { ExecuteNonQuery("ROLLBACK"); }
-                catch { }
-            }
-        }
-
-        private void ResetTxTimer(long connId)
-        {
-            lock (_txLock)
-            {
-                if (_pinnedConnId == connId && _txTimer != null)
+                if (!_pinned.TryRemove(connId, out var h)) return;
+                h.Timer.Dispose();
+                try
                 {
-                    _txTimer.Change(TX_IDLE_MS, -1);
+                    using var cmd = h.Conn.CreateCommand();
+                    cmd.CommandText = "ROLLBACK";
+                    cmd.ExecuteNonQuery();
+                }
+                catch { /* 可能已超时回滚,忽略 */ }
+                finally
+                {
+                    h.Conn.Dispose();
                 }
             }
         }
@@ -365,12 +463,17 @@ namespace VRCX
         {
             lock (_txLock)
             {
-                if (_pinnedConnId != connId) return;
+                if (!_pinned.TryRemove(connId, out var h)) return;
                 Console.Error.WriteLine(
                     $"[MySQL] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
-                _txTimer?.Dispose();
-                _pinnedConnId = null;
-                try { ExecuteNonQuery("ROLLBACK"); } catch { }
+                h.Timer.Dispose();
+                try
+                {
+                    using var cmd = h.Conn.CreateCommand();
+                    cmd.CommandText = "ROLLBACK";
+                    cmd.ExecuteNonQuery();
+                } catch { }
+                try { h.Conn.Dispose(); } catch { }
             }
         }
     }
