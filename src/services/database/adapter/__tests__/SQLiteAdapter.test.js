@@ -906,6 +906,11 @@ describe('DDL — createTable / createIndex / alterTable* / dropTable', () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // 6. Transaction
+//
+// 注意:本块直接调用 EngineAdapter 的 @private 方法
+// beginTransaction/commit/rollback —— 这是有意为之,用于验证 SQLite
+// 引擎级事务语义(persist vs discard)和嵌套 begin 抛错。生产代码请
+// 使用 withTransaction(fn),不要手动调用这三个方法。
 // ─────────────────────────────────────────────────────────────────────────
 
 describe('Transaction — beginTransaction / commit / rollback', () => {

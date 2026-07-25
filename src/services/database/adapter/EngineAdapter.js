@@ -19,6 +19,12 @@
  * 层维护事务上下文栈,以让 withTransaction 体内的所有
  * execute/executeNonQuery/bulkInsert 等自动走 pinned 连接。
  * 22 个数据方法签名不变(栈顶在 execute/executeNonQuery 内部读)。
+ *
+ * 2026-07-25 补充:beginTransaction/commit/rollback 三个低级方法
+ * 标为 @private —— 生产代码应使用 withTransaction(fn),手动调用
+ * 这三个方法只在测试中验证栈契约时出现。@private 触发 IDE 高亮
+ * 但不触发 lint 失败(eslint-plugin-jsdoc 未在 eslint.config.mjs
+ * 启用),WebStorm 仍会对外部调用显示警告,达到引导效果。
  * 详见 docs/TRANSACTION_DESIGN.md。
  *
  * The `engineType` getter below is metadata, not part of the 42+3
@@ -515,8 +521,10 @@ class EngineAdapter {
      * 必须配对调用 commit(connId) 或 rollback(connId) 以 pop 栈。
      *
      * 不支持嵌套:栈非空时抛错(与 SQLite 现有 nested begin throws 一致)。
-     * 推荐使用 withTransaction(fn) 自动管理栈,而非手动调用。
+     * 生产代码请使用 withTransaction(fn) 自动管理栈,而非手动调用
+     * 本方法——手动调用仅在测试中用于验证栈契约。
      *
+     * @private
      * @returns {Promise<number>} connId
      */
     async beginTransaction() {
@@ -533,6 +541,10 @@ class EngineAdapter {
     /**
      * 提交当前事务并 pop `_txStack`。
      *
+     * 仅由 withTransaction(fn) 内部调用;手动调用仅在测试中用于验证
+     * 栈契约。生产代码请使用 withTransaction(fn)。
+     *
+     * @private
      * @param {number} connId - beginTransaction 返回的 connId
      * @returns {Promise<void>}
      */
@@ -548,6 +560,10 @@ class EngineAdapter {
      * 回滚当前事务并 pop `_txStack`。已超时/不存在的 connId 静默
      * no-op,不抛错(withTransaction 的 catch 可无条件调用)。
      *
+     * 仅由 withTransaction(fn) 内部调用;手动调用仅在测试中用于验证
+     * 栈契约。生产代码请使用 withTransaction(fn)。
+     *
+     * @private
      * @param {number} connId - beginTransaction 返回的 connId
      * @returns {Promise<void>}
      */

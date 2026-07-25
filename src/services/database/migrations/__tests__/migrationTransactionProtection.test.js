@@ -16,6 +16,11 @@
  * (the first DDL on `gamelog_location` in v16/schema.map — the add_column
  * of `group_name`). This is string-based, not callCount-based, so it is
  * robust against reordering of the schema changes.
+ *
+ * 注意:Block 1 "explicit transaction semantics" 直接调用 EngineAdapter
+ * 的 @private 方法 beginTransaction/commit/rollback —— 这是有意为之,
+ * 用于验证 withTransaction 所依赖的底层栈契约(rollback no-op 容错、
+ * commit 缺事务抛错等)。生产代码请使用 withTransaction(fn)。
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';

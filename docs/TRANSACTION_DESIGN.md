@@ -48,6 +48,22 @@ EngineAdapter 基类:
     // 传给 C# 决定走 pinned 连接还是默认池
 ```
 
+### API 可见性:@private 标注(2026-07-25 补充)
+
+`beginTransaction`/`commit`/`rollback` 三个低级方法标为
+`@private`,生产代码应使用 `withTransaction(fn)`。理由:
+
+- 三个低级方法承载栈管理逻辑(push/pop/嵌套检查),不是简单的
+  私有转发——它们是 `withTransaction` 所依赖的底层契约层。
+- `@private` 触发 IDE 高亮(WebStorm "Private member accessed"),
+  引导开发者用 `withTransaction(fn)`;同类内调用
+  (`this.beginTransaction()`)不触发,`withTransaction` 内部正常。
+- ESLint 不报错(`eslint-plugin-jsdoc` 未在 `eslint.config.mjs`
+  启用 `check-access` 规则),仅靠 IDE inspection 引导。
+- 生产代码 0 处直接调用;测试文件(transaction.test.js /
+  migrationTransactionProtection.test.js / SQLiteAdapter.test.js)
+  有意直接调用以验证栈契约,文件头/块前已加注释说明。
+
 ### 隔离保证
 
 - **实例隔离**:每个 adapter 实例独立 `_txStack`,srcAdapter/dstAdapter 天然不交叉
@@ -95,6 +111,16 @@ EngineAdapter 基类:
 - `adapter/__tests__/transaction.test.js`(新增)— 栈上下文 16 例
 - `pushEngine.test.js`(新增)— 分组事务 11 例
 - `pullEngine.test.js`(新增)— 分组事务 9 例
+
+### 测试覆盖空白(2026-07-25 标注)
+
+PG/MySQL 引擎级事务语义(pinned 连接生命周期、C# 桥往返、超时
+Timer 回收后 rollback no-op)目前仅由 `transaction.test.js` 用
+`MemorySQLiteAdapter` 做引擎无关的栈契约验证。PG/MySQL 特定行为
+需真实后端 + C# 桥,无法在纯 JS unit test 中覆盖,已在
+`PgSQLAdapter.unit.test.js` / `PgSQLAdapter.pgsql.test.js` /
+`MySQLAdapter.mysql.test.js` 文件头加 TODO 标注,待 follow-up 补
+集成测试。
 
 ## 效果
 

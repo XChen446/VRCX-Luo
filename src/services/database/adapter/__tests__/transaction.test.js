@@ -12,6 +12,12 @@
  *  8. beginTransaction/commit/rollback 手动模式也能正确管理栈
  *  9. rollback 无活跃事务 → 静默 no-op(与 PG 超时对齐)
  * 10. countWhere 在事务内读得到未 commit 的写(关键正确性保证)
+ *
+ * 注意:本文件直接调用 EngineAdapter 的 @private 方法
+ * beginTransaction/commit/rollback —— 这是有意为之,用于验证
+ * withTransaction 所依赖的栈契约(嵌套抛错、栈深度、实例隔离等)
+ * 无法通过 withTransaction 黑盒精确测出的底层行为。生产代码
+ * 请使用 withTransaction(fn),不要手动调用这三个方法。
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';

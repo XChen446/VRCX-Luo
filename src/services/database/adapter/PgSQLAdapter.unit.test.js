@@ -29,6 +29,14 @@ import { PgSQLAdapter } from './PgSQLAdapter.js';
  *   - `listTables` / `_describeColumns` / `listTablesTypes` catalog
  *     queries (covered by the integration test when `PG_TEST_HOST` is set)
  *
+ * TODO: 事务单元测试覆盖空白。`beginTransaction`/`commit`/`rollback`
+ *   (现已标 @private) 及 `withTransaction` 的 PG 引擎级语义
+ *   (pinned 连接生命周期、C# `BeginTransaction/CommitTransaction`
+ *   往返、超时 sliding Timer 回收后 rollback no-op)目前仅由
+ *   `transaction.test.js` 用 MemorySQLiteAdapter 做引擎无关的栈
+ *   契约验证。PG 特定的事务行为需真实 Npgsql 后端 + C# 桥,
+ *   无法在纯 JS unit test 中覆盖,待 follow-up 补集成测试。
+ *
  * JS has no true private methods — the `_`-prefixed methods are accessed
  * directly on the instance. This is intentional and matches the
  * codebase convention (the SQLiteAdapter tests do the same).
