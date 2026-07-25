@@ -181,9 +181,9 @@ namespace VRCX
         /// Executes a SELECT/PRAGMA-like statement and returns the result set
         /// serialised as a JSON string. Used by the Linux/Electron JS bridge.
         /// </summary>
-        public string ExecuteJson(string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            var result = Execute(sql, args);
+            var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
         }
 
@@ -333,8 +333,8 @@ namespace VRCX
                         $"connId={connId} 已超时回滚或不存在,无法 commit");
                 _txTimer?.Dispose();
                 _pinnedConnId = null;
-                try { ExecuteNonQuery("COMMIT"); }
-                catch { }
+                // COMMIT 异常上抛(与 PG 对齐)
+                ExecuteNonQuery("COMMIT");
             }
         }
 

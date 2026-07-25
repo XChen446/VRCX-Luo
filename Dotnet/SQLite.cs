@@ -356,9 +356,9 @@ namespace VRCX
         }
 
         // for Electron
-        public string ExecuteJson(string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            var result = Execute(sql, args);
+            var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
         }
 
@@ -527,8 +527,8 @@ namespace VRCX
                         $"connId={connId} 已超时回滚或不存在,无法 commit");
                 _txTimer?.Dispose();
                 _pinnedConnId = null;
-                try { ExecuteNonQuery("COMMIT"); }
-                catch { /* COMMIT 失败:连接状态不确定,清 pin 让下次重试 */ }
+                // COMMIT 异常上抛(与 PG 对齐):连接可能已坏,调用方应知道
+                ExecuteNonQuery("COMMIT");
             }
         }
 

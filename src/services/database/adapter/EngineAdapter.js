@@ -587,8 +587,13 @@ class EngineAdapter {
         } catch (err) {
             try {
                 await this.rollback(connId);
-            } catch {
-                /* rollback 失败不掩盖原始错误 */
+            } catch (rollbackErr) {
+                // 不掩盖原始业务错误,但记录 rollback 失败供诊断
+                // (连接断、SQLite 损坏等,否则完全无日志)
+                console.error(
+                    '[adapter] withTransaction rollback 失败:',
+                    rollbackErr
+                );
             }
             throw err;
         }
