@@ -12,6 +12,15 @@
  *
  * Interface frozen at 42 abstract + 3 optional methods (2026-07-16).
  *
+ * 2026-07-25 破例:事务接口 begin()/commit()/rollback() 改名为
+ * beginTransaction()/commit(connId)/rollback(connId),并新增
+ * withTransaction(fn) 默认实现 + _txStack 实例字段。原因是
+ * PostgreSQL.cs 的池化设计导致跨调用事务断裂,修复需要在 JS
+ * 层维护事务上下文栈,以让 withTransaction 体内的所有
+ * execute/executeNonQuery/bulkInsert 等自动走 pinned 连接。
+ * 22 个数据方法签名不变(栈顶在 execute/executeNonQuery 内部读)。
+ * 详见 docs/TRANSACTION_DESIGN.md。
+ *
  * The `engineType` getter below is metadata, not part of the 42+3
  * method interface — it carries no SQL semantics and exists solely so
  * the migration runner can detect the active engine without importing
@@ -21,6 +30,16 @@
 class EngineAdapter {
     /** @type {string|null} */
     _prefixOverride = null;
+
+    /**
+     * 事务 connId 栈,withTransaction 自动 push/pop。
+     * execute/executeNonQuery 实现里读 `this._txStack.at(-1)` 决定走
+     * pinned 连接(事务中)还是默认池(事务外)。
+     * 实例属性,每个 adapter 实例独立,srcAdapter/dstAdapter 天然隔离。
+     * @type {number[]}
+     * @private
+     */
+    _txStack = [];
 
     constructor() {
         if (new.target === EngineAdapter) {
@@ -450,33 +469,121 @@ class EngineAdapter {
     // ── Transaction ──────────────────────────────────────────────────
 
     /**
-     * BEGIN transaction.
+     * 引擎级事务开启钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.BeginTransaction()` 返回真实 connId
+     * - SQLiteAdapter/MySQLAdapter:发 `BEGIN` SQL,返回 0(单连接无需 pin)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @returns {Promise<number>} connId(0 表示单连接引擎无需 pin)
+     * @protected
      */
-    begin() {
+    _doBegin() {
         throw new Error('abstract');
     }
 
     /**
-     * COMMIT transaction.
+     * 引擎级事务提交钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.CommitTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:发 `COMMIT` SQL(connId 忽略)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @param {number} _connId
+     * @returns {Promise<void>}
+     * @protected
      */
-    commit() {
+    _doCommit(_connId) {
         throw new Error('abstract');
     }
 
     /**
-     * ROLLBACK transaction.
+     * 引擎级事务回滚钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.RollbackTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:发 `ROLLBACK` SQL(connId 忽略)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @param {number} _connId
+     * @returns {Promise<void>}
+     * @protected
      */
-    rollback() {
+    _doRollback(_connId) {
         throw new Error('abstract');
+    }
+
+    /**
+     * 开启一个事务,返回 connId。connId 在 withTransaction 体内被
+     * 自动 push 到 `_txStack`,execute/executeNonQuery 读栈顶决定走
+     * pinned 连接还是默认池。
+     *
+     * 不支持嵌套:栈非空时抛错(与 SQLite 现有 nested begin throws 一致)。
+     *
+     * @returns {Promise<number>} connId
+     */
+    async beginTransaction() {
+        if (this._txStack.length > 0) {
+            throw new Error(
+                'beginTransaction: 不支持嵌套事务(当前已在事务中)'
+            );
+        }
+        return this._doBegin();
+    }
+
+    /**
+     * 提交当前事务。
+     *
+     * @param {number} connId - beginTransaction 返回的 connId
+     * @returns {Promise<void>}
+     */
+    async commit(connId) {
+        await this._doCommit(connId);
+    }
+
+    /**
+     * 回滚当前事务。已超时/不存在的 connId 静默 no-op,不抛错
+     * (withTransaction 的 catch 块可无条件调用)。
+     *
+     * @param {number} connId - beginTransaction 返回的 connId
+     * @returns {Promise<void>}
+     */
+    async rollback(connId) {
+        await this._doRollback(connId);
+    }
+
+    /**
+     * 在事务中执行 `fn`。自动管理 connId 的获取/提交/回滚 + `_txStack`
+     * 的 push/pop。业务代码在 `fn` 内部调用的 execute/insert/bulkInsert
+     * 等方法会自动走 pinned 连接(读栈顶 connId),无需显式传 connId。
+     *
+     * - 成功:commit + pop 栈
+     * - 抛错:rollback + pop 栈 + 重新抛出
+     * - 嵌套:栈非空时抛错(不支持嵌套事务)
+     *
+     * @optional
+     * @template T
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     */
+    async withTransaction(fn) {
+        if (this._txStack.length > 0) {
+            throw new Error(
+                'withTransaction: 不支持嵌套事务(当前已在事务中)'
+            );
+        }
+        const connId = await this.beginTransaction();
+        this._txStack.push(connId);
+        try {
+            const result = await fn();
+            await this.commit(connId);
+            return result;
+        } catch (err) {
+            try {
+                await this.rollback(connId);
+            } catch {
+                /* rollback 失败不掩盖原始错误 */
+            }
+            throw err;
+        } finally {
+            this._txStack.pop();
+        }
     }
 
     // ── Maintenance ──────────────────────────────────────────────────
