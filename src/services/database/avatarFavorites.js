@@ -122,11 +122,13 @@ const avatarFavorites = {
         };
     },
 
-    clearAvatarHistory() {
-        adapter.deleteAll(
-            adapter.userTable(dbVars.userPrefix, 'avatar_history')
-        );
-        adapter.deleteAll('cache_avatar');
+    async clearAvatarHistory() {
+        await adapter.withTransaction(async () => {
+            await adapter.deleteAll(
+                adapter.userTable(dbVars.userPrefix, 'avatar_history')
+            );
+            await adapter.deleteAll('cache_avatar');
+        });
     },
 
     addAvatarToFavorites(avatarId, groupName) {

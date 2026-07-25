@@ -211,15 +211,10 @@ const activityV2 = {
     },
 
     async replaceActivitySessionsV2(userId, sessions = []) {
-        await adapter.begin();
-        try {
+        await adapter.withTransaction(async () => {
             await adapter.delete(sessionsTable(), { user_id: userId });
             await insertSessions(userId, sessions);
-            await adapter.commit();
-        } catch (error) {
-            await adapter.rollback();
-            throw error;
-        }
+        });
     },
 
     async appendActivitySessionsV2({
@@ -227,8 +222,7 @@ const activityV2 = {
         sessions = [],
         replaceFromStartAt = null
     }) {
-        await adapter.begin();
-        try {
+        await adapter.withTransaction(async () => {
             if (replaceFromStartAt !== null) {
                 await adapter.deleteWhere(
                     sessionsTable(),
@@ -237,11 +231,7 @@ const activityV2 = {
                 );
             }
             await insertSessions(userId, sessions);
-            await adapter.commit();
-        } catch (error) {
-            await adapter.rollback();
-            throw error;
-        }
+        });
     },
 
     async getActivityBucketCacheV2({

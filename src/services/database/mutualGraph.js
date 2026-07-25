@@ -45,8 +45,7 @@ const mutualGraph = {
         const linkTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links')}`;
         const metaTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_meta')}`;
         const pairs = entries instanceof Map ? entries : new Map();
-        await adapter.begin();
-        try {
+        await adapter.withTransaction(async () => {
             await adapter.deleteWhere(
                 linkTable,
                 'friend_id NOT IN (SELECT friend_id FROM ' +
@@ -60,7 +59,6 @@ const mutualGraph = {
                     ' WHERE opted_out = 1)'
             );
             if (pairs.size === 0) {
-                await adapter.commit();
                 return;
             }
             const idsToClean = [];
@@ -99,11 +97,7 @@ const mutualGraph = {
             if (edgeRows.length > 0) {
                 await adapter.bulkInsert(linkTable, edgeRows, 'replace');
             }
-            await adapter.commit();
-        } catch (err) {
-            await adapter.rollback();
-            throw err;
-        }
+        });
     },
 
     async updateMutualsForFriend(friendId, mutualIds) {
@@ -112,16 +106,18 @@ const mutualGraph = {
         }
         const friendTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_friends')}`;
         const linkTable = `${adapter.userTable(dbVars.userPrefix, 'mutual_graph_links')}`;
-        await adapter.insert(friendTable, { friend_id: friendId }, 'replace');
-        await adapter.delete(linkTable, { friend_id: friendId });
-        const edgeRows = [];
-        for (const mutual of mutualIds) {
-            if (!mutual) continue;
-            edgeRows.push({ friend_id: friendId, mutual_id: mutual });
-        }
-        if (edgeRows.length > 0) {
-            await adapter.bulkInsert(linkTable, edgeRows, 'replace');
-        }
+        await adapter.withTransaction(async () => {
+            await adapter.insert(friendTable, { friend_id: friendId }, 'replace');
+            await adapter.delete(linkTable, { friend_id: friendId });
+            const edgeRows = [];
+            for (const mutual of mutualIds) {
+                if (!mutual) continue;
+                edgeRows.push({ friend_id: friendId, mutual_id: mutual });
+            }
+            if (edgeRows.length > 0) {
+                await adapter.bulkInsert(linkTable, edgeRows, 'replace');
+            }
+        });
     },
 
     async getMutualCountForAllUsers() {
