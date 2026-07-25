@@ -53,9 +53,11 @@ namespace VRCX
             public NpgsqlTransaction Tx = null!;
             public Timer Timer = null!;
             /// <summary>
-            /// 正在执行 SQL 的计数。OnTxTimeout 检测到 InFlight &gt; 0 时
-            /// 不立即回滚,设 TimedOut 标记让 ExecutePinned 的 finally
-            /// 自行清理,避免 SQL 执行期间 Dispose 连接。
+            /// 正在执行 SQL 的计数。所有读写都在 _txLock 内,锁提供
+            /// happens-before,无需 Interlocked/volatile。OnTxTimeout
+            /// 检测到 InFlight &gt; 0 时不立即回滚,设 TimedOut 标记让
+            /// ExecutePinned 的 finally 自行清理,避免 SQL 执行期间
+            /// Dispose 连接。
             /// </summary>
             public int InFlight;
             /// <summary>OnTxTimeout 已来过,等 SQL 执行完由 finally 清理。</summary>
@@ -363,8 +365,14 @@ namespace VRCX
             // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚。
             // InFlight 标记让 OnTxTimeout 知道 SQL 正在跑,不立即
             // Dispose 连接,而是设 TimedOut 让本方法的 finally 自行清理。
-            Interlocked.Increment(ref h.InFlight);
-            lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
+            // InFlight++ 与 Timer.Change 必须在同一 _txLock 内,否则
+            // OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
+            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException。
+            lock (_txLock)
+            {
+                h.InFlight++;
+                h.Timer.Change(Timeout.Infinite, -1);
+            }
             try
             {
                 using var command = CreateTxCommand(h, sql, args);
@@ -384,9 +392,9 @@ namespace VRCX
             }
             finally
             {
-                Interlocked.Decrement(ref h.InFlight);
                 lock (_txLock)
                 {
+                    h.InFlight--;
                     if (h.TimedOut)
                     {
                         // OnTxTimeout 在 SQL 执行期间来过,当时没清理
@@ -408,8 +416,11 @@ namespace VRCX
             if (!_pinned.TryGetValue(connId, out var h))
                 throw new InvalidOperationException(
                     $"connId={connId} 已超时回滚或不存在,请重试事务");
-            Interlocked.Increment(ref h.InFlight);
-            lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
+            lock (_txLock)
+            {
+                h.InFlight++;
+                h.Timer.Change(Timeout.Infinite, -1);
+            }
             try
             {
                 using var command = CreateTxCommand(h, sql, args);
@@ -417,9 +428,9 @@ namespace VRCX
             }
             finally
             {
-                Interlocked.Decrement(ref h.InFlight);
                 lock (_txLock)
                 {
+                    h.InFlight--;
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
