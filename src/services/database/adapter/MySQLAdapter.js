@@ -42,7 +42,7 @@ class MySQLAdapter extends EngineAdapter {
     /**
      * @param {object} [config]
      * @param {string} [config.connection] - mysql:// URI 或原始连接字符串
-     * @param {...object} [config.params] - 额外连接参数（覆盖默认）
+     * @param {object} [config.params] - 额外连接参数（覆盖默认）
      */
     constructor({ connection, ...params } = {}) {
         super();
