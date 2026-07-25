@@ -99,7 +99,9 @@ namespace VRCX
                 $"Host={host};Port={port};Username={username};Password={password};Database={name}"
                 + ";Maximum Pool Size=100"      // 与 MySQL MaximumPoolSize=100 对称
                 + ";Minimum Pool Size=0"        // 懒加载,不预创建
-                + ";Connection Idle Lifetime=300"; // 空闲 300s 自动回收(与 MySQL ConnectionIdleTimeout=300 对称)
+                + ";Connection Idle Lifetime=300" // 空闲 300s 自动回收(与 MySQL ConnectionIdleTimeout=300 对称)
+                + ";Timeout=15"                 // 建连超时 15s(对称 MySQL ConnectionTimeout=15)
+                + ";CommandTimeout=30";         // SQL 执行超时 30s(对称 MySQL DefaultCommandTimeout=30)
 
             var builder = new NpgsqlDataSourceBuilder(connectionString);
             _dataSource = builder.Build();
@@ -197,7 +199,9 @@ namespace VRCX
 
         /// <summary>
         /// Return true when the data source has been initialized.
-        /// Does not probe the network.
+        /// Does not probe the network — callers needing a real liveness
+        /// check should use <see cref="Ping"/> (SELECT 1) or
+        /// <see cref="GetHealth"/> (SELECT 1 + JSON latency snapshot).
         /// </summary>
         public bool IsConnected()
         {

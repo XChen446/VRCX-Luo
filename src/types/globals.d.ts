@@ -147,8 +147,8 @@ declare global {
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
     // (desktop) or Electron main-process IPC. In vitest it is a noopAsync
     // Proxy (see vitest.setup.js). `ExecuteJson`/`ExecuteNonQuery` accept a
-    // positional `object[]` bound by `$N`; `IsConnected`/`GetHealth` are
-    // status probes used by PgSQLAdapter health checks.
+    // positional `object[]` bound by `$N`; `IsConnected`/`GetHealth`/`Ping`
+    // are status probes used by PgSQLAdapter health checks.
     const PostgreSQL: {
         Execute: (sql: string, args: any[] | null, connId?: number) => Promise<any[]>;
         ExecuteJson: (sql: string, args: any[] | null, connId?: number) => Promise<string>;
@@ -157,7 +157,18 @@ declare global {
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
         KeepAliveTransaction: (connId: number) => void;
+        /**
+         * Returns true when the data source has been initialised. Does not
+         * probe the network — a true return does not guarantee the server is
+         * reachable. Prefer `Ping` for a real liveness check.
+         */
         IsConnected: () => Promise<boolean>;
+        /**
+         * Lightweight liveness probe: executes `SELECT 1` against the pool.
+         * Worst-case latency bounded by `Timeout` (default 15s) when the
+         * server is unreachable. Returns true on success, false on failure.
+         */
+        Ping: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
     };
 
@@ -458,10 +469,17 @@ declare global {
          * Reports whether the shared MySQL/MariaDB connection is open. Bound
          * via CefSharp (desktop) or Electron main-process IPC; in vitest it is
          * a noopAsync Proxy (see vitest.setup.js). Symmetric to
-         * PostgreSQL.IsConnected so the renderer's testMysqlConnection store
-         * action can probe backend health the same way.
+         * PostgreSQL.IsConnected — returns true once Init() has been called,
+         * does not probe the network. Prefer `Ping` for a real liveness check.
          */
         IsConnected: () => Promise<boolean>;
+        /**
+         * Lightweight liveness probe symmetric to PostgreSQL.Ping: executes
+         * `SELECT 1` against the pool. Worst-case latency bounded by
+         * `ConnectionTimeout` (default 15s) when the server is unreachable.
+         * Returns true on success, false on failure.
+         */
+        Ping: () => Promise<boolean>;
     };
 
     const webApiService: {

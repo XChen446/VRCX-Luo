@@ -211,11 +211,11 @@ export async function pushFromSqlite(
                 'restart the app before running the push.'
         );
     }
-    // M4 (QA M4): `isConnected` is a PgSQLAdapter-only extension (not on the
-    // base class nor on MySQLAdapter, which probes health through the C#
-    // MySQL pool's Init path). We probe it best-effort when present so a
-    // disconnected PG pool fails fast with a clear message; subclasses
-    // without it are assumed connected after a successful Init.
+    // `isConnected` is a real liveness probe (`SELECT 1`) on both
+    // PgSQLAdapter and MySQLAdapter — returns true when the backend is
+    // reachable, false (or absent on SQLite) when not. We probe it
+    // best-effort when present so a disconnected remote backend fails
+    // fast with a clear message before starting the long copy.
     const adapterAny =
         /** @type {{ isConnected?: () => boolean }} */ (adapter);
     if (

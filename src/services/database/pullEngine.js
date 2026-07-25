@@ -155,9 +155,9 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  *
  * The body is engine-agnostic: it only touches abstract `EngineAdapter`
  * methods every adapter implements, so PG and MySQL share one code path.
- * `isConnected` (a PgSQLAdapter extension) is probed best-effort when
- * present; subclasses without it are assumed connected after a successful
- * Init.
+ * `isConnected` (a real `SELECT 1` liveness probe on both PgSQLAdapter
+ * and MySQLAdapter) is probed best-effort when present; subclasses
+ * without it (SQLite) are assumed connected after a successful Init.
  *
  * @param {string} dstConnStr - SQLite connection string like 'sqlite:///C:/path/to/backup.sqlite3'.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.

@@ -350,7 +350,8 @@ describe('PgSQLAdapter', () => {
 
     describe('isConnected', () => {
         it('returns a boolean and does not throw under the vitest noopAsync stub', () => {
-            // Under vitest.setup.js, PostgreSQL.IsConnected is noopAsync
+            // Under vitest.setup.js, PostgreSQL is a Proxy returning noopAsync
+            // for any property access, so PostgreSQL.Ping is noopAsync
             // → returns Promise.resolve(''). Boolean(Promise) === true.
             // The real C# binding returns a synchronous bool. Either way
             // the call must not throw and must return a boolean.

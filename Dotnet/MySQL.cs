@@ -197,6 +197,38 @@ namespace VRCX
         }
 
         /// <summary>
+        /// Lightweight liveness probe. Symmetric to <see cref="PostgreSQL.Ping"/>.
+        /// Opens a pooled connection and executes <c>SELECT 1</c>; returns
+        /// <c>true</c> on success, <c>false</c> on any failure (server down,
+        /// auth rejected, network unreachable). Worst-case latency when the
+        /// server is unreachable is bounded by <c>ConnectionTimeout</c>
+        /// (default 15s).
+        /// </summary>
+        /// <remarks>
+        /// Prefer this over <see cref="IsConnected"/> when the caller needs to
+        /// confirm the backend is actually reachable, not just initialised —
+        /// e.g. the renderer-side <c>testMysqlConnection</c> store action and
+        /// the push/pull engine fail-fast guards.
+        /// </remarks>
+        /// <returns><c>true</c> when <c>SELECT 1</c> succeeds against the pool.</returns>
+        public bool Ping()
+        {
+            try
+            {
+                using var connection = new MySqlConnection(_connectionString);
+                connection.Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "SELECT 1";
+                cmd.ExecuteScalar();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Executes a SELECT/PRAGMA-like statement and returns the result set
         /// serialised as a JSON string. Used by the Linux/Electron JS bridge.
         /// </summary>

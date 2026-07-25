@@ -1155,6 +1155,38 @@ class MySQLAdapter extends EngineAdapter {
         const p = this._prefixOverride ?? prefix;
         return `${p}_${name}`;
     }
+
+    /**
+     * Synchronous liveness probe backed by C# `MySQL.Ping()`.
+     *
+     * Symmetric to `PgSQLAdapter.isConnected()`. `Ping` executes
+     * `SELECT 1` against the pooled MySQL/MariaDB connection, confirming
+     * the backend is actually reachable — unlike `IsConnected`, which only
+     * reports initialisation state. Worst-case latency when the server is
+     * unreachable is bounded by `ConnectionTimeout` (default 15s); in the
+     * common connected case it is sub-millisecond.
+     *
+     * Used by `pullEngine`/`pushEngine` as a fail-fast guard before
+     * attempting a long copy operation, so a disconnected backend produces
+     * a clear "backend is not connected" error rather than a delayed,
+     * mid-copy SQL failure.
+     *
+     * Defensive against the vitest `noopAsync` stub (returns `Promise<''>`)
+     * and against environments where the binding is absent entirely
+     * (bare `MySQL` reference would throw `ReferenceError` under optional
+     * chaining — `?.` only handles `null`/`undefined`, not undeclared
+     * identifiers). The `typeof` guard short-circuits both the undeclared
+     * case and the `undefined` value case. `Boolean(...)` of a thenable
+     * is `true`, which is acceptable for a liveness probe — the real C#
+     * binding returns a synchronous `bool`.
+     *
+     * @returns {boolean}
+     */
+    isConnected() {
+        return Boolean(
+            typeof MySQL !== 'undefined' && MySQL?.Ping?.()
+        );
+    }
 }
 
 export { MySQLAdapter };

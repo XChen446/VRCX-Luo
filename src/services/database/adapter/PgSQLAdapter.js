@@ -1104,7 +1104,18 @@ class PgSQLAdapter extends EngineAdapter {
     }
 
     /**
-     * Synchronous connection-state check backed by C# `PostgreSQL.IsConnected()`.
+     * Synchronous liveness probe backed by C# `PostgreSQL.Ping()`.
+     *
+     * `Ping` executes `SELECT 1` against the pooled data source, so it
+     * confirms the backend is actually reachable — unlike `IsConnected`,
+     * which only reports initialisation state. Worst-case latency when the
+     * server is unreachable is bounded by the connection string `Timeout`
+     * (default 15s); in the common connected case it is sub-millisecond.
+     *
+     * Used by `pullEngine`/`pushEngine` as a fail-fast guard before
+     * attempting a long copy operation, so a disconnected backend produces
+     * a clear "backend is not connected" error rather than a delayed,
+     * mid-copy SQL failure.
      *
      * Defensive against the vitest `noopAsync` stub (returns `Promise<''>`)
      * and against environments where the binding is absent entirely
@@ -1119,7 +1130,7 @@ class PgSQLAdapter extends EngineAdapter {
      */
     isConnected() {
         return Boolean(
-            typeof PostgreSQL !== 'undefined' && PostgreSQL?.IsConnected?.()
+            typeof PostgreSQL !== 'undefined' && PostgreSQL?.Ping?.()
         );
     }
 
