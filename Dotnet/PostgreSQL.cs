@@ -332,21 +332,30 @@ namespace VRCX
             if (!_pinned.TryGetValue(connId, out var h))
                 throw new InvalidOperationException(
                     $"connId={connId} 已超时回滚或不存在,请重试事务");
-            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
-            using var command = CreateTxCommand(h, sql, args);
-            using var reader = command.ExecuteReader();
-            var result = new List<object[]>();
-            while (reader.Read())
+            // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚,
+            // 执行完恢复 Timer 重新计时 idle 间隔。
+            lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
+            try
             {
-                var values = new object[reader.FieldCount];
-                for (var i = 0; i < reader.FieldCount; i++)
+                using var command = CreateTxCommand(h, sql, args);
+                using var reader = command.ExecuteReader();
+                var result = new List<object[]>();
+                while (reader.Read())
                 {
-                    var value = reader.GetValue(i);
-                    values[i] = value is DBNull ? null : value;
+                    var values = new object[reader.FieldCount];
+                    for (var i = 0; i < reader.FieldCount; i++)
+                    {
+                        var value = reader.GetValue(i);
+                        values[i] = value is DBNull ? null : value;
+                    }
+                    result.Add(values);
                 }
-                result.Add(values);
+                return result.ToArray();
             }
-            return result.ToArray();
+            finally
+            {
+                lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            }
         }
 
         private int ExecuteNonQueryPinned(long connId, string sql, object[]? args)
@@ -354,9 +363,16 @@ namespace VRCX
             if (!_pinned.TryGetValue(connId, out var h))
                 throw new InvalidOperationException(
                     $"connId={connId} 已超时回滚或不存在,请重试事务");
-            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
-            using var command = CreateTxCommand(h, sql, args);
-            return command.ExecuteNonQuery();
+            lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
+            try
+            {
+                using var command = CreateTxCommand(h, sql, args);
+                return command.ExecuteNonQuery();
+            }
+            finally
+            {
+                lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            }
         }
 
         /// <summary>
