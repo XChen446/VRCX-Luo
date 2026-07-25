@@ -525,7 +525,6 @@ async function copyTable(
     const pkCols = visibleColumns.filter((c) => c.isPK);
     const useCursor = pkCols.length === 1;
     const pkCol = useCursor ? pkCols[0].name : null;
-    const pkIdx = useCursor ? visibleColumns.findIndex((c) => c.isPK) : -1;
 
     let lastPk = null;
     let offset = 0;
