@@ -520,15 +520,33 @@ async function copyTable(
     if (visibleColumns.length === 0) return 0;
     const colList = visibleColumns.map((c) => c.name).join(', ');
 
-    // Paged read: LIMIT/OFFSET loop. Memory stays O(batchSize) regardless
-    // of source table size. The remote adapters' `execute` callbacks
-    // receive positional arrays in SELECT-column order. We use named
-    // `@limit` / `@offset` params so both PG (`_bind` → `$N`) and MySQL
-    // (`_normalizeArgs` → `@limit`) bind them correctly.
+    // ── 游标分页(keyset pagination)─────────────────────────────────
+    // 旧实现用 LIMIT/OFFSET,O(N²)。改用 WHERE pk > @lastPk ORDER BY pk
+    // LIMIT @limit,O(N)。复合 PK 或无 PK 退回 OFFSET 模式。
+    // 与 pushEngine.js 的 copyTable 对称。
+    const pkCols = visibleColumns.filter((c) => c.isPK);
+    const useCursor = pkCols.length === 1;
+    const pkCol = useCursor ? pkCols[0].name : null;
+
+    let lastPk = null;
     let offset = 0;
     let totalCopied = 0;
     while (true) {
         const batch = [];
+        let sql;
+        let params;
+        if (useCursor) {
+            if (lastPk === null) {
+                sql = `SELECT ${colList} FROM ${srcTable} ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize };
+            } else {
+                sql = `SELECT ${colList} FROM ${srcTable} WHERE ${pkCol} > @lastPk ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize, lastPk };
+            }
+        } else {
+            sql = `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`;
+            params = { limit: batchSize, offset };
+        }
         await srcAdapter.execute(
             (row) => {
                 const obj = {};
@@ -537,13 +555,18 @@ async function copyTable(
                 });
                 batch.push(obj);
             },
-            `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`,
-            { limit: batchSize, offset }
+            sql,
+            params
         );
         if (batch.length === 0) break;
         await dstAdapter.bulkInsert(dstTable, batch, 'ignore');
-        offset += batch.length;
         totalCopied += batch.length;
+        if (useCursor) {
+            const lastRow = batch[batch.length - 1];
+            lastPk = lastRow[pkCol];
+        } else {
+            offset += batch.length;
+        }
         if (batch.length < batchSize) break;
     }
 

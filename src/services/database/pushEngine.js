@@ -515,13 +515,37 @@ async function copyTable(
     if (visibleColumns.length === 0) return 0;
     const colList = visibleColumns.map((c) => c.name).join(', ');
 
-    // Paged read: LIMIT/OFFSET loop. Memory stays O(batchSize) regardless
-    // of source table size. `@limit` / `@offset` are named params handled
-    // by SQLiteAdapter._normalizeArgs (source is always SQLite here).
+    // ── 游标分页(keyset pagination)─────────────────────────────────
+    // 旧实现用 LIMIT/OFFSET,OFFSET 是"扫描并丢弃",第 N 页扫描
+    // N×batchSize 行,O(N²) 复杂度。50 万行表分 1000 页,末页扫描 50
+    // 万行。改用 WHERE pk > @lastPk ORDER BY pk LIMIT @limit,O(N) 复杂度。
+    //
+    // 前提:表有单列 PK(整数或文本),可用作稳定游标。复合 PK 或无 PK
+    // 表退回 OFFSET 模式(安全兜底)。
+    const pkCols = visibleColumns.filter((c) => c.isPK);
+    const useCursor = pkCols.length === 1;
+    const pkCol = useCursor ? pkCols[0].name : null;
+    const pkIdx = useCursor ? visibleColumns.findIndex((c) => c.isPK) : -1;
+
+    let lastPk = null;
     let offset = 0;
     let totalCopied = 0;
     while (true) {
         const batch = [];
+        let sql;
+        let params;
+        if (useCursor) {
+            if (lastPk === null) {
+                sql = `SELECT ${colList} FROM ${srcTable} ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize };
+            } else {
+                sql = `SELECT ${colList} FROM ${srcTable} WHERE ${pkCol} > @lastPk ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize, lastPk };
+            }
+        } else {
+            sql = `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`;
+            params = { limit: batchSize, offset };
+        }
         await srcAdapter.execute(
             (row) => {
                 // row is a positional array in SELECT-column order
@@ -532,13 +556,19 @@ async function copyTable(
                 });
                 batch.push(obj);
             },
-            `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`,
-            { limit: batchSize, offset }
+            sql,
+            params
         );
         if (batch.length === 0) break;
         await dstAdapter.bulkInsert(dstTable, batch, 'ignore');
-        offset += batch.length;
         totalCopied += batch.length;
+        if (useCursor) {
+            // 更新游标:取本批最后一行的 PK 值
+            const lastRow = batch[batch.length - 1];
+            lastPk = lastRow[pkCol];
+        } else {
+            offset += batch.length;
+        }
         // Last page: fewer than batchSize rows → stop after this batch.
         if (batch.length < batchSize) break;
     }
