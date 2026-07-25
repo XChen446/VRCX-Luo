@@ -130,6 +130,13 @@ namespace VRCX
                 // ADO.NET 池化:System.Data.SQLite 在连接字符串含 Pooling=True
                 // 时启用连接池。每次 new SQLiteConnection(connStr) + Open()
                 // 借池中连接,Dispose() 还池。与 Npgsql/MySqlConnector 对称。
+                //
+                // System.Data.SQLite 池没有 idle timeout 参数(不像 MySQL
+                // ConnectionIdleTimeout=300),连接一旦创建就常驻到进程退出。
+                // 这在桌面单用户场景下可接受:本地文件无网络开销,100 连接
+                // 上限实际用不到(< 5 活跃),每连接约 2MB page cache + 2-3
+                // 文件句柄,驻留开销远低于服务器场景。若未来改多用户/服务端
+                // 部署,应重新评估。
                 "Pooling=True",
                 "Max Pool Size=100"
             };

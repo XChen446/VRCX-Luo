@@ -96,7 +96,10 @@ namespace VRCX
                 @"[A-Za-z0-9_]");
 
             var connectionString =
-                $"Host={host};Port={port};Username={username};Password={password};Database={name}";
+                $"Host={host};Port={port};Username={username};Password={password};Database={name}"
+                + ";Maximum Pool Size=100"      // 与 MySQL MaximumPoolSize=100 对称
+                + ";Minimum Pool Size=0"        // 懒加载,不预创建
+                + ";Connection Idle Lifetime=300"; // 空闲 300s 自动回收(与 MySQL ConnectionIdleTimeout=300 对称)
 
             var builder = new NpgsqlDataSourceBuilder(connectionString);
             _dataSource = builder.Build();
