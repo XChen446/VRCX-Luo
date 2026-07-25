@@ -106,7 +106,13 @@ namespace VRCX
             var connectionString =
                 $"Host={host};Port={port};Username={username};Password={password};Database={name}"
                 + ";Maximum Pool Size=100"      // 与 MySQL MaximumPoolSize=100 对称
-                + ";Minimum Pool Size=0"        // 懒加载,不预创建
+                + ";Minimum Pool Size=1"        // 预热保活 1 条连接:池在空闲剪枝时不剪到
+                                               // 低于 1,确保挂机数小时后下一次查询不必
+                                               // 重建 TCP+认证(异地 PG 可达 200ms+)。
+                                               // 建连是惰性的:Build() 不建连,首次
+                                               // OpenConnectionAsync 才建到 min size,
+                                               // 故 PG 不可达时 Init() 不会失败,失败
+                                               // 推迟到首次 Open。与 MySQL 对称。
                 + ";Connection Idle Lifetime=300" // 空闲 300s 自动回收(与 MySQL ConnectionIdleTimeout=300 对称)
                 + ";Timeout=15"                 // 建连超时 15s(对称 MySQL ConnectionTimeout=15)
                 + ";CommandTimeout=30";         // SQL 执行超时 30s(对称 MySQL DefaultCommandTimeout=30)

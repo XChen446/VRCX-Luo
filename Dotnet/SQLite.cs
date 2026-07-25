@@ -146,6 +146,14 @@ namespace VRCX
                 // 文件句柄,驻留开销远低于服务器场景。若未来改多用户/服务端
                 // 部署,应重新评估。
                 //
+                // ── Min Pool Size 对称性:PG/MySQL 都显式设了 MinimumPoolSize=1
+                // 保活,确保挂机数小时后下次查询不必重建连。System.Data.SQLite
+                // 的池不支持 Min Pool Size 参数(只有 Max Pool Size),但 SQLite
+                // 池没有 idle timeout,首次 Open 后连接天然常驻到 ClearAllPools,
+                // 效果等价于 MinPoolSize=1 保活(甚至更强,不会被 idle 回收)。
+                // TODO(future):若未来迁移到 Microsoft.Data.Sqlite(支持更完整
+                // 的池参数),可显式补上 Min Pool Size=1 对称。
+                //
                 // ── 并发写安全:池化后多个连接可能同时写同一 .db 文件,
                 // SQLite 只支持一个并发写事务,竞争时其他连接阻塞等锁。
                 // 通过 DefaultOptions 的三个 PRAGMA 缓解(拼入连接字符串,

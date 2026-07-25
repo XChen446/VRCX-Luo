@@ -116,9 +116,15 @@ namespace VRCX
                 ConnectionTimeout = 15,
                 DefaultCommandTimeout = 30,
                 // MySqlConnector 默认启用池化;显式设置 Pooling=True 让意图清晰。
-                // 池大小默认 100,空闲连接保留 300 秒(与 PG Npgsql 池对齐)。
+                // 池上限 100,下限 1(预热保活),空闲连接保留 300 秒(与 PG Npgsql
+                // 池对齐)。Min=1 保证挂机数小时后下一次查询不必重建 TCP+认证
+                // (异地 MySQL 可达 200ms+);建连是惰性的,CreatePool() 不建连,
+                // 首次 Open 才建到 min size,故 MySQL 不可达时 Init() 不会失败,
+                // 失败推迟到首次 Open。ConnectionIdleTimeout 只回收超出 min 的
+                // idle 连接,min 条常驻不受影响。
                 Pooling = true,
                 MaximumPoolSize = 100,
+                MinimumPoolSize = 1,
                 ConnectionIdleTimeout = 300
             };
 
