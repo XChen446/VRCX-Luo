@@ -367,6 +367,133 @@ describe('pushEngine — 空源', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// 4b. OFFSET 兜底路径(复合 PK / 无 PK 表)
+// ─────────────────────────────────────────────────────────────────────────
+// copyTable 的游标分页(keyset pagination)仅对单列 PK 生效;复合 PK 或
+// 无 PK 表退回 LIMIT/OFFSET 模式(O(N²) 但安全兜底)。以下测试覆盖
+// OFFSET 路径的正确性,确保:
+//   1. 复合 PK 表的行数校验通过(totalCopied === dstCount)。
+//   2. 无 PK 表同样正确复制。
+//   3. 复合 PK 表行数 > batchSize 时多页 OFFSET 累加正确。
+//   4. 复合 PK 经 mirror 路径 buildMirroredColumns 重建后,目标表 PK
+//      结构与源一致(复合 PK 被表级 PRIMARY KEY(...) 子句正确还原)。
+// 参见 PR #13 review #8。
+
+/**
+ * 在源侧建一张复合 PK 表并塞 n 行。用 raw SQL 绕过 createTable 的
+ * inline-constraints 限制(createTable 只支持单列 inline PRIMARY KEY)。
+ * @param {string} name - 表名(非白名单,走 mirror 桶)
+ * @param {number} n - 行数
+ */
+async function seedCompositePkTable(name, n = 3) {
+    await srcAdapter.executeNonQuery(
+        `CREATE TABLE IF NOT EXISTS ${name} (col_a TEXT NOT NULL, col_b TEXT NOT NULL, val TEXT, PRIMARY KEY (col_a, col_b))`
+    );
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert(name, {
+            col_a: `a${i}`,
+            col_b: `b${i}`,
+            val: `v${i}`
+        });
+    }
+}
+
+/**
+ * 在源侧建一张无 PK 表并塞 n 行。
+ * @param {string} name - 表名(非白名单,走 mirror 桶)
+ * @param {number} n - 行数
+ */
+async function seedNoPkTable(name, n = 3) {
+    await srcAdapter.createTable(name, [
+        { name: 'val', type: 'TEXT' }
+    ]);
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert(name, { val: `v${i}` });
+    }
+}
+
+describe('pushEngine — OFFSET 兜底路径(复合 PK / 无 PK)', () => {
+    test('复合 PK 表走 OFFSET 路径,行数校验通过', async () => {
+        await seedCompositePkTable('legacy_composite', 3);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(result.rowsCopied).toBe(3);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_composite')).toBe(3);
+    });
+
+    test('复合 PK 表数据内容正确(每行 col_a/col_b/val 都对)', async () => {
+        await seedCompositePkTable('legacy_composite', 2);
+
+        await pushFromSqlite('sqlite:///fake/src.db');
+
+        const rows = await dstAdapter.select('legacy_composite', [
+            'col_a',
+            'col_b',
+            'val'
+        ]);
+        expect(rows).toHaveLength(2);
+        // 排序后断言(OFFSET 路径不保证顺序,select 也无 ORDER BY)
+        const sorted = rows.sort((r1, r2) => r1[0].localeCompare(r2[0]));
+        expect(sorted[0]).toEqual(['a1', 'b1', 'v1']);
+        expect(sorted[1]).toEqual(['a2', 'b2', 'v2']);
+    });
+
+    test('复合 PK 表行数 > batchSize,多页 OFFSET 累加正确', async () => {
+        // 7 行,batchSize=3 → 3 页(3 + 3 + 1)
+        await seedCompositePkTable('legacy_composite', 7);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db', {
+            batchSize: 3
+        });
+
+        expect(result.rowsCopied).toBe(7);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_composite')).toBe(7);
+    });
+
+    test('复合 PK 经 mirror 重建后,目标表 PK 结构与源一致', async () => {
+        await seedCompositePkTable('legacy_composite', 1);
+
+        await pushFromSqlite('sqlite:///fake/src.db');
+
+        // 目标表的 PRAGMA table_info 应显示 col_a 和 col_b 都是 pk。
+        // 直接用 dstDb(原始 DatabaseSync)查 PRAGMA(select 无法查 PRAGMA)。
+        const pragma = dstDb.prepare('PRAGMA table_info(legacy_composite)').all();
+        const pkCols = pragma
+            .filter((c) => c.pk > 0)
+            .map((c) => c.name)
+            .sort();
+        expect(pkCols).toEqual(['col_a', 'col_b']);
+    });
+
+    test('无 PK 表走 OFFSET 路径,行数校验通过', async () => {
+        await seedNoPkTable('legacy_nopk', 3);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(result.rowsCopied).toBe(3);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_nopk')).toBe(3);
+    });
+
+    test('无 PK 表行数 > batchSize,多页 OFFSET 累加正确', async () => {
+        await seedNoPkTable('legacy_nopk', 8);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db', {
+            batchSize: 3
+        });
+
+        expect(result.rowsCopied).toBe(8);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_nopk')).toBe(8);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // 5. 行数校验
 // ─────────────────────────────────────────────────────────────────────────
 

@@ -319,6 +319,124 @@ describe('pullEngine — mirror 表', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// 3b. OFFSET 兜底路径(复合 PK / 无 PK 表)
+// ─────────────────────────────────────────────────────────────────────────
+// copyTable 的游标分页仅对单列 PK 生效;复合 PK 或无 PK 表退回
+// LIMIT/OFFSET 模式。以下测试覆盖 OFFSET 路径的正确性,与 pushEngine
+// 对称。参见 PR #13 review #8。
+
+/**
+ * 在源侧建一张复合 PK 表并塞 n 行。用 raw SQL 绕过 createTable 的
+ * inline-constraints 限制。
+ * @param {string} name - 表名(非白名单,走 mirror 桶)
+ * @param {number} n - 行数
+ */
+async function seedCompositePkTable(name, n = 3) {
+    await srcAdapter.executeNonQuery(
+        `CREATE TABLE IF NOT EXISTS ${name} (col_a TEXT NOT NULL, col_b TEXT NOT NULL, val TEXT, PRIMARY KEY (col_a, col_b))`
+    );
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert(name, {
+            col_a: `a${i}`,
+            col_b: `b${i}`,
+            val: `v${i}`
+        });
+    }
+}
+
+/**
+ * 在源侧建一张无 PK 表并塞 n 行。
+ * @param {string} name - 表名(非白名单,走 mirror 桶)
+ * @param {number} n - 行数
+ */
+async function seedNoPkTable(name, n = 3) {
+    await srcAdapter.createTable(name, [{ name: 'val', type: 'TEXT' }]);
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert(name, { val: `v${i}` });
+    }
+}
+
+describe('pullEngine — OFFSET 兜底路径(复合 PK / 无 PK)', () => {
+    test('复合 PK 表走 OFFSET 路径,行数校验通过', async () => {
+        await seedCompositePkTable('legacy_composite', 3);
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(result.rowsCopied).toBe(3);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_composite')).toBe(3);
+    });
+
+    test('复合 PK 表数据内容正确(每行 col_a/col_b/val 都对)', async () => {
+        await seedCompositePkTable('legacy_composite', 2);
+
+        await pullToSqlite('sqlite:///fake/dst.db');
+
+        const rows = await dstAdapter.select('legacy_composite', [
+            'col_a',
+            'col_b',
+            'val'
+        ]);
+        expect(rows).toHaveLength(2);
+        const sorted = rows.sort((r1, r2) => r1[0].localeCompare(r2[0]));
+        expect(sorted[0]).toEqual(['a1', 'b1', 'v1']);
+        expect(sorted[1]).toEqual(['a2', 'b2', 'v2']);
+    });
+
+    test('复合 PK 表行数 > batchSize,多页 OFFSET 累加正确', async () => {
+        await seedCompositePkTable('legacy_composite', 7);
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db', {
+            batchSize: 3
+        });
+
+        expect(result.rowsCopied).toBe(7);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_composite')).toBe(7);
+    });
+
+    test('复合 PK 经 mirror 重建后,目标表 PK 结构与源一致', async () => {
+        await seedCompositePkTable('legacy_composite', 1);
+
+        await pullToSqlite('sqlite:///fake/dst.db');
+
+        // 直接用 dstDb(原始 DatabaseSync)查 PRAGMA。
+        const pragma = dstDb
+            .prepare('PRAGMA table_info(legacy_composite)')
+            .all();
+        const pkCols = pragma
+            .filter((c) => c.pk > 0)
+            .map((c) => c.name)
+            .sort();
+        expect(pkCols).toEqual(['col_a', 'col_b']);
+    });
+
+    test('无 PK 表走 OFFSET 路径,行数校验通过', async () => {
+        await seedNoPkTable('legacy_nopk', 3);
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(result.rowsCopied).toBe(3);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_nopk')).toBe(3);
+    });
+
+    test('无 PK 表行数 > batchSize,多页 OFFSET 累加正确', async () => {
+        await seedNoPkTable('legacy_nopk', 8);
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db', {
+            batchSize: 3
+        });
+
+        expect(result.rowsCopied).toBe(8);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_nopk')).toBe(8);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // 4. guard + 行数校验
 // ─────────────────────────────────────────────────────────────────────────
 
