@@ -1,0 +1,429 @@
+/**
+ * pushEngine.js 单元测试 —— 分组事务包裹改造后的正确性验证。
+ *
+ * 测试策略:用 MemorySQLiteAdapter(node:sqlite 内存 DB)替代 srcAdapter
+ * 和 dstAdapter。由于 push/pull 依赖 C# 全局实例(SQLite/PostgreSQL/MySQL
+ * Proxy stub 在 vitest.setup.js 里返回 noopAsync),无法直接调用真实 C# 层,
+ * 因此用 vi.mock 替换 `./adapter/index.js` 的 `adapter`(目标,写入)与
+ * `createAdapter`(构建源 SQLite,读取)。
+ *
+ * 目标 adapter 的 engineType 必须 getter 返回非 'sqlite'/'unknown'(否则
+ * push 的 guard 会拒绝),通过 Object.defineProperty 覆盖为 'mysql'。事务
+ * 仍走 MemorySQLiteAdapter 的 BEGIN/COMMIT/ROLLBACK SQL,不依赖 C# 层,
+ * 从而能验证 JS 层的分组事务包裹逻辑。
+ *
+ * 关键:源/目标的表结构必须一致。用 srcAdapter.initGlobalSchema() /
+ * initUserSchema(prefix) 在源侧建出与目标侧一致的 schema(push 会调
+ * adapter.initGlobalSchema/initUserSchema 在目标侧建同样的表),然后往源
+ * 表里塞真实列名的数据。
+ */
+
+import { DatabaseSync } from 'node:sqlite';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+import { MemorySQLiteAdapter } from './migrations/__tests__/memoryAdapter.js';
+
+// vi.hoisted 在 vi.mock 之前求值,holder 在 beforeEach 里赋值。
+const { holders } = vi.hoisted(() => ({ holders: { dst: null, src: null } }));
+
+vi.mock('./adapter/index.js', () => ({
+    // 目标(写入)是 engineType 覆盖为 'mysql' 的 MemorySQLiteAdapter。
+    get adapter() {
+        return holders.dst;
+    },
+    // 源(读取)是普通 MemorySQLiteAdapter。
+    createAdapter: async () => holders.src
+}));
+
+const { pushFromSqlite } = await import('./pushEngine.js');
+
+let srcDb;
+let dstDb;
+let srcAdapter;
+let dstAdapter;
+
+beforeEach(() => {
+    srcDb = new DatabaseSync(':memory:');
+    dstDb = new DatabaseSync(':memory:');
+    srcAdapter = new MemorySQLiteAdapter(srcDb);
+    dstAdapter = new MemorySQLiteAdapter(dstDb);
+    // 覆盖 engineType 让 push 的 guard 通过(必须非 sqlite/unknown)。
+    Object.defineProperty(dstAdapter, 'engineType', {
+        get: () => 'mysql',
+        configurable: true
+    });
+    holders.src = srcAdapter;
+    holders.dst = dstAdapter;
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
+    try {
+        srcDb?.close();
+    } catch {
+        /* ignore */
+    }
+    try {
+        dstDb?.close();
+    } catch {
+        /* ignore */
+    }
+    srcDb = undefined;
+    dstDb = undefined;
+    srcAdapter = undefined;
+    dstAdapter = undefined;
+    holders.src = null;
+    holders.dst = null;
+});
+
+// ── helpers ──────────────────────────────────────────────────────────────
+
+/** 用真实 schema 在源侧建 global 表 + notes 表,并塞 N 行。 */
+async function seedSrc() {
+    // 源侧建出真实 global schema(push 会在目标侧也调 initGlobalSchema)。
+    await srcAdapter.initGlobalSchema();
+    // 源侧建出一个 prefix 的真实 user schema。
+    await srcAdapter.initUserSchema('abc');
+
+    // 往 cache_avatar(global)塞 N 行(列:id, added_at, author_id, ...)。
+    for (let i = 1; i <= 2; i++) {
+        await srcAdapter.insert('cache_avatar', {
+            id: `avt_${i}`,
+            added_at: '2024-01-01',
+            author_id: `a${i}`,
+            author_name: `author${i}`,
+            created_at: '2024-01-01',
+            description: 'd',
+            image_url: 'u',
+            name: `Avatar${i}`,
+            release_status: 'public',
+            thumbnail_image_url: 'tu',
+            updated_at: '2024-01-01',
+            version: 1
+        });
+    }
+    // 往 abc_notes(user)塞 N 行(列:user_id, display_name, note, created_at)。
+    await srcAdapter.insert('abc_notes', {
+        user_id: 'u1',
+        display_name: 'Alice',
+        note: 'hello',
+        created_at: '2024-01-01'
+    });
+    await srcAdapter.insert('abc_notes', {
+        user_id: 'u2',
+        display_name: 'Bob',
+        note: 'world',
+        created_at: '2024-01-01'
+    });
+}
+
+/** 往源 cache_avatar 塞 n 行(独立 helper,用于行数校验测试)。 */
+async function seedGlobalAvatar(n) {
+    await srcAdapter.initGlobalSchema();
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert('cache_avatar', {
+            id: `avt_${i}`,
+            added_at: '2024-01-01',
+            author_id: 'a',
+            author_name: 'a',
+            created_at: '2024-01-01',
+            description: 'd',
+            image_url: 'u',
+            name: `Avatar${i}`,
+            release_status: 'public',
+            thumbnail_image_url: 'tu',
+            updated_at: '2024-01-01',
+            version: 1
+        });
+    }
+}
+
+/** 在源侧建一张非白名单表(mirror)并塞 n 行。 */
+async function seedMirrorTable(name, n = 2) {
+    await srcAdapter.createTable(name, [
+        { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+        { name: 'val', type: 'TEXT' }
+    ]);
+    for (let i = 1; i <= n; i++) {
+        await srcAdapter.insert(name, { id: i, val: `v${i}` });
+    }
+}
+
+/** 往源塞 global 表 + user 表,各 n 行(用于原子性测试)。 */
+async function seedGlobalAndUser(globalN = 2, userN = 2) {
+    await srcAdapter.initGlobalSchema();
+    await srcAdapter.initUserSchema('abc');
+    for (let i = 1; i <= globalN; i++) {
+        await srcAdapter.insert('cache_avatar', {
+            id: `avt_${i}`,
+            added_at: '2024-01-01',
+            author_id: 'a',
+            author_name: 'a',
+            created_at: '2024-01-01',
+            description: 'd',
+            image_url: 'u',
+            name: `Avatar${i}`,
+            release_status: 'public',
+            thumbnail_image_url: 'tu',
+            updated_at: '2024-01-01',
+            version: 1
+        });
+    }
+    // 再塞一张 global 表(gamelog_location)用于多表回滚测试。
+    await srcAdapter.insert('gamelog_location', {
+        id: 1,
+        created_at: '2024-01-01',
+        location: 'wrld_x:1',
+        world_id: 'wrld_x',
+        world_name: 'World',
+        time: 100,
+        group_name: ''
+    });
+    for (let i = 1; i <= userN; i++) {
+        await srcAdapter.insert('abc_notes', {
+            user_id: `u${i}`,
+            display_name: `Name${i}`,
+            note: `n${i}`,
+            created_at: '2024-01-01'
+        });
+    }
+}
+
+async function dstCount(table) {
+    try {
+        return await dstAdapter.countWhere(table);
+    } catch {
+        // 表不存在(createTable 在事务回滚时被 DDL 回滚)→ 视作 0 行。
+        return 0;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 1. 基本 push
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — 基本 push', () => {
+    test('src 有 1 张 global 表 + 1 个 prefix 的 1 张 user 表,push 后 dst 有相同数据', async () => {
+        await seedSrc();
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        // globalTables 循环遍历全部 16 张 GLOBAL_TABLES 名(不存在的表
+        // copyTable 返回 0 但仍 +1),所以这里是 16。
+        expect(result.globalTables).toBe(16);
+        // 只发现 abc_* 下的 notes 一个 user 表 → 1(但 initUserSchema 建 22 张,
+        // abc_notes 外的 21 张表 copyTable 也会 +1,所以 userTables=22)。
+        expect(result.userTables).toBe(22);
+        expect(result.unknownTables).toBe(0);
+        // rowsCopied = cache_avatar 2 行 + abc_notes 2 行 = 4。
+        expect(result.rowsCopied).toBe(4);
+        expect(result.errors).toEqual([]);
+
+        expect(await dstCount('cache_avatar')).toBe(2);
+        expect(await dstCount('abc_notes')).toBe(2);
+    });
+
+    test('源里 global 表数据被正确复制到目标(列内容)', async () => {
+        await seedGlobalAvatar(2);
+        await pushFromSqlite('sqlite:///fake/src.db');
+        const rows = await dstAdapter.select('cache_avatar', ['id', 'name']);
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toEqual(['avt_1', 'Avatar1']);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 2. 分组事务原子性
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — 分组事务原子性', () => {
+    test('global 组中途抛错 → 该组全回滚,其他组数据保留', async () => {
+        await seedGlobalAndUser(2, 2); // cache_avatar 2 + gamelog_location 1 + abc_notes 2
+
+        // 让 gamelog_location 的 bulkInsert 抛错 → global 组事务回滚。
+        const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
+        vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(
+            async (table, rows, conflict) => {
+                if (table === 'gamelog_location') {
+                    throw new Error('inject-fail');
+                }
+                return origBulkInsert(table, rows, conflict);
+            }
+        );
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        // global 组回滚 → globalTables 在 gamelog_location 中断,errors 收集。
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('global-group');
+        // user 组独立事务,成功。
+        expect(result.userTables).toBe(22);
+
+        // 关键:global 组回滚 → cache_avatar(先成功复制)也被回滚。
+        expect(await dstCount('cache_avatar')).toBe(0);
+        expect(await dstCount('gamelog_location')).toBe(0);
+        // 其他组(user)数据保留。
+        expect(await dstCount('abc_notes')).toBe(2);
+    });
+
+    test('user 组中途抛错 → 该 prefix 组回滚,global 组保留', async () => {
+        await seedGlobalAndUser(2, 2);
+
+        const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
+        vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(
+            async (table, rows, conflict) => {
+                if (table === 'abc_notes') {
+                    throw new Error('inject-user-fail');
+                }
+                return origBulkInsert(table, rows, conflict);
+            }
+        );
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        // global 组成功保留。
+        expect(await dstCount('cache_avatar')).toBe(2);
+        expect(result.globalTables).toBe(16);
+        // user 组失败回滚:abc_notes 目标为空,errors 收集 user-group。
+        // (userTables 计数器只反映事务回滚前已成功的表数,非实际写入数,
+        //   故不断言具体值。)
+        expect(await dstCount('abc_notes')).toBe(0);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('user-group:abc');
+    });
+
+    test('mirror 组中途抛错 → mirror 组回滚,global/user 组保留', async () => {
+        await seedGlobalAndUser(1, 1);
+        await seedMirrorTable('legacy_table', 2);
+
+        const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
+        vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(
+            async (table, rows, conflict) => {
+                if (table === 'legacy_table') {
+                    throw new Error('inject-mirror-fail');
+                }
+                return origBulkInsert(table, rows, conflict);
+            }
+        );
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(await dstCount('cache_avatar')).toBe(1);
+        expect(await dstCount('abc_notes')).toBe(1);
+        expect(await dstCount('legacy_table')).toBe(0);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('mirror-group');
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3. mirror 表
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — mirror 表(数据完整性保底)', () => {
+    test('src 有 1 张非白名单表,push 后 dst 有该表(mirror 组)', async () => {
+        await seedMirrorTable('legacy_extra', 3);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(result.rowsCopied).toBe(3);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('legacy_extra')).toBe(3);
+    });
+
+    test('configs 表走 mirror 组,保留原表名复制', async () => {
+        await srcAdapter.createTable('configs', [
+            { name: 'key', type: 'TEXT', constraints: 'PRIMARY KEY' },
+            { name: 'value', type: 'TEXT' }
+        ]);
+        await srcAdapter.insert('configs', {
+            key: 'config:schema_version',
+            value: '99'
+        });
+        await srcAdapter.insert('configs', { key: 'config:other', value: 'x' });
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.unknownTables).toBe(1);
+        expect(await dstCount('configs')).toBe(2);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 4. 空源
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — 空源', () => {
+    test('src 无表,push 返回 rowsCopied=0,errors=[]', async () => {
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.globalTables).toBe(16);
+        expect(result.userTables).toBe(0);
+        expect(result.unknownTables).toBe(0);
+        expect(result.rowsCopied).toBe(0);
+        expect(result.errors).toEqual([]);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5. 行数校验
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — 行数校验', () => {
+    test('copyTable 末尾的 countWhere 验证 src/dst 行数一致(分页路径)', async () => {
+        // 大于 batchSize 的行数,验证分页 + 行数校验都通过。
+        await srcAdapter.initGlobalSchema();
+        for (let i = 1; i <= 12; i++) {
+            await srcAdapter.insert('cache_avatar', {
+                id: `avt_${i}`,
+                added_at: '2024-01-01',
+                author_id: 'a',
+                author_name: 'a',
+                created_at: '2024-01-01',
+                description: 'd',
+                image_url: 'u',
+                name: `Avatar${i}`,
+                release_status: 'public',
+                thumbnail_image_url: 'tu',
+                updated_at: '2024-01-01',
+                version: 1
+            });
+        }
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db', {
+            batchSize: 5
+        });
+
+        expect(result.rowsCopied).toBe(12);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('cache_avatar')).toBe(12);
+    });
+
+    test('行数校验在事务内正确(读得到未 commit 的写)', async () => {
+        // copyTable 在 withTransaction 内调用 dstAdapter.countWhere,必须读到
+        // 事务内未 commit 的 bulkInsert 写入,否则会抛 row count mismatch。
+        await seedGlobalAvatar(7);
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('cache_avatar')).toBe(7);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. guard
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('pushEngine — engine guard', () => {
+    test('目标 engineType 为 sqlite 时抛错', async () => {
+        Object.defineProperty(dstAdapter, 'engineType', {
+            get: () => 'sqlite',
+            configurable: true
+        });
+        await expect(pushFromSqlite('sqlite:///fake/src.db')).rejects.toThrow(
+            /destination adapter is the default SQLite engine/
+        );
+    });
+});
