@@ -441,7 +441,7 @@ namespace VRCX
         /// executes the given SQL, and returns the result set serialized as a JSON array.
         /// The connection is closed (and disposed) after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely independent,
+        /// This does NOT touch the pooled connection — it is completely independent,
         /// intended for querying an EXTERNAL database (e.g. during migration).
         /// The caller controls read/write behaviour via the <paramref name="connectionString"/>.
         /// </summary>
@@ -483,7 +483,7 @@ namespace VRCX
         /// executes a non-query SQL (INSERT/UPDATE/DELETE/DDL), and returns the number
         /// of rows affected. The connection is closed after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely independent.
+        /// This does NOT touch the pooled connection — it is completely independent.
         /// </summary>
         /// <param name="connectionString">Full SQLite connection string.</param>
         /// <param name="sql">SQL to execute.</param>

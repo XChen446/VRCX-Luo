@@ -267,7 +267,7 @@ namespace VRCX
         /// a query, and returns the result set as JSON. The connection is
         /// closed after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely
+        /// This does NOT touch the pooled connection — it is completely
         /// independent, intended for querying an EXTERNAL database (e.g.
         /// during migration).
         /// </summary>
@@ -299,7 +299,7 @@ namespace VRCX
         /// a non-query, and returns the number of rows affected. The connection
         /// is closed after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely
+        /// This does NOT touch the pooled connection — it is completely
         /// independent.
         /// </summary>
         public int ExecuteNonQuery(string connectionString, string sql, IDictionary<string, object>? args = null)
