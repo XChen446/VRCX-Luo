@@ -573,6 +573,14 @@ async function copyTable(
     // Row-count verification: totalCopied 是源侧实际读到的行数,等价于
     // srcCount 但无需全表 COUNT。只校验 dstCount == totalCopied。
     // 与 pushEngine.js 对称。
+    // TODO(review #7):当 push/pull 支持增量/合并场景时,目标可能已有
+    // 数据,bulkInsert('ignore') 遇 PK 冲突跳过行,导致 dstCount <
+    // totalCopied。此时本校验无法区分"源读丢失"(真 bug)与"目标冲突
+    // 跳过"(正常)。需要让 bulkInsert 返回实际写入行数(affected rows),
+    // 在 copyTable 中累加 actualInserted,用 actualInserted 替代
+    // totalCopied 与 dstCount 比较。这需要 C# 三引擎 + JS 三 adapter +
+    // 基类协同改造(目前 bulkInsert 返回 Promise<void>),应在增量/合并
+    // 功能落地时一并实施。
     const dstCount = await dstAdapter.countWhere(dstTable);
     if (dstCount !== totalCopied) {
         throw new Error(
