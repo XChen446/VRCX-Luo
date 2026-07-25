@@ -45,7 +45,7 @@ namespace VRCX
         private readonly object _txLock = new();
         private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
         private long _nextConnId;
-        private const int TX_IDLE_MS = 30000;
+        private const int TX_IDLE_MS = 60000;
 
         private sealed class TxHolder
         {

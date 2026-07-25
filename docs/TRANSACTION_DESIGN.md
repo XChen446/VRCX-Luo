@@ -26,11 +26,10 @@ SQLite.cs / MySQL.cs 的单连接 + lock 模式虽然事务能跑,但有隐患:�
 
 ### Sliding 超时(防泄漏安全网)
 
-- `TX_IDLE_MS = 30000`(30 秒)
+- `TX_IDLE_MS = 60000`(60 秒)
 - Timer 在 BeginTransaction 时启动
-- 每次 Execute/ExecuteNonQuery 调用结束 → `Timer.Change(TX_IDLE_MS, -1)` 重置(滑动续命)
-- Timer 触发 → 自动 ROLLBACK + 还池
-- 真卡死(JS await 悬挂、网络 hang)30 秒后回收;长事务持续有 SQL 续命,不误杀
+- 每次 Execute/ExecuteNonQuery 调用前暂停 Timer(`Change(Timeout.Infinite, -1)`),执行完 finally 恢复(`Change(TX_IDLE_MS, -1)`)——防止慢查询(异地高延迟)执行中误触发超时
+- 真卡死(JS await 悬挂、UI 阻塞事件循环)60 秒后回收;长事务持续有 SQL 续命,不误杀
 
 ### JS 层(栈式事务上下文)
 
@@ -128,4 +127,4 @@ Timer 回收后 rollback no-op)目前仅由 `transaction.test.js` 用
 - **性能**:fsync 次数从"每批 1 次"降到"每组 1 次"(5-10× 提速)
 - **错误隔离**:per-group try/catch,组内失败回滚该组,其他组保留
 - **非事务隔离**:事务期间的非事务调用走其他连接,不混入事务(SQLite/MySQL 之前有此隐患)
-- **防泄漏**:sliding 30s 超时自动回滚,JS 忘 commit 不泄漏连接
+- **防泄漏**:sliding 60s 超时自动回滚,JS 忘 commit 不泄漏连接
