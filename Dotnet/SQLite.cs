@@ -32,6 +32,14 @@ namespace VRCX
         {
             public SQLiteConnection Conn = null!;
             public Timer Timer = null!;
+            /// <summary>
+            /// 正在执行 SQL 的计数。OnTxTimeout 检测到 InFlight &gt; 0 时
+            /// 不立即回滚,设 TimedOut 标记让 ExecutePinned 的 finally
+            /// 自行清理,避免 SQL 执行期间 Dispose 连接。
+            /// </summary>
+            public int InFlight;
+            /// <summary>OnTxTimeout 已来过,等 SQL 执行完由 finally 清理。</summary>
+            public bool TimedOut;
         }
 
         private static readonly Dictionary<string, string> DefaultOptions = new()
@@ -555,13 +563,30 @@ namespace VRCX
             return command;
         }
 
+        /// <summary>
+        /// 回滚并释放一条已超时的事务连接。调用方必须持有 _txLock 且
+        /// 已从 _pinned 中 TryRemove 出 holder。Timer 由调用方 Dispose。
+        /// </summary>
+        private static void CleanupTx(TxHolder h)
+        {
+            try
+            {
+                using var cmd = h.Conn.CreateCommand();
+                cmd.CommandText = "ROLLBACK";
+                cmd.ExecuteNonQuery();
+            } catch { /* 可能已超时回滚 */ }
+            try { h.Conn.Dispose(); } catch { }
+        }
+
         private object[][] ExecutePinned(long connId, string sql, IDictionary<string, object>? args)
         {
             if (!_pinned.TryGetValue(connId, out var h))
                 throw new InvalidOperationException(
                     $"connId={connId} 已超时回滚或不存在,请重试事务");
-            // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚,
-            // 执行完恢复 Timer 重新计时 idle 间隔。
+            // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚。
+            // InFlight 标记让 OnTxTimeout 知道 SQL 正在跑,不立即
+            // Dispose 连接,而是设 TimedOut 让本方法的 finally 自行清理。
+            Interlocked.Increment(ref h.InFlight);
             lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
             try
             {
@@ -581,7 +606,20 @@ namespace VRCX
             }
             finally
             {
-                lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+                Interlocked.Decrement(ref h.InFlight);
+                lock (_txLock)
+                {
+                    if (h.TimedOut)
+                    {
+                        _pinned.TryRemove(connId, out _);
+                        h.Timer.Dispose();
+                        CleanupTx(h);
+                    }
+                    else
+                    {
+                        h.Timer.Change(TX_IDLE_MS, -1);
+                    }
+                }
             }
         }
 
@@ -590,6 +628,7 @@ namespace VRCX
             if (!_pinned.TryGetValue(connId, out var h))
                 throw new InvalidOperationException(
                     $"connId={connId} 已超时回滚或不存在,请重试事务");
+            Interlocked.Increment(ref h.InFlight);
             lock (_txLock) { h.Timer.Change(Timeout.Infinite, -1); }
             try
             {
@@ -598,13 +637,31 @@ namespace VRCX
             }
             finally
             {
-                lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+                Interlocked.Decrement(ref h.InFlight);
+                lock (_txLock)
+                {
+                    if (h.TimedOut)
+                    {
+                        _pinned.TryRemove(connId, out _);
+                        h.Timer.Dispose();
+                        CleanupTx(h);
+                    }
+                    else
+                    {
+                        h.Timer.Change(TX_IDLE_MS, -1);
+                    }
+                }
             }
         }
 
         /// <summary>
         /// Borrow a pooled connection, BEGIN a transaction on it, and return
-        /// a connId for subsequent Execute/ExecuteNonQuery calls.
+        /// a connId for subsequent Execute/ExecuteNonQuery calls. A sliding
+        /// idle timer auto-rolls-back after TX_IDLE_MS of inactivity.
+        /// JS 侧应在事务内长时间非 DB await 前调 keepAlive() 提前续命,
+        /// 而非"卡着 60s 的点回来打卡"——临近超时才发 SQL 会进入
+        /// Timer 回调与 SQL 执行的竞态窗口(虽有 InFlight 防御不崩,
+        /// 但事务仍会被判定超时回滚)。
         /// </summary>
         public long BeginTransaction()
         {
@@ -657,17 +714,7 @@ namespace VRCX
             {
                 if (!_pinned.TryRemove(connId, out var h)) return;
                 h.Timer.Dispose();
-                try
-                {
-                    using var cmd = h.Conn.CreateCommand();
-                    cmd.CommandText = "ROLLBACK";
-                    cmd.ExecuteNonQuery();
-                }
-                catch { /* 可能已超时回滚,忽略 */ }
-                finally
-                {
-                    h.Conn.Dispose();
-                }
+                CleanupTx(h);
             }
         }
 
@@ -697,17 +744,20 @@ namespace VRCX
         {
             lock (_txLock)
             {
-                if (!_pinned.TryRemove(connId, out var h)) return;
+                if (!_pinned.TryGetValue(connId, out var h)) return;
                 Console.Error.WriteLine(
                     $"[SQLite] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
-                h.Timer.Dispose();
-                try
+                if (h.InFlight > 0)
                 {
-                    using var cmd = h.Conn.CreateCommand();
-                    cmd.CommandText = "ROLLBACK";
-                    cmd.ExecuteNonQuery();
-                } catch { }
-                try { h.Conn.Dispose(); } catch { }
+                    // SQL 正在执行(ExecutePinned 的 ExecuteReader 未返回),
+                    // 不能现在 Dispose 连接,否则 ObjectDisposedException。
+                    // 设标记,让 ExecutePinned 的 finally 检测到后自行清理。
+                    h.TimedOut = true;
+                    return;
+                }
+                _pinned.TryRemove(connId, out _);
+                h.Timer.Dispose();
+                CleanupTx(h);
             }
         }
     }

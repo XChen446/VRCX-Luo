@@ -32,6 +32,29 @@ SQLite.cs / MySQL.cs 的单连接 + lock 模式虽然事务能跑,但有隐患:�
 - 每次 Execute/ExecuteNonQuery 调用前暂停 Timer(`Change(Timeout.Infinite, -1)`),执行完 finally 恢复(`Change(TX_IDLE_MS, -1)`)——防止慢查询(异地高延迟)执行中误触发超时
 - 真卡死(JS await 悬挂、UI 阻塞事件循环)60 秒后回收;长事务持续有 SQL 续命,不误杀
 
+#### Timer 排队竞态防御(InFlight + TimedOut)
+
+`Timer.Change(Timeout.Infinite, -1)` 不会取消已排队、即将执行的
+回调。如果 Timer 回调恰好在 `ExecutePinned` 暂停 Timer 的瞬间已被
+线程池排队,回调仍可能在 SQL 执行期间获取 `_txLock` 并 Dispose
+连接,导致 `ObjectDisposedException`。
+
+防御机制(三引擎对称):
+- `TxHolder` 新增 `InFlight`(int,引用计数)+ `TimedOut`(bool)字段
+- `ExecutePinned`/`ExecuteNonQueryPinned` 执行 SQL 前
+  `Interlocked.Increment(ref h.InFlight)`,finally 中
+  `Interlocked.Decrement`
+- `OnTxTimeout` 检测 `InFlight > 0` 时不立即回滚,设 `TimedOut = true`
+  后返回,让 `ExecutePinned` 的 finally 检测到 `TimedOut` 后自行
+  `TryRemove + Timer.Dispose + CleanupTx`(回滚 + 还池)
+- 触发条件极苛刻(事务 idle 接近 60s + Timer 已排队 + 恰好此时
+  发 SQL + SQL 执行跨过回调瞬间),但后果不可诊断,故加防御
+
+⚠️ **最佳实践**:JS 侧应在事务内长时间非 DB await 前调
+`keepAlive()` **提前续命**,而非"卡着 60s 的点回来打卡"——
+临近超时才发 SQL 会进入 Timer 回调与 SQL 执行的竞态窗口
+(虽有 InFlight 防御不会崩,但事务仍会被判定超时回滚)。
+
 ### JS 层(栈式事务上下文)
 
 ```
