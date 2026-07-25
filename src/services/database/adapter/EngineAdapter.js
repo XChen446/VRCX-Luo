@@ -510,11 +510,12 @@ class EngineAdapter {
     }
 
     /**
-     * 开启一个事务,返回 connId。connId 在 withTransaction 体内被
-     * 自动 push 到 `_txStack`,execute/executeNonQuery 读栈顶决定走
-     * pinned 连接还是默认池。
+     * 开启一个事务,返回 connId 并 push 到 `_txStack`。
+     * execute/executeNonQuery 读栈顶决定走 pinned 连接还是默认池。
+     * 必须配对调用 commit(connId) 或 rollback(connId) 以 pop 栈。
      *
      * 不支持嵌套:栈非空时抛错(与 SQLite 现有 nested begin throws 一致)。
+     * 推荐使用 withTransaction(fn) 自动管理栈,而非手动调用。
      *
      * @returns {Promise<number>} connId
      */
@@ -524,28 +525,38 @@ class EngineAdapter {
                 'beginTransaction: 不支持嵌套事务(当前已在事务中)'
             );
         }
-        return this._doBegin();
+        const connId = await this._doBegin();
+        this._txStack.push(connId);
+        return connId;
     }
 
     /**
-     * 提交当前事务。
+     * 提交当前事务并 pop `_txStack`。
      *
      * @param {number} connId - beginTransaction 返回的 connId
      * @returns {Promise<void>}
      */
     async commit(connId) {
-        await this._doCommit(connId);
+        try {
+            await this._doCommit(connId);
+        } finally {
+            this._txStack.pop();
+        }
     }
 
     /**
-     * 回滚当前事务。已超时/不存在的 connId 静默 no-op,不抛错
-     * (withTransaction 的 catch 块可无条件调用)。
+     * 回滚当前事务并 pop `_txStack`。已超时/不存在的 connId 静默
+     * no-op,不抛错(withTransaction 的 catch 可无条件调用)。
      *
      * @param {number} connId - beginTransaction 返回的 connId
      * @returns {Promise<void>}
      */
     async rollback(connId) {
-        await this._doRollback(connId);
+        try {
+            await this._doRollback(connId);
+        } finally {
+            this._txStack.pop();
+        }
     }
 
     /**
@@ -569,7 +580,6 @@ class EngineAdapter {
             );
         }
         const connId = await this.beginTransaction();
-        this._txStack.push(connId);
         try {
             const result = await fn();
             await this.commit(connId);
@@ -581,8 +591,6 @@ class EngineAdapter {
                 /* rollback 失败不掩盖原始错误 */
             }
             throw err;
-        } finally {
-            this._txStack.pop();
         }
     }
 

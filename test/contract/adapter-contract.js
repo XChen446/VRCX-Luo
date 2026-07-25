@@ -135,28 +135,28 @@ export function runAdapterContractTests(adapterFactory, name) {
         // ── 2. transaction semantics ────────────────────────────────────
 
         describe('transaction semantics', () => {
-            test('begin() → insert → rollback() leaves table empty', async () => {
+            test('beginTransaction → insert → rollback leaves table empty', async () => {
                 await createTestTable();
-                await adapter.begin();
+                const connId = await adapter.beginTransaction();
                 await adapter.insert('contract_t', {
                     id: 1,
                     name: 'alice',
                     value: 10
                 });
-                await adapter.rollback();
+                await adapter.rollback(connId);
                 const rows = await adapter.select('contract_t', '*');
                 expect(rows).toHaveLength(0);
             });
 
-            test('begin() → insert → commit() persists row', async () => {
+            test('beginTransaction → insert → commit persists row', async () => {
                 await createTestTable();
-                await adapter.begin();
+                const connId = await adapter.beginTransaction();
                 await adapter.insert('contract_t', {
                     id: 1,
                     name: 'alice',
                     value: 10
                 });
-                await adapter.commit();
+                await adapter.commit(connId);
                 const rows = await adapter.select(
                     'contract_t',
                     ['id', 'name'],
@@ -165,11 +165,11 @@ export function runAdapterContractTests(adapterFactory, name) {
                 expect(rows).toEqual([[1, 'alice']]);
             });
 
-            test('begin() → error → rollback() does not persist DML', async () => {
+            test('beginTransaction → error → rollback does not persist DML', async () => {
                 // DML rollback is cross-engine invariant (unlike DDL rollback,
                 // which MySQL/MariaDB implicitly commits). See file header L18-19.
                 await createTestTable();
-                await adapter.begin();
+                const connId = await adapter.beginTransaction();
                 await adapter.insert('contract_t', {
                     id: 1,
                     name: 'alice',
@@ -185,7 +185,7 @@ export function runAdapterContractTests(adapterFactory, name) {
                 } catch {
                     // expected — duplicate primary key
                 }
-                await adapter.rollback();
+                await adapter.rollback(connId);
                 // The row inserted inside the transaction should NOT persist
                 const rows = await adapter.select('contract_t', '*');
                 expect(rows).toHaveLength(0);
@@ -460,7 +460,7 @@ export function runAdapterContractTests(adapterFactory, name) {
                 expect(() => new EngineAdapter()).toThrow(TypeError);
             });
 
-            test('subclass missing abstract method throws "abstract" error on call', () => {
+            test('subclass missing abstract method throws "abstract" error on call', async () => {
                 /**
                  * Stub subclass that intentionally implements none of the
                  * abstract methods — used to verify the base class throws.
@@ -473,7 +473,7 @@ export function runAdapterContractTests(adapterFactory, name) {
                 expect(() => stub.insert('', {}, undefined)).toThrow(
                     /abstract/
                 );
-                expect(() => stub.begin()).toThrow(/abstract/);
+                await expect(stub.beginTransaction()).rejects.toThrow(/abstract/);
             });
         });
     });
