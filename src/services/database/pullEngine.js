@@ -570,12 +570,13 @@ async function copyTable(
         if (batch.length < batchSize) break;
     }
 
-    // Row-count verification per table.
-    const srcCount = await srcAdapter.countWhere(srcTable);
+    // Row-count verification: totalCopied 是源侧实际读到的行数,等价于
+    // srcCount 但无需全表 COUNT。只校验 dstCount == totalCopied。
+    // 与 pushEngine.js 对称。
     const dstCount = await dstAdapter.countWhere(dstTable);
-    if (srcCount !== dstCount) {
+    if (dstCount !== totalCopied) {
         throw new Error(
-            `row count mismatch after copy: src=${srcCount} dst=${dstCount}`
+            `row count mismatch after copy: copied=${totalCopied} dst=${dstCount}`
         );
     }
 

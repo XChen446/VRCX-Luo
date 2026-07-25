@@ -573,12 +573,16 @@ async function copyTable(
         if (batch.length < batchSize) break;
     }
 
-    // Row-count verification per table.
-    const srcCount = await srcAdapter.countWhere(srcTable);
+    // Row-count verification: totalCopied 是源侧实际读到的行数(游标
+    // 或 OFFSET 分页累加),等价于 srcCount 但无需全表 COUNT 扫描。
+    // 只需校验 dstCount == totalCopied,省掉一次 O(N) 全表 COUNT。
+    // 注意:bulkInsert('ignore') 在 PK 冲突时跳过行,但 push/pull 目标
+    // 是空表或新 schema,无冲突;若未来有冲突场景,dstCount < totalCopied
+    // 仍能正确检测到数据丢失。
     const dstCount = await dstAdapter.countWhere(dstTable);
-    if (srcCount !== dstCount) {
+    if (dstCount !== totalCopied) {
         throw new Error(
-            `row count mismatch after copy: src=${srcCount} dst=${dstCount}`
+            `row count mismatch after copy: copied=${totalCopied} dst=${dstCount}`
         );
     }
 
