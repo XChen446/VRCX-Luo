@@ -141,7 +141,12 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
-        KeepAliveTransaction: (connId: number) => void;
+        /**
+         * Reset the sliding idle timer for the transaction pinned to connId
+         * without executing any SQL. Returns true if the timer was reset,
+         * false if the connId has already timed out / rolled back (no-op).
+         */
+        KeepAliveTransaction: (connId: number) => boolean;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -156,7 +161,12 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
-        KeepAliveTransaction: (connId: number) => void;
+        /**
+         * Reset the sliding idle timer for the transaction pinned to connId
+         * without executing any SQL. Returns true if the timer was reset,
+         * false if the connId has already timed out / rolled back (no-op).
+         */
+        KeepAliveTransaction: (connId: number) => boolean;
         /**
          * Returns true when the data source has been initialised. Does not
          * probe the network — a true return does not guarantee the server is
@@ -464,7 +474,12 @@ declare global {
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
-        KeepAliveTransaction: (connId: number) => void;
+        /**
+         * Reset the sliding idle timer for the transaction pinned to connId
+         * without executing any SQL. Returns true if the timer was reset,
+         * false if the connId has already timed out / rolled back (no-op).
+         */
+        KeepAliveTransaction: (connId: number) => boolean;
         /**
          * Reports whether the shared MySQL/MariaDB connection is open. Bound
          * via CefSharp (desktop) or Electron main-process IPC; in vitest it is

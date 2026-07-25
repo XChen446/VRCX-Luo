@@ -519,15 +519,15 @@ class EngineAdapter {
      * 引擎级事务心跳钩子。子类实现:
      * - PgSQLAdapter:调 C# `PostgreSQL.KeepAliveTransaction(connId)`
      * - SQLiteAdapter/MySQLAdapter:同上,调对应 C# 方法
-     * - MemorySQLiteAdapter:no-op(无 C# Timer)
+     * - MemorySQLiteAdapter:返回 true(无 C# Timer,事务永不过期)
      *
-     * 已超时回滚的 connId 静默 no-op,不抛错(C# 侧 TryGetValue 失败
-     * 不抛错,JS 侧也不检查栈——调用方可能在 await 用户交互后调
-     * keepAlive,此时事务可能已被超时回滚,应静默忽略)。
+     * 返回 `true` 表示 timer 已重置(续命成功);`false` 表示 connId
+     * 已超时回滚(C# 侧 TryGetValue 失败)。调用方可在 await 用户
+     * 交互后通过返回值判断事务是否仍然存活,决定是否提前退出。
      *
      * @abstract
      * @param {number} _connId
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} true=续命成功,false=已超时回滚
      * @protected
      */
     _doKeepAlive(_connId) {
@@ -601,20 +601,22 @@ class EngineAdapter {
      * 对话框、输入框等待)时,防止 60s idle 超时自动回滚。调用后
      * Timer 重新从 TX_IDLE_MS 开始计时。
      *
-     * 已超时回滚的事务静默 no-op,不抛错——调用方可能在 await
-     * 用户交互后才发现事务已被回收,此时 keepAlive 无意义但不
-     * 应阻断流程(后续的 SQL 调用会抛 "connId 已超时回滚",
-     * withTransaction 的 catch 会 rollback + 重新抛出)。
+     * @returns {Promise<boolean>} `true` 表示续命成功(事务仍存活,
+     *   timer 已重置);`false` 表示事务已超时回滚或当前不在事务中
+     *   (调用方应提前退出事务体,避免后续 SQL 抛 "connId 已超时
+     *   回滚" 的延迟错误)。注意:即使返回 `false`,withTransaction
+     *   的 catch 仍会在后续 SQL 调用失败时 rollback + 重新抛出,
+     *   keepAlive 返回 `false` 只是让调用方有机会提前干净退出。
      *
-     * 推荐在 withTransaction 体内、每段可能超过 60s 的非 DB
-     * await 前调用:
+     * 推荐用法 — 在每段可能超过 60s 的非 DB await 前调用,
+     * 并检查返回值:
      * ```
      * await adapter.withTransaction(async () => {
      *     await adapter.insert(...);
-     *     adapter.keepAlive();           // ← 续命
-     *     const ok = await dialog.confirm(...);  // 用户慢慢想
+     *     if (!await adapter.keepAlive()) return; // 事务已死,提前退出
+     *     const ok = await dialog.confirm(...);    // 用户慢慢想
      *     if (!ok) throw new Error('用户取消');
-     *     adapter.keepAlive();           // ← 续命
+     *     if (!await adapter.keepAlive()) return; // 事务已死,提前退出
      *     await adapter.update(...);
      * });
      * ```
@@ -625,11 +627,12 @@ class EngineAdapter {
      */
     async keepAlive() {
         const connId = this._txStack.at(-1);
-        if (connId === undefined) return;
+        if (connId === undefined) return false;
         try {
-            await this._doKeepAlive(connId);
+            return await this._doKeepAlive(connId);
         } catch {
-            // 已超时回滚的 connId 静默忽略
+            // C# 桥异常或 binding 缺失,视为事务已死
+            return false;
         }
     }
 

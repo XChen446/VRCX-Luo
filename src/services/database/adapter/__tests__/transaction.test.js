@@ -225,3 +225,27 @@ describe('withTransaction 返回值', () => {
         expect(result).toEqual({ copied: 42, errors: [] });
     });
 });
+
+describe('keepAlive() 返回值', () => {
+    test('事务内调用返回 true(MemorySQLiteAdapter 无 Timer,永不过期)', async () => {
+        const result = await adapter.withTransaction(async () => {
+            return await adapter.keepAlive();
+        });
+        expect(result).toBe(true);
+    });
+
+    test('事务外调用返回 false(栈空)', async () => {
+        const result = await adapter.keepAlive();
+        expect(result).toBe(false);
+    });
+
+    test('事务内多次调用均返回 true', async () => {
+        const result = await adapter.withTransaction(async () => {
+            const r1 = await adapter.keepAlive();
+            await adapter.insert('test_t', { id: 1, val: 'a' });
+            const r2 = await adapter.keepAlive();
+            return r1 && r2;
+        });
+        expect(result).toBe(true);
+    });
+});

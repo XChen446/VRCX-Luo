@@ -950,10 +950,11 @@ class PgSQLAdapter extends EngineAdapter {
     /**
      * @override
      * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
      * @protected
      */
     async _doKeepAlive(connId) {
-        PostgreSQL.KeepAliveTransaction(connId);
+        return PostgreSQL.KeepAliveTransaction(connId);
     }
 
     // ── Maintenance ───────────────────────────────────────────────────

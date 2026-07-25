@@ -657,10 +657,11 @@ class MySQLAdapter extends EngineAdapter {
     /**
      * @override
      * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
      * @protected
      */
     async _doKeepAlive(connId) {
-        MySQL.KeepAliveTransaction(connId);
+        return MySQL.KeepAliveTransaction(connId);
     }
 
     // ── SQL fragments (engine-specific syntax) ───────────────────────

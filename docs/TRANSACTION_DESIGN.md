@@ -19,8 +19,8 @@ SQLite.cs / MySQL.cs 的单连接 + lock 模式虽然事务能跑,但有隐患:�
 三引擎都暴露:
 - `BeginTransaction()`:借连接 + BEGIN + 标记 pin + 启动 sliding Timer,返回递增 connId
 - `CommitTransaction(connId)`:COMMIT + 还池 + 清 Timer
-- `RollbackTransaction(connId)`:ROLLBACK + 还池 + 清 Timer(已超时则 no-op)
-- `KeepAliveTransaction(connId)`:重置 sliding Timer,不执行 SQL(用于 withTransaction 体内 await 长时间非 DB 操作时续命;已超时则 no-op)
+- `RollbackTransaction(connId)`:ROLLBACK + 还池 + 清 Timer(已超时则 no-op) 事务已死/不在事务/桥异常
+- `KeepAliveTransaction(connId)`:重置 sliding Timer,不执行 SQL(用于 withTransaction 体内 await 长时间非 DB 操作时续命);返回 `true` 表示已重置,`false` 表示 connId 已超时回滚(no-op)
 - `Execute`/`ExecuteNonQuery`/`ExecuteJson` 加可选 `long? connId` 尾参:
   - connId 有值:PG 走 pinned 连接 + 重置 Timer;SQLite/MySQL 重置 Timer(单连接无需路由)
   - connId 无值:走默认池/单连接,行为与改造前一致(零回归)
@@ -41,7 +41,7 @@ EngineAdapter 基类:
   beginTransaction()  → 检查栈非空(嵌套拒绝)→ _doBegin() → push connId
   commit(connId)       → _doCommit(connId) → finally pop 栈
   rollback(connId)     → _doRollback(connId) → finally pop 栈
-  keepAlive()          → 读栈顶 connId → _doKeepAlive(connId) → 重置 C# Timer
+  keepAlive()          → 读栈顶 connId → _doKeepAlive(connId) → 重置 C# Timer → 返回 bool
   withTransaction(fn)   → beginTransaction → fn → commit(抛错则 rollback)
 
   execute/executeNonQuery 实现(子类):
@@ -55,10 +55,18 @@ EngineAdapter 基类:
 长时间非 DB 操作(用户确认对话框、输入框等待)时重置 C# 侧
 sliding idle timer,防止 60s 超时自动回滚。
 
+- 返回 `Promise<boolean>`:`true` 表示续命成功(事务仍存活),
+  `false` 表示事务已超时回滚或当前不在事务中
 - 读栈顶 connId,委托 `_doKeepAlive(connId)` → C#
   `KeepAliveTransaction(connId)` 重置 Timer
-- 事务外调用(栈空)静默 no-op
-- 已超时回滚的 connId 静默 no-op(C# 侧 TryGetValue 失败不抛错)
+- 事务外调用(栈空)返回 `false`
+- 已超时回滚的 connId 返回 `false`(C# 侧 TryGetValue 失败,
+  不抛错)
+- C# 桥异常或 binding 缺失也返回 `false`(视为事务已死)
+- 调用方可在 await 用户交互后检查返回值,提前干净退出事务体:
+  ```
+  if (!await adapter.keepAlive()) return; // 事务已死,提前退出
+  ```
 
 ⚠️ keepAlive 是逃生舱,不是鼓励在事务内做长交互。事务应尽可能
 短——长时间持有事务锁会阻塞其他操作。能拆到事务外确认的,优先

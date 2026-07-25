@@ -86,9 +86,15 @@ class MemorySQLiteAdapter extends SQLiteAdapter {
         }
     }
 
-    /** @override @protected — no-op(无 C# sliding Timer) */
+    /**
+     * @override @protected
+     * @returns {Promise<boolean>} MemorySQLiteAdapter 测试环境无 C# Timer,
+     *   事务永不过期,始终返回 true。
+     */
     async _doKeepAlive(_connId) {
-        // MemorySQLiteAdapter 测试环境没有 C# Timer,keepAlive 无需操作
+        // MemorySQLiteAdapter 测试环境没有 C# Timer,keepAlive 无需操作,
+        // 始终返回 true(事务永远存活)。
+        return true;
     }
 }
 

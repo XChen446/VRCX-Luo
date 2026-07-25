@@ -440,14 +440,19 @@ namespace VRCX
         /// when the JS side needs to await a long-running non-DB operation
         /// (e.g. user confirmation dialog) inside a withTransaction block
         /// to prevent the 60s idle timeout from auto-rolling-back.
-        /// No-op (does not throw) if the connId has already timed out.
         /// </summary>
-        public void KeepAliveTransaction(long connId)
+        /// <returns><c>true</c> if the timer was reset; <c>false</c> if the
+        /// connId has already timed out / rolled back (no-op).</returns>
+        public bool KeepAliveTransaction(long connId)
         {
             lock (_txLock)
             {
                 if (_pinned.TryGetValue(connId, out var h))
+                {
                     h.Timer.Change(TX_IDLE_MS, -1);
+                    return true;
+                }
+                return false;
             }
         }
 

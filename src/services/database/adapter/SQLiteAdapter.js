@@ -1109,10 +1109,11 @@ class SQLiteAdapter extends EngineAdapter {
     /**
      * @override
      * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
      * @protected
      */
     async _doKeepAlive(connId) {
-        SQLite.KeepAliveTransaction(connId);
+        return SQLite.KeepAliveTransaction(connId);
     }
 
     /** VACUUM — reclaim storage. */
