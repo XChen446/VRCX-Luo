@@ -146,6 +146,20 @@ Timer 回收后 rollback no-op)目前仅由 `transaction.test.js` 用
 `MySQLAdapter.mysql.test.js` 文件头加 TODO 标注,待 follow-up 补
 集成测试。
 
+### SQLite 池化并发写安全
+
+池化改造后多个连接可能同时写同一 `.db` 文件。SQLite 只支持
+一个并发写事务,竞争时其他连接阻塞等锁。通过 `DefaultOptions`
+的三个 PRAGMA 缓解(拼入连接字符串,每个池化连接 `Open()` 时执行):
+
+| PRAGMA | 值 | 作用 |
+|---|---|---|
+| `busy_timeout` | `5000` (ms) | 锁竞争时等 5s 而非立即抛 "database is locked",让短写事务(ms 级)有机会完成。5s 足够桌面场景;若仍超时说明有死锁/长事务,应快速失败而非让 UI 卡 60s。**不对称到 PG/MySQL 的 15/30s**——那些是网络层建连/SQL 执行超时(秒),SQLite 是本地文件锁等待(毫秒),概念层次不同。 |
+| `journal_mode` | `WAL` | Write-Ahead Logging,读写并发,写写串行。读不被写阻塞,写事务持锁时间 = 单条 SQL 执行时间(几 ms)。 |
+| `locking_mode` | `NORMAL` | 每条 SQL 执行完释放文件锁,不独占。与池化目标一致(让事务外读不被事务阻塞)。`EXCLUSIVE` 会独占文件到 `Exit()`,阻塞外部工具(DB Browser 等)和其他进程,不采用。 |
+
+**风险评估**:VRCX 桌面单进程,写来源主要是 updateLoop + 日志 + L3 轮询,量级每秒几个写,远达不到锁竞争场景。5s busy_timeout 是兜底保险,正常操作几乎不会触发。
+
 ## 效果
 
 - **原子性**:分组事务内中途崩溃全回滚,不再留半拷贝

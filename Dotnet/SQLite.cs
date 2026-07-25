@@ -137,6 +137,24 @@ namespace VRCX
                 // 上限实际用不到(< 5 活跃),每连接约 2MB page cache + 2-3
                 // 文件句柄,驻留开销远低于服务器场景。若未来改多用户/服务端
                 // 部署,应重新评估。
+                //
+                // ── 并发写安全:池化后多个连接可能同时写同一 .db 文件,
+                // SQLite 只支持一个并发写事务,竞争时其他连接阻塞等锁。
+                // 通过 DefaultOptions 的三个 PRAGMA 缓解(拼入连接字符串,
+                // 每个池化连接 Open 时执行):
+                //   busy_timeout=5000  — 锁竞争时等 5s 而非立即抛
+                //                        "database is locked",让短写事务
+                //                        (ms 级)有机会完成。5s 足够桌面
+                //                        场景;若仍超时说明有死锁/长事务,
+                //                        应快速失败而非让 UI 卡 60s。
+                //   journal_mode=WAL   — Write-Ahead Logging,读写并发,
+                //                        写写串行。读不被写阻塞,写事务
+                //                        持锁时间 = 单条 SQL 执行时间(几 ms)。
+                //   locking_mode=NORMAL — 每条 SQL 执行完释放文件锁,不
+                //                        独占。与池化目标一致(让事务外
+                //                        读不被事务阻塞)。EXCLUSIVE 会
+                //                        独占文件到 Exit,阻塞外部工具
+                //                        (DB Browser 等)和其他进程,不采用。
                 "Pooling=True",
                 "Max Pool Size=100"
             };
