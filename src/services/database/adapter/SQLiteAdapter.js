@@ -1063,19 +1063,46 @@ class SQLiteAdapter extends EngineAdapter {
         );
     }
 
-    /** BEGIN transaction. */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    // ── Transaction ──────────────────────────────────────────────────
+    // SQLite 单连接模式:事务由 BEGIN/COMMIT/ROLLBACK SQL 管理,
+    // connId 无路由意义(单连接天然在事务态),返回 0 作为占位。
+
+    /**
+     * @override
+     * @returns {Promise<number>} 0(单连接无需 pin)
+     * @protected
+     */
+    async _doBegin() {
+        await this.executeNonQuery('BEGIN');
+        return 0;
     }
 
-    /** COMMIT transaction. */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * @override
+     * @param {number} _connId
+     * @protected
+     */
+    async _doCommit(_connId) {
+        await this.executeNonQuery('COMMIT');
     }
 
-    /** ROLLBACK transaction. */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * @override
+     * @param {number} _connId
+     * @protected
+     */
+    async _doRollback(_connId) {
+        try {
+            await this.executeNonQuery('ROLLBACK');
+        } catch (e) {
+            // ROLLBACK without active transaction (SQLite 抛 "no
+            // transaction is active") — withTransaction 的 catch 块
+            // 可能无条件调用,此时静默忽略(与 PG 超时回滚后 rollback
+            // no-op 语义一致)。
+            if (!String(e?.message || '').match(/no transaction/i)) {
+                throw e;
+            }
+        }
     }
 
     /** VACUUM — reclaim storage. */

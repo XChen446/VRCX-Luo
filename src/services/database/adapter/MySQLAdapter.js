@@ -615,20 +615,42 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     // ── Transaction ──────────────────────────────────────────────────
+    // MySQL 单连接模式(同 SQLite):事务由 BEGIN/COMMIT/ROLLBACK SQL
+    // 管理,connId 无路由意义,返回 0 占位。
 
-    /** @override */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    /**
+     * @override
+     * @returns {Promise<number>} 0(单连接无需 pin)
+     * @protected
+     */
+    async _doBegin() {
+        await this.executeNonQuery('BEGIN');
+        return 0;
     }
 
-    /** @override */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * @override
+     * @param {number} _connId
+     * @protected
+     */
+    async _doCommit(_connId) {
+        await this.executeNonQuery('COMMIT');
     }
 
-    /** @override */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * @override
+     * @param {number} _connId
+     * @protected
+     */
+    async _doRollback(_connId) {
+        try {
+            await this.executeNonQuery('ROLLBACK');
+        } catch (e) {
+            // ROLLBACK without active transaction — 静默忽略。
+            if (!String(e?.message || '').match(/no transaction/i)) {
+                throw e;
+            }
+        }
     }
 
     // ── SQL fragments (engine-specific syntax) ───────────────────────

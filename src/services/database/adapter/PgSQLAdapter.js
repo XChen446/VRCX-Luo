@@ -157,7 +157,8 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async execute(callback, sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
-        const json = await PostgreSQL.ExecuteJson(pgSql, pgArgs);
+        const connId = this._txStack.at(-1);
+        const json = await PostgreSQL.ExecuteJson(pgSql, pgArgs, connId);
         if (!json) return;
         const items = JSON.parse(json);
         if (Array.isArray(items)) {
@@ -175,7 +176,8 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
-        return await PostgreSQL.ExecuteNonQuery(pgSql, pgArgs);
+        const connId = this._txStack.at(-1);
+        return await PostgreSQL.ExecuteNonQuery(pgSql, pgArgs, connId);
     }
 
     // ── CRUD ──────────────────────────────────────────────────────────
@@ -910,19 +912,39 @@ class PgSQLAdapter extends EngineAdapter {
 
     // ── Transaction ───────────────────────────────────────────────────
 
-    /** BEGIN transaction. */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    /**
+     * 借一条 pooled 连接 + BEGIN 事务,返回 connId 供后续
+     * execute/executeNonQuery 路由到同一连接。C# 侧 sliding 30s 超时
+     * 防泄漏。详见 PostgreSQL.cs `_pinned` + `BeginTransaction`。
+     *
+     * @override
+     * @returns {Promise<number>} connId
+     * @protected
+     */
+    async _doBegin() {
+        return PostgreSQL.BeginTransaction();
     }
 
-    /** COMMIT transaction. */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * COMMIT 事务 + 还池。connId 已超时回滚时抛错(调用方应重试)。
+     *
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doCommit(connId) {
+        PostgreSQL.CommitTransaction(connId);
     }
 
-    /** ROLLBACK transaction. */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * ROLLBACK 事务 + 还池。connId 已超时回滚时静默 no-op。
+     *
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doRollback(connId) {
+        PostgreSQL.RollbackTransaction(connId);
     }
 
     // ── Maintenance ───────────────────────────────────────────────────
