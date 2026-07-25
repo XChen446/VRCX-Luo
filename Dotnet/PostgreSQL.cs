@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
@@ -29,6 +30,29 @@ namespace VRCX
         private bool _initialized;
         private DateTime _lastHealthCheck;
         private readonly TimeSpan _healthCheckInterval = TimeSpan.FromSeconds(30);
+
+        // ── Transaction pinning ────────────────────────────────────────────
+        // A pinned connection is borrowed from the pool and held across
+        // multiple Execute/ExecuteNonQuery calls so that BEGIN ... INSERT
+        // ... COMMIT run on the SAME physical connection (otherwise the
+        // Npgsql pool returns a fresh connection per call and the
+        // transaction silently no-ops — see docs/TRANSACTION_DESIGN.md).
+        //
+        // Sliding timeout: each use of a pinned connection resets the
+        // timer (TX_IDLE_MS) so long-running transactions stay alive as
+        // long as SQL keeps flowing; only a true stall (await hang,
+        // network drop) triggers auto-rollback + return-to-pool.
+        private readonly object _txLock = new();
+        private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
+        private long _nextConnId;
+        private const int TX_IDLE_MS = 30000;
+
+        private sealed class TxHolder
+        {
+            public NpgsqlConnection Conn = null!;
+            public NpgsqlTransaction Tx = null!;
+            public Timer Timer = null!;
+        }
 
         static PostgreSQL()
         {
@@ -94,9 +118,10 @@ namespace VRCX
         /// <summary>
         /// Execute a query on the pooled connection and return the result set as JSON.
         /// </summary>
-        public string ExecuteJson(string sql, object[]? args = null)
+        /// <param name="connId">optional transaction pin id forwarded to <see cref="Execute"/>.</param>
+        public string ExecuteJson(string sql, object[]? args = null, long? connId = null)
         {
-            var result = Execute(sql, args);
+            var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
         }
 
@@ -120,8 +145,15 @@ namespace VRCX
         /// positional arrays. Parameters are positional (<c>$1</c>, <c>$2</c>,
         /// ...) and are bound from <paramref name="args"/> in order.
         /// </summary>
-        public object[][] Execute(string sql, object[]? args = null)
+        /// <param name="connId">optional transaction pin id; when present
+        /// the query runs on the pinned connection inside its transaction
+        /// and resets the sliding idle timer.</param>
+        public object[][] Execute(string sql, object[]? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return ExecutePinned(connId.Value, sql, args);
+            }
             EnsureInitialized();
             using var connection = _dataSource.OpenConnection();
             return ExecuteCore(connection, sql, args);
@@ -130,8 +162,15 @@ namespace VRCX
         /// <summary>
         /// Execute a non-query on a fresh pooled connection and return rows affected.
         /// </summary>
-        public int ExecuteNonQuery(string sql, object[]? args = null)
+        /// <param name="connId">optional transaction pin id; when present
+        /// the statement runs on the pinned connection inside its
+        /// transaction and resets the sliding idle timer.</param>
+        public int ExecuteNonQuery(string sql, object[]? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
+            }
             EnsureInitialized();
             using var connection = _dataSource.OpenConnection();
             using var command = CreateCommand(connection, sql, args);
@@ -257,6 +296,132 @@ namespace VRCX
                 }
             }
             return command;
+        }
+
+        // ── Transaction pinning implementation ───────────────────────────────
+        // See the field declarations at the top of this class for the design
+        // rationale. BeginTransaction borrows a connection from the pool and
+        // holds it in a TxHolder; ExecutePinned/ExecuteNonQueryPinned look up
+        // the holder by connId and run SQL on the held connection, resetting
+        // the sliding idle timer on each use. CommitTransaction/
+        // RollbackTransaction finalise the transaction and return the
+        // connection to the pool. The sliding timer auto-rolls-back any
+        // transaction idle for longer than TX_IDLE_MS to prevent connection
+        // leaks if JS forgets to commit (crash, unhandled rejection, etc.).
+
+        private static NpgsqlCommand CreateTxCommand(TxHolder h, string sql, object[]? args)
+        {
+            var command = h.Conn.CreateCommand();
+            command.Transaction = h.Tx;
+            command.CommandText = sql;
+            if (args != null)
+            {
+                foreach (var arg in args)
+                {
+                    command.Parameters.AddWithValue(null, arg ?? DBNull.Value);
+                }
+            }
+            return command;
+        }
+
+        private object[][] ExecutePinned(long connId, string sql, object[]? args)
+        {
+            if (!_pinned.TryGetValue(connId, out var h))
+                throw new InvalidOperationException(
+                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            using var command = CreateTxCommand(h, sql, args);
+            using var reader = command.ExecuteReader();
+            var result = new List<object[]>();
+            while (reader.Read())
+            {
+                var values = new object[reader.FieldCount];
+                for (var i = 0; i < reader.FieldCount; i++)
+                {
+                    var value = reader.GetValue(i);
+                    values[i] = value is DBNull ? null : value;
+                }
+                result.Add(values);
+            }
+            return result.ToArray();
+        }
+
+        private int ExecuteNonQueryPinned(long connId, string sql, object[]? args)
+        {
+            if (!_pinned.TryGetValue(connId, out var h))
+                throw new InvalidOperationException(
+                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            lock (_txLock) { h.Timer.Change(TX_IDLE_MS, -1); }
+            using var command = CreateTxCommand(h, sql, args);
+            return command.ExecuteNonQuery();
+        }
+
+        /// <summary>
+        /// Borrow a pooled connection, BEGIN a transaction on it, and return
+        /// a connId that JS passes back on subsequent Execute/ExecuteNonQuery
+        /// calls to keep them on the same physical connection. A sliding
+        /// idle timer auto-rolls-back after TX_IDLE_MS of inactivity.
+        /// </summary>
+        public long BeginTransaction()
+        {
+            EnsureInitialized();
+            var connId = Interlocked.Increment(ref _nextConnId);
+            var conn = _dataSource.OpenConnection();
+            var tx = conn.BeginTransaction();
+            var holder = new TxHolder { Conn = conn, Tx = tx };
+            holder.Timer = new Timer(
+                _ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
+        }
+
+        /// <summary>
+        /// COMMIT the transaction pinned to <paramref name="connId"/> and
+        /// return the connection to the pool. Throws if the connId has
+        /// already been timed out / rolled back.
+        /// </summary>
+        public void CommitTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryRemove(connId, out var h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,无法 commit");
+                h.Timer.Dispose();
+                try { h.Tx.Commit(); }
+                finally { h.Conn.Dispose(); }
+            }
+        }
+
+        /// <summary>
+        /// ROLLBACK the transaction pinned to <paramref name="connId"/> and
+        /// return the connection to the pool. No-op (does not throw) if the
+        /// connId has already been timed out / rolled back, so the JS-side
+        /// withTransaction catch block can call it unconditionally.
+        /// </summary>
+        public void RollbackTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryRemove(connId, out var h)) return;
+                h.Timer.Dispose();
+                try { h.Tx.Rollback(); }
+                catch { /* 可能已超时回滚,忽略 */ }
+                finally { h.Conn.Dispose(); }
+            }
+        }
+
+        private void OnTxTimeout(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryRemove(connId, out var h)) return;
+                Console.Error.WriteLine(
+                    $"[PG] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
+                h.Timer.Dispose();
+                try { h.Tx.Rollback(); } catch { }
+                try { h.Conn.Dispose(); } catch { }
+            }
         }
 
         // ── Bootstrap field validation ───────────────────────────────────────
