@@ -600,6 +600,15 @@
 
     import configRepository from '../services/config';
     import { accountHub } from '../services/accountHub.js';
+    // Statically importing the adapter singleton avoids a per-second dynamic
+    // `await import()` inside `useIntervalFn`. ESM live bindings keep `adapter`
+    // observation in sync after `initAdapter(mode)` swaps the singleton across
+    // engine switches. This import only evaluates `adapter/index.js`, whose
+    // sole static dependency is `SQLiteAdapter.js`; the PgSQL/MySQL adapter
+    // bodies remain lazy-loaded via string-variable `import(spec.path)` inside
+    // `initAdapter`/`createAdapter` (see that module's header comment), so the
+    // sqlite-mode test contract (no PgSQL/MySQL transform) is preserved.
+    import { adapter } from '@/services/database/adapter';
 
     dayjs.extend(utc);
     dayjs.extend(timezone);
@@ -932,7 +941,6 @@
     const dbScaleLevel = ref(0);
 
     useIntervalFn(async () => {
-        const adapter = (await import('@/services/database/adapter')).adapter;
         if (!adapter || typeof adapter.getPoolStats !== 'function') return;
         try {
             const stats = await adapter.getPoolStats();
@@ -1050,7 +1058,6 @@
         });
         if (!result.ok) return;
         try {
-            const { adapter } = await import('@/services/database/adapter');
             if (adapter && typeof adapter.clearIdleConnections === 'function') {
                 await adapter.clearIdleConnections();
             }
