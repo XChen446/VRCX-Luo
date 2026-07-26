@@ -890,15 +890,18 @@ class EngineAdapter {
     }
 
     /**
-     * Synchronous liveness probe. Returns true when the C# backend is
+     * Async liveness probe. Resolves true when the C# backend is
      * initialised and the server is reachable (Ping succeeds). On
      * CefSharp the bridge is synchronous; on Electron the bridge returns
-     * a Promise — see the dual-runtime note below.
+     * a Promise — see the dual-runtime note below. Declared `async` so
+     * `await` works uniformly across both runtimes; calling sites MUST
+     * `await` the result (awaiting a plain boolean returns it
+     * immediately on CefSharp).
      *
      * @abstract
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    isConnected() {
+    async isConnected() {
         throw new Error('abstract');
     }
 
@@ -929,7 +932,9 @@ class EngineAdapter {
     // value returns it immediately; awaiting a Promise waits for
     // resolution.  All callers MUST `await` these methods — calling them
     // synchronously would get a Promise on Electron but a raw value on
-    // CefSharp, producing platform-dependent bugs.
+    // CefSharp, producing platform-dependent bugs.  `isConnected` is
+    // async for the same reason: `Boolean(Ping())` would be
+    // `Boolean(Promise)` (always true) on Electron.
     //
     // globals.d.ts types these as `Promise<>` to match the widest
     // runtime (Electron IPC).  See also:

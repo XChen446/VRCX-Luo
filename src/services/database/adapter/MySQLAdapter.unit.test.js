@@ -64,25 +64,25 @@ describe('MySQLAdapter unit (no container)', () => {
     });
 
     describe('isConnected', () => {
-        it('returns a boolean and does not throw under the vitest noopAsync stub', () => {
+        it('resolves to a boolean and does not throw under the vitest noopAsync stub', async () => {
             // Under vitest.setup.js, MySQL is a Proxy returning noopAsync
             // for any property access, so MySQL.Ping is noopAsync
-            // → returns Promise.resolve(''). Boolean(Promise) === true.
-            // The real C# binding returns a synchronous bool. Either way
-            // the call must not throw and must return a boolean.
+            // → returns Promise.resolve(''). `await` it → '' → Boolean('') === false.
+            // The real C# binding returns a synchronous bool (CefSharp) or a
+            // Promise<boolean> (Electron); either way `await` yields a boolean.
             const adapter = new MySQLAdapter();
-            const result = adapter.isConnected();
+            const result = await adapter.isConnected();
             expect(typeof result).toBe('boolean');
-            expect(() => adapter.isConnected()).not.toThrow();
+            await expect(adapter.isConnected()).resolves.toBeDefined();
         });
 
-        it('returns false when the MySQL binding is absent', () => {
+        it('resolves false when the MySQL binding is absent', async () => {
             const adapter = new MySQLAdapter();
             const saved = globalThis.MySQL;
             // @ts-expect-error — deliberately delete the global for this test
             delete globalThis.MySQL;
             try {
-                expect(adapter.isConnected()).toBe(false);
+                await expect(adapter.isConnected()).resolves.toBe(false);
             } finally {
                 globalThis.MySQL = saved;
             }

@@ -52,6 +52,11 @@ beforeEach(() => {
         get: () => 'mysql',
         configurable: true
     });
+    // isConnected() is async and probes the C# bridge; under the vitest
+    // noopAsync stub it would resolve to false. Stub it to a healthy
+    // backend so the pushFromSqlite fail-fast guard passes — these tests
+    // exercise the JS-side transaction batching logic, not real DB reachability.
+    vi.spyOn(dstAdapter, 'isConnected').mockResolvedValue(true);
     holders.src = srcAdapter;
     holders.dst = dstAdapter;
 });

@@ -201,7 +201,7 @@ export async function pushFromSqlite(
     // an abstract getter every subclass overrides — and accept any value
     // that isn't `'sqlite'` (or the abstract default `'unknown'`).
     const engine =
-        /** @type {{ engineType?: string, isConnected?: () => boolean }} */ (
+        /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
             adapter
         ).engineType;
     if (!engine || engine === 'sqlite' || engine === 'unknown') {
@@ -212,15 +212,15 @@ export async function pushFromSqlite(
         );
     }
     // `isConnected` is a real liveness probe (`SELECT 1`) on both
-    // PgSQLAdapter and MySQLAdapter — returns true when the backend is
+    // PgSQLAdapter and MySQLAdapter — resolves true when the backend is
     // reachable, false (or absent on SQLite) when not. We probe it
     // best-effort when present so a disconnected remote backend fails
     // fast with a clear message before starting the long copy.
     const adapterAny =
-        /** @type {{ isConnected?: () => boolean }} */ (adapter);
+        /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
     if (
         typeof adapterAny.isConnected === 'function' &&
-        !adapterAny.isConnected()
+        !await adapterAny.isConnected()
     ) {
         throw new Error(
             `pushFromSqlite: ${engine} backend is not connected. ` +

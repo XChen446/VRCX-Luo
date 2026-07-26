@@ -1105,7 +1105,7 @@ class PgSQLAdapter extends EngineAdapter {
     }
 
     /**
-     * Synchronous liveness probe backed by C# `PostgreSQL.Ping()`.
+     * Async liveness probe backed by C# `PostgreSQL.Ping()`.
      *
      * `Ping` executes `SELECT 1` against the pooled data source, so it
      * confirms the backend is actually reachable — unlike `IsConnected`,
@@ -1118,21 +1118,19 @@ class PgSQLAdapter extends EngineAdapter {
      * a clear "backend is not connected" error rather than a delayed,
      * mid-copy SQL failure.
      *
-     * Defensive against the vitest `noopAsync` stub (returns `Promise<''>`)
-     * and against environments where the binding is absent entirely
-     * (bare `PostgreSQL` reference would throw `ReferenceError` under
-     * optional chaining — `?.` only handles `null`/`undefined`, not
-     * undeclared identifiers). The `typeof` guard short-circuits both the
-     * undeclared case and the `undefined` value case. `Boolean(...)` of a
-     * thenable is `true`, which is acceptable for a liveness probe — the
-     * real C# binding returns a synchronous `bool`.
+     * Declared `async` and `await`s the C# bridge so the result is
+     * correct on both runtimes: on CefSharp `Ping()` returns a plain
+     * `boolean` (awaiting it is a no-op); on Electron `Ping()` returns
+     * a `Promise<boolean>` via the InteropApi Proxy, and `Boolean(Promise)`
+     * would otherwise always be `true`. The `typeof` guard short-circuits
+     * both the undeclared-binding case and the `undefined` value case,
+     * returning `false` without touching the bridge.
      *
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    isConnected() {
-        return Boolean(
-            typeof PostgreSQL !== 'undefined' && PostgreSQL?.Ping?.()
-        );
+    async isConnected() {
+        if (typeof PostgreSQL === 'undefined' || !PostgreSQL?.Ping) return false;
+        return Boolean(await PostgreSQL.Ping());
     }
 
     /**
@@ -1159,7 +1157,7 @@ class PgSQLAdapter extends EngineAdapter {
 
     async getPoolStats() {
         const json = await PostgreSQL.GetPoolStats();
-        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
     }
 
     async clearIdleConnections() {

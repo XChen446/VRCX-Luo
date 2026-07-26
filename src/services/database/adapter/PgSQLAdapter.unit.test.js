@@ -349,23 +349,23 @@ describe('PgSQLAdapter', () => {
     });
 
     describe('isConnected', () => {
-        it('returns a boolean and does not throw under the vitest noopAsync stub', () => {
+        it('resolves to a boolean and does not throw under the vitest noopAsync stub', async () => {
             // Under vitest.setup.js, PostgreSQL is a Proxy returning noopAsync
             // for any property access, so PostgreSQL.Ping is noopAsync
-            // → returns Promise.resolve(''). Boolean(Promise) === true.
-            // The real C# binding returns a synchronous bool. Either way
-            // the call must not throw and must return a boolean.
-            const result = adapter.isConnected();
+            // → returns Promise.resolve(''). `await` it → '' → Boolean('') === false.
+            // The real C# binding returns a synchronous bool (CefSharp) or a
+            // Promise<boolean> (Electron); either way `await` yields a boolean.
+            const result = await adapter.isConnected();
             expect(typeof result).toBe('boolean');
-            expect(() => adapter.isConnected()).not.toThrow();
+            await expect(adapter.isConnected()).resolves.toBeDefined();
         });
 
-        it('returns false when the PostgreSQL binding is absent', () => {
+        it('resolves false when the PostgreSQL binding is absent', async () => {
             const saved = globalThis.PostgreSQL;
             // @ts-expect-error — deliberately delete the global for this test
             delete globalThis.PostgreSQL;
             try {
-                expect(adapter.isConnected()).toBe(false);
+                await expect(adapter.isConnected()).resolves.toBe(false);
             } finally {
                 globalThis.PostgreSQL = saved;
             }

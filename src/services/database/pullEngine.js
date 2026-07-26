@@ -178,7 +178,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     // switched engine + restarted yet — refuse to run rather than produce
     // a useless SQLite → SQLite copy that masquerades as a remote backup.
     const engine =
-        /** @type {{ engineType?: string, isConnected?: () => boolean }} */ (
+        /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
             adapter
         ).engineType;
     if (!engine || engine === 'sqlite' || engine === 'unknown') {
@@ -188,10 +188,10 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                 'restart the app before running the backup.'
         );
     }
-    const adapterAny = /** @type {{ isConnected?: () => boolean }} */ (adapter);
+    const adapterAny = /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
     if (
         typeof adapterAny.isConnected === 'function' &&
-        !adapterAny.isConnected()
+        !await adapterAny.isConnected()
     ) {
         throw new Error(
             `pullToSqlite: ${engine} backend is not connected. ` +

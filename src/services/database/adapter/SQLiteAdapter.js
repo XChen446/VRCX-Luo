@@ -1128,7 +1128,7 @@ class SQLiteAdapter extends EngineAdapter {
 
     async getPoolStats() {
         const json = await SQLite.GetPoolStats();
-        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
     }
 
     async clearIdleConnections() {
@@ -1136,14 +1136,13 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
-     * Synchronous liveness probe backed by C# `SQLite.Ping()`.
+     * Async liveness probe backed by C# `SQLite.Ping()`.
      *
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    isConnected() {
-        return Boolean(
-            typeof SQLite !== 'undefined' && SQLite?.Ping?.()
-        );
+    async isConnected() {
+        if (typeof SQLite === 'undefined' || !SQLite?.Ping) return false;
+        return Boolean(await SQLite.Ping());
     }
 
     /**
