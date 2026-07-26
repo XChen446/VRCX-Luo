@@ -147,6 +147,13 @@ declare global {
          * false if the connId has already timed out / rolled back (no-op).
          */
         KeepAliveTransaction: (connId: number) => boolean;
+        /**
+         * Returns a JSON snapshot of connection pool three-state metrics:
+         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
+         * read, no network call. Sampled once per second by StatusBar
+         * (Issue #14).
+         */
+        GetPoolStats: () => string;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -180,6 +187,13 @@ declare global {
          */
         Ping: () => Promise<boolean>;
         GetHealth: () => Promise<string>;
+        /**
+         * Returns a JSON snapshot of connection pool three-state metrics:
+         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
+         * read, no network call. Sampled once per second by StatusBar
+         * (Issue #14).
+         */
+        GetPoolStats: () => string;
     };
 
     const LogWatcher: {
@@ -495,6 +509,13 @@ declare global {
          * Returns true on success, false on failure.
          */
         Ping: () => Promise<boolean>;
+        /**
+         * Returns a JSON snapshot of connection pool three-state metrics:
+         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
+         * read, no network call. Sampled once per second by StatusBar
+         * (Issue #14).
+         */
+        GetPoolStats: () => string;
     };
 
     const webApiService: {

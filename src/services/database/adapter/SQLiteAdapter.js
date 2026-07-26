@@ -1125,6 +1125,11 @@ class SQLiteAdapter extends EngineAdapter {
     optimize() {
         return this.executeNonQuery('PRAGMA optimize');
     }
+
+    async getPoolStats() {
+        const json = await SQLite.GetPoolStats();
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
+    }
 }
 
 export { SQLiteAdapter };

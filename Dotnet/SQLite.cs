@@ -15,6 +15,12 @@ namespace VRCX
         private string _connectionString;
         private bool _initialized;
 
+        // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
+        private int _totalBorrowed;
+        private int _activeCount;
+        private int _pinnedActive;
+        private int _maxPoolSize;
+
         // ── Transaction pinning ────────────────────────────────────────────
         // 与 PostgreSQL.cs / MySQL.cs 对称:_pinned Map 持有借出的连接,
         // sliding Timer 防泄漏。connId 有值时 Execute/ExecuteNonQuery 走
@@ -182,6 +188,7 @@ namespace VRCX
                 parts.Add($"PRAGMA {key}={sanitized}");
             }
             _connectionString = string.Join(";", parts);
+            _maxPoolSize = 100; // 连接字符串硬编码 Max Pool Size=100
             _initialized = true;
         }
 
@@ -434,29 +441,45 @@ namespace VRCX
                 return ExecutePinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = new SQLiteConnection(_connectionString);
             connection.Open();
-            using var command = new SQLiteCommand(sql, connection);
-            if (args != null)
+            try
             {
-                foreach (var arg in args)
+                Interlocked.Increment(ref _activeCount);
+                try
                 {
-                    command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
-                }
-            }
+                    using var command = new SQLiteCommand(sql, connection);
+                    if (args != null)
+                    {
+                        foreach (var arg in args)
+                        {
+                            command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        }
+                    }
 
-            using var reader = command.ExecuteReader();
-            var result = new List<object[]>();
-            while (reader.Read())
-            {
-                var values = new object[reader.FieldCount];
-                for (var i = 0; i < reader.FieldCount; i++)
-                {
-                    values[i] = reader.GetValue(i);
+                    using var reader = command.ExecuteReader();
+                    var result = new List<object[]>();
+                    while (reader.Read())
+                    {
+                        var values = new object[reader.FieldCount];
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            values[i] = reader.GetValue(i);
+                        }
+                        result.Add(values);
+                    }
+                    return result.ToArray();
                 }
-                result.Add(values);
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
             }
-            return result.ToArray();
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
@@ -466,17 +489,33 @@ namespace VRCX
                 return ExecuteNonQueryPinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = new SQLiteConnection(_connectionString);
             connection.Open();
-            using var command = new SQLiteCommand(sql, connection);
-            if (args != null)
+            try
             {
-                foreach (var arg in args)
+                Interlocked.Increment(ref _activeCount);
+                try
                 {
-                    command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                    using var command = new SQLiteCommand(sql, connection);
+                    if (args != null)
+                    {
+                        foreach (var arg in args)
+                        {
+                            command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        }
+                    }
+                    return command.ExecuteNonQuery();
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
                 }
             }
-            return command.ExecuteNonQuery();
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         /// <summary>
@@ -602,6 +641,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -625,10 +666,13 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -647,6 +691,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -659,10 +705,13 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -686,6 +735,7 @@ namespace VRCX
         {
             EnsureInitialized();
             var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
             var conn = new SQLiteConnection(_connectionString);
             conn.Open();
             var holder = new TxHolder { Conn = conn };
@@ -718,6 +768,7 @@ namespace VRCX
                 }
                 finally
                 {
+                    Interlocked.Decrement(ref _totalBorrowed);
                     h.Conn.Dispose();
                 }
             }
@@ -733,6 +784,7 @@ namespace VRCX
             {
                 if (!_pinned.TryRemove(connId, out var h)) return;
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
         }
@@ -776,8 +828,27 @@ namespace VRCX
                 }
                 _pinned.TryRemove(connId, out _);
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
+        }
+
+        // ── Pool stats ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        /// </summary>
+        public string GetPoolStats()
+        {
+            var stats = new
+            {
+                active = _activeCount,
+                pinnedIdle = _pinned.Count - _pinnedActive,
+                poolIdle = _totalBorrowed - _pinned.Count,
+                max = _maxPoolSize
+            };
+            return JsonSerializer.Serialize(stats);
         }
     }
 }

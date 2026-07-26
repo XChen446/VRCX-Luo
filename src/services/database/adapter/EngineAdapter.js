@@ -862,6 +862,21 @@ class EngineAdapter {
     // ── JS utilities ─────────────────────────────────────────────────
 
     /**
+     * Connection pool three-state metrics snapshot.
+     *
+     * Calls the C# bridge's `GetPoolStats()` (SQLite / PostgreSQL / MySQL)
+     * and returns the parsed JSON: `{ active, pinnedIdle, poolIdle, max }`.
+     * Pure in-memory counter read on the C# side, no network call. Sampled
+     * once per second by the StatusBar database monitor (Issue #14).
+     *
+     * @abstract
+     * @returns {Promise<{ active: number, pinnedIdle: number, poolIdle: number, max: number }>}
+     */
+    async getPoolStats() {
+        throw new Error('abstract');
+    }
+
+    /**
      * Compute ISO date string for N days ago.
      *
      * @optional

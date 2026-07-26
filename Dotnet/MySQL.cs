@@ -37,6 +37,12 @@ namespace VRCX
         private MySqlDataSource _dataSource;
         private bool _initialized;
 
+        // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
+        private int _totalBorrowed;
+        private int _activeCount;
+        private int _pinnedActive;
+        private int _maxPoolSize;
+
         // ── Transaction pinning ────────────────────────────────────────────
         // 与 PostgreSQL.cs 对称:_pinned Map 持有借出的连接,sliding Timer
         // 防泄漏。connId 有值时 Execute/ExecuteNonQuery 走 pinned 连接 +
@@ -133,6 +139,7 @@ namespace VRCX
             ApplyUserOptions(builder);
 
             _dataSource = new MySqlDataSource(builder.ConnectionString);
+            _maxPoolSize = (int)builder.MaximumPoolSize;
             _initialized = true;
         }
 
@@ -232,11 +239,19 @@ namespace VRCX
         {
             try
             {
+                Interlocked.Increment(ref _totalBorrowed);
                 using var connection = _dataSource.OpenConnection();
-                using var cmd = connection.CreateCommand();
-                cmd.CommandText = "SELECT 1";
-                cmd.ExecuteScalar();
-                return true;
+                try
+                {
+                    using var cmd = connection.CreateCommand();
+                    cmd.CommandText = "SELECT 1";
+                    cmd.ExecuteScalar();
+                    return true;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                }
             }
             catch
             {
@@ -267,27 +282,38 @@ namespace VRCX
                 return ExecutePinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = _dataSource.OpenConnection();
-            using var command = new MySqlCommand(sql, connection);
-            AddParameters(command, args);
-
-            using var reader = command.ExecuteReader();
-            var result = new List<object[]>();
-            while (reader.Read())
+            try
             {
-                var values = new object[reader.FieldCount];
-                for (var i = 0; i < reader.FieldCount; i++)
+                Interlocked.Increment(ref _activeCount);
+                try
                 {
-                    // IsDBNull guard: DBNull.Value serialises to "{}" via
-                    // System.Text.Json and is the wrong value for the JS
-                    // bridge. Map NULL columns to null explicitly so both
-                    // the CefSharp (object[][]) and JSON entry points see
-                    // JS null instead of an empty object.
-                    values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    using var command = new MySqlCommand(sql, connection);
+                    AddParameters(command, args);
+
+                    using var reader = command.ExecuteReader();
+                    var result = new List<object[]>();
+                    while (reader.Read())
+                    {
+                        var values = new object[reader.FieldCount];
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                        }
+                        result.Add(values);
+                    }
+                    return result.ToArray();
                 }
-                result.Add(values);
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
             }
-            return result.ToArray();
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         /// <summary>
@@ -302,10 +328,26 @@ namespace VRCX
                 return ExecuteNonQueryPinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = _dataSource.OpenConnection();
-            using var command = new MySqlCommand(sql, connection);
-            AddParameters(command, args);
-            return command.ExecuteNonQuery();
+            try
+            {
+                Interlocked.Increment(ref _activeCount);
+                try
+                {
+                    using var command = new MySqlCommand(sql, connection);
+                    AddParameters(command, args);
+                    return command.ExecuteNonQuery();
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         /// <summary>
@@ -429,6 +471,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -452,10 +496,13 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -474,6 +521,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -486,10 +535,13 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -514,6 +566,7 @@ namespace VRCX
         {
             EnsureInitialized();
             var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
             var conn = _dataSource.OpenConnection();
             var holder = new TxHolder { Conn = conn };
             using (var beginCmd = conn.CreateCommand())
@@ -547,6 +600,7 @@ namespace VRCX
                 }
                 finally
                 {
+                    Interlocked.Decrement(ref _totalBorrowed);
                     h.Conn.Dispose();
                 }
             }
@@ -563,6 +617,7 @@ namespace VRCX
             {
                 if (!_pinned.TryRemove(connId, out var h)) return;
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
         }
@@ -606,8 +661,27 @@ namespace VRCX
                 }
                 _pinned.TryRemove(connId, out _);
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
+        }
+
+        // ── Pool stats ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        /// </summary>
+        public string GetPoolStats()
+        {
+            var stats = new
+            {
+                active = _activeCount,
+                pinnedIdle = _pinned.Count - _pinnedActive,
+                poolIdle = _totalBorrowed - _pinned.Count,
+                max = _maxPoolSize
+            };
+            return JsonSerializer.Serialize(stats);
         }
     }
 }

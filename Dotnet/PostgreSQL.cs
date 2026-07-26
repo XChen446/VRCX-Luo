@@ -31,6 +31,14 @@ namespace VRCX
         private DateTime _lastHealthCheck;
         private readonly TimeSpan _healthCheckInterval = TimeSpan.FromSeconds(30);
 
+        // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
+        // 纯内存计数器,Interlocked 保证线程安全。GetPoolStats() 读取并
+        // 返回 JSON,JS 侧每秒采样一次。不涉及网络调用。
+        private int _totalBorrowed;  // 已借出连接总数(含 pinned + 非 pinned)
+        private int _activeCount;   // 正在执行 SQL 的连接数(含 pinned + 非 pinned)
+        private int _pinnedActive;  // pinned 事务连接中正在执行 SQL 的数量
+        private int _maxPoolSize;   // 连接池上限,Init() 时从连接字符串解析
+
         // ── Transaction pinning ────────────────────────────────────────────
         // A pinned connection is borrowed from the pool and held across
         // multiple Execute/ExecuteNonQuery calls so that BEGIN ... INSERT
@@ -121,6 +129,7 @@ namespace VRCX
 
             var builder = new NpgsqlDataSourceBuilder(connectionString);
             _dataSource = builder.Build();
+            _maxPoolSize = 100; // 连接字符串硬编码 Maximum Pool Size=100
             _initialized = true;
         }
 
@@ -176,8 +185,24 @@ namespace VRCX
                 return ExecutePinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = _dataSource.OpenConnection();
-            return ExecuteCore(connection, sql, args);
+            try
+            {
+                Interlocked.Increment(ref _activeCount);
+                try
+                {
+                    return ExecuteCore(connection, sql, args);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         /// <summary>
@@ -193,9 +218,25 @@ namespace VRCX
                 return ExecuteNonQueryPinned(connId.Value, sql, args);
             }
             EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
             using var connection = _dataSource.OpenConnection();
-            using var command = CreateCommand(connection, sql, args);
-            return command.ExecuteNonQuery();
+            try
+            {
+                Interlocked.Increment(ref _activeCount);
+                try
+                {
+                    using var command = CreateCommand(connection, sql, args);
+                    return command.ExecuteNonQuery();
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+            }
         }
 
         /// <summary>
@@ -212,6 +253,22 @@ namespace VRCX
         }
 
         // ── Health checks ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        /// </summary>
+        public string GetPoolStats()
+        {
+            var stats = new
+            {
+                active = _activeCount,
+                pinnedIdle = _pinned.Count - _pinnedActive,
+                poolIdle = _totalBorrowed - _pinned.Count,
+                max = _maxPoolSize
+            };
+            return JsonSerializer.Serialize(stats);
+        }
 
         /// <summary>
         /// Return true when the data source has been initialized.
@@ -237,13 +294,21 @@ namespace VRCX
                 try
                 {
                     var sw = Stopwatch.StartNew();
+                    Interlocked.Increment(ref _totalBorrowed);
                     using var conn = _dataSource.OpenConnection();
-                    using var cmd = conn.CreateCommand();
-                    cmd.CommandText = "SELECT 1";
-                    cmd.ExecuteScalar();
-                    sw.Stop();
-                    latencyMs = sw.ElapsedMilliseconds;
-                    _lastHealthCheck = DateTime.Now;
+                    try
+                    {
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = "SELECT 1";
+                        cmd.ExecuteScalar();
+                        sw.Stop();
+                        latencyMs = sw.ElapsedMilliseconds;
+                        _lastHealthCheck = DateTime.Now;
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _totalBorrowed);
+                    }
                 }
                 catch
                 {
@@ -270,12 +335,20 @@ namespace VRCX
         {
             try
             {
+                Interlocked.Increment(ref _totalBorrowed);
                 using var conn = _dataSource.OpenConnection();
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT 1";
-                cmd.ExecuteScalar();
-                _lastHealthCheck = DateTime.Now;
-                return true;
+                try
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT 1";
+                    cmd.ExecuteScalar();
+                    _lastHealthCheck = DateTime.Now;
+                    return true;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                }
             }
             catch
             {
@@ -371,6 +444,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -395,12 +470,15 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         // OnTxTimeout 在 SQL 执行期间来过,当时没清理
                         // (InFlight > 0),现在由 finally 收尾。
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -419,6 +497,8 @@ namespace VRCX
             lock (_txLock)
             {
                 h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
                 h.Timer.Change(Timeout.Infinite, -1);
             }
             try
@@ -431,10 +511,13 @@ namespace VRCX
                 lock (_txLock)
                 {
                     h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
                     if (h.TimedOut)
                     {
                         _pinned.TryRemove(connId, out _);
                         h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
                         CleanupTx(h);
                     }
                     else
@@ -459,6 +542,7 @@ namespace VRCX
         {
             EnsureInitialized();
             var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
             var conn = _dataSource.OpenConnection();
             var tx = conn.BeginTransaction();
             var holder = new TxHolder { Conn = conn, Tx = tx };
@@ -482,7 +566,11 @@ namespace VRCX
                         $"connId={connId} 已超时回滚或不存在,无法 commit");
                 h.Timer.Dispose();
                 try { h.Tx.Commit(); }
-                finally { h.Conn.Dispose(); }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                    h.Conn.Dispose();
+                }
             }
         }
 
@@ -498,6 +586,7 @@ namespace VRCX
             {
                 if (!_pinned.TryRemove(connId, out var h)) return;
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
         }
@@ -541,6 +630,7 @@ namespace VRCX
                 }
                 _pinned.TryRemove(connId, out _);
                 h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
                 CleanupTx(h);
             }
         }
