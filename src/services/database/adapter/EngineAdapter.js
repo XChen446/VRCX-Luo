@@ -889,6 +889,30 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * Synchronous liveness probe. Returns true when the C# backend is
+     * initialised and the server is reachable (Ping succeeds). On
+     * CefSharp the bridge is synchronous; on Electron the bridge returns
+     * a Promise — see the dual-runtime note below.
+     *
+     * @abstract
+     * @returns {boolean}
+     */
+    isConnected() {
+        throw new Error('abstract');
+    }
+
+    /**
+     * Async health probe. Returns a JSON snapshot from the C# bridge:
+     * `{ connected, latencyMs, lastHealthCheck }`.
+     *
+     * @abstract
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        throw new Error('abstract');
+    }
+
     // ── Health / pool probes ────────────────────────────────────────
     //
     // The following methods (isConnected / getHealth / getPoolStats) call
