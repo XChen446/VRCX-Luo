@@ -1136,7 +1136,7 @@ class PgSQLAdapter extends EngineAdapter {
     }
 
     /**
-     * Async health probe backed by C# `PostgreSQL.GetHealth()`.
+     * Health probe backed by C# `PostgreSQL.GetHealth()`.
      *
      * Returns the parsed JSON payload from the C# bridge. The actual C#
      * payload (verified against `Dotnet/PostgreSQL.cs` GetHealth) is

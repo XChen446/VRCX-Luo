@@ -153,7 +153,7 @@ declare global {
          * read, no network call. Sampled once per second by StatusBar
          * (Issue #14).
          */
-        GetPoolStats: () => string;
+        GetPoolStats: () => Promise<string>;
         /**
          * Returns true when the backend has been initialised. Does not
          * probe the file system — a true return does not guarantee the
@@ -210,7 +210,7 @@ declare global {
          * read, no network call. Sampled once per second by StatusBar
          * (Issue #14).
          */
-        GetPoolStats: () => string;
+        GetPoolStats: () => Promise<string>;
     };
 
     const LogWatcher: {
@@ -532,7 +532,7 @@ declare global {
          * read, no network call. Sampled once per second by StatusBar
          * (Issue #14).
          */
-        GetPoolStats: () => string;
+        GetPoolStats: () => Promise<string>;
         /**
          * Probe with `SELECT 1` and return a JSON health snapshot:
          * `{ connected, latencyMs, lastHealthCheck }`. Symmetric to

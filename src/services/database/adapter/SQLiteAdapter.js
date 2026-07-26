@@ -1143,7 +1143,7 @@ class SQLiteAdapter extends EngineAdapter {
     }
 
     /**
-     * Async health probe backed by C# `SQLite.GetHealth()`.
+     * Health probe backed by C# `SQLite.GetHealth()`.
      *
      * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
      */

@@ -1190,7 +1190,7 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     /**
-     * Async health probe backed by C# `MySQL.GetHealth()`.
+     * Health probe backed by C# `MySQL.GetHealth()`.
      *
      * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
      */

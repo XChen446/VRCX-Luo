@@ -374,7 +374,6 @@ describe('PgSQLAdapter', () => {
 
     describe('getHealth', () => {
         it('returns { connected: false } when the bridge returns an empty payload (vitest stub)', async () => {
-            // noopAsync → Promise.resolve('') → falsy → fallback.
             const result = await adapter.getHealth();
             expect(result).toEqual({ connected: false });
         });
@@ -385,9 +384,6 @@ describe('PgSQLAdapter', () => {
                 latencyMs: 7,
                 lastHealthCheck: '2026-07-19T00:00:00.000Z'
             };
-            // Stub the binding method directly on the Proxy target.
-            // PostgreSQL is a Proxy with get → noopAsync; override the
-            // specific property by defining it on the proxy.
             const saved = globalThis.PostgreSQL;
             globalThis.PostgreSQL = {
                 GetHealth: () => Promise.resolve(JSON.stringify(payload))

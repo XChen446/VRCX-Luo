@@ -869,6 +869,10 @@ class EngineAdapter {
      * Pure in-memory counter read on the C# side, no network call. Sampled
      * once per second by the StatusBar database monitor (Issue #14).
      *
+     * On CefSharp (Windows) the bridge is synchronous; on Electron (Linux)
+     * the bridge wraps the call in a Promise via IPC. The adapter method
+     * is async to cover both runtimes.
+     *
      * @abstract
      * @returns {Promise<{ active: number, pinnedIdle: number, poolIdle: number, max: number }>}
      */
