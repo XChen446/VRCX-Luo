@@ -149,9 +149,9 @@ declare global {
         KeepAliveTransaction: (connId: number) => boolean;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
-         * read, no network call. Sampled once per second by StatusBar
-         * (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
+         * counter read, no network call. Sampled once per second by
+         * StatusBar (Issue #14).
          */
         GetPoolStats: () => Promise<string>;
         /**
@@ -212,9 +212,9 @@ declare global {
         GetHealth: () => Promise<string>;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
-         * read, no network call. Sampled once per second by StatusBar
-         * (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
+         * counter read, no network call. Sampled once per second by
+         * StatusBar (Issue #14).
          */
         GetPoolStats: () => Promise<string>;
         /**
@@ -539,9 +539,9 @@ declare global {
         Ping: () => Promise<boolean>;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, poolIdle, max }. Pure in-memory counter
-         * read, no network call. Sampled once per second by StatusBar
-         * (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
+         * counter read, no network call. Sampled once per second by
+         * StatusBar (Issue #14).
          */
         GetPoolStats: () => Promise<string>;
         /**

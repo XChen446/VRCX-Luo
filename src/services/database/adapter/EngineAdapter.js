@@ -865,12 +865,23 @@ class EngineAdapter {
      * Connection pool three-state metrics snapshot.
      *
      * Calls the C# bridge's `GetPoolStats()` (SQLite / PostgreSQL / MySQL)
-     * and returns the parsed JSON: `{ active, pinnedIdle, poolIdle, max }`.
+     * and returns the parsed JSON: `{ active, pinnedIdle, availableCapacity, max }`.
      * Pure in-memory counter read on the C# side, no network call. Sampled
      * once per second by the StatusBar database monitor (Issue #14).
      *
+     * The three states are:
+     *   - `active`: connections currently executing SQL (pinned + non-pinned).
+     *   - `pinnedIdle`: connections held by an open transaction but not
+     *     currently executing SQL (`_pinned.Count - _pinnedActive`).
+     *   - `availableCapacity`: `_maxPoolSize - _totalBorrowed` — the number
+     *     of connections that can still be borrowed without growing the pool.
+     *     This is the closest available proxy for "pool health" since the
+     *     driver public APIs do not expose the real idle-in-pool count; it
+     *     conflates idle connections sitting in the pool with unused quota.
+     *     A high value = healthy/cool; a low value = pressure.
+     *
      * @abstract
-     * @returns {Promise<{ active: number, pinnedIdle: number, poolIdle: number, max: number }>}
+     * @returns {Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>}
      */
     async getPoolStats() {
         throw new Error('abstract');

@@ -922,10 +922,10 @@
     const dbCanvasRef = ref(null);
     const dbActiveHistory = ref(new Array(GRAPH_POINTS).fill(0));
     const dbPinnedIdleHistory = ref(new Array(GRAPH_POINTS).fill(0));
-    const dbPoolIdleHistory = ref(new Array(GRAPH_POINTS).fill(0));
+    const dbAvailableHistory = ref(new Array(GRAPH_POINTS).fill(0));
     const dbActiveCount = ref(0);
     const dbPinnedIdleCount = ref(0);
-    const dbPoolIdleCount = ref(0);
+    const dbAvailableCount = ref(0);
     const dbMaxPool = ref(0);
     // Y-axis dynamic scale levels
     const DB_SCALE_LEVELS = [5, 20, 50, 80, 100];
@@ -938,12 +938,12 @@
             const stats = await adapter.getPoolStats();
             const active = stats.active || 0;
             const pinnedIdle = stats.pinnedIdle || 0;
-            const poolIdle = stats.poolIdle || 0;
+            const availableCapacity = stats.availableCapacity || 0;
             const max = stats.max || 0;
 
             dbActiveCount.value = active;
             dbPinnedIdleCount.value = pinnedIdle;
-            dbPoolIdleCount.value = poolIdle;
+            dbAvailableCount.value = availableCapacity;
             dbMaxPool.value = max;
 
             const arrA = dbActiveHistory.value;
@@ -956,13 +956,13 @@
             arrP.push(pinnedIdle);
             dbPinnedIdleHistory.value = arrP;
 
-            const arrI = dbPoolIdleHistory.value;
-            arrI.shift();
-            arrI.push(poolIdle);
-            dbPoolIdleHistory.value = arrI;
+            const arrAv = dbAvailableHistory.value;
+            arrAv.shift();
+            arrAv.push(availableCapacity);
+            dbAvailableHistory.value = arrAv;
 
             // Dynamic scale: upgrade immediately, downgrade when all points below next-lower threshold
-            const peak = Math.max(active, pinnedIdle, poolIdle);
+            const peak = Math.max(active, pinnedIdle, availableCapacity);
             const currentLevel = DB_SCALE_LEVELS[dbScaleLevel.value];
             if (peak > currentLevel && dbScaleLevel.value < DB_SCALE_LEVELS.length - 1) {
                 // Find the lowest level that fits the peak
@@ -976,7 +976,7 @@
                 const nextLowerThreshold = DB_SCALE_LEVELS[dbScaleLevel.value - 1];
                 const allBelow = arrA.every((v) => v <= nextLowerThreshold)
                     && arrP.every((v) => v <= nextLowerThreshold)
-                    && arrI.every((v) => v <= nextLowerThreshold);
+                    && arrAv.every((v) => v <= nextLowerThreshold);
                 if (allBelow) {
                     dbScaleLevel.value--;
                 }
@@ -1026,8 +1026,8 @@
             ctx.stroke();
         };
 
-        // pool-idle (green), pinned-idle (yellow/amber), active (red)
-        drawLine(dbPoolIdleHistory.value, '#22c55e', 0.7);
+        // available (green), pinned-idle (yellow/amber), active (red)
+        drawLine(dbAvailableHistory.value, '#22c55e', 0.7);
         drawLine(dbPinnedIdleHistory.value, '#eab308', 0.7);
         drawLine(dbActiveHistory.value, '#ef4444', 0.8);
         ctx.globalAlpha = 1;
@@ -1036,7 +1036,7 @@
     const dbTooltip = computed(() => {
         return t('status_bar.db_tooltip_active', { count: dbActiveCount.value })
             + '\n' + t('status_bar.db_tooltip_pinned_idle', { count: dbPinnedIdleCount.value })
-            + '\n' + t('status_bar.db_tooltip_pool_idle', { count: dbPoolIdleCount.value });
+            + '\n' + t('status_bar.db_tooltip_available', { count: dbAvailableCount.value });
     });
 
     async function handleDbClick() {

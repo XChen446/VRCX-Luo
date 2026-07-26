@@ -264,7 +264,7 @@ namespace VRCX
             {
                 active = _activeCount,
                 pinnedIdle = _pinned.Count - _pinnedActive,
-                poolIdle = _totalBorrowed - _pinned.Count,
+                availableCapacity = _maxPoolSize - _totalBorrowed,
                 max = _maxPoolSize
             };
             return JsonSerializer.Serialize(stats);
