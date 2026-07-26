@@ -982,9 +982,10 @@
                 }
             } else if (dbScaleLevel.value > 0) {
                 const nextLowerThreshold = DB_SCALE_LEVELS[dbScaleLevel.value - 1];
+                // 降级只看 active + pinnedIdle(压力信号),不看 availableCapacity(容量信号)
+                // availableCapacity 空闲时恒=100,纳入降级判定会永久卡最高档
                 const allBelow = arrA.every((v) => v <= nextLowerThreshold)
-                    && arrP.every((v) => v <= nextLowerThreshold)
-                    && arrAv.every((v) => v <= nextLowerThreshold);
+                    && arrP.every((v) => v <= nextLowerThreshold);
                 if (allBelow) {
                     dbScaleLevel.value--;
                 }
