@@ -34,7 +34,7 @@ namespace VRCX
     {
         public static MySQL Instance;
 
-        private string _connectionString;
+        private MySqlDataSource _dataSource;
         private bool _initialized;
 
         // ── Transaction pinning ────────────────────────────────────────────
@@ -132,7 +132,7 @@ namespace VRCX
 
             ApplyUserOptions(builder);
 
-            _connectionString = builder.ConnectionString;
+            _dataSource = new MySqlDataSource(builder.ConnectionString);
             _initialized = true;
         }
 
@@ -186,7 +186,8 @@ namespace VRCX
         public void Exit()
         {
             _initialized = false;
-            _connectionString = null;
+            _dataSource?.Dispose();
+            _dataSource = null;
             // 清理任何残留的 pinned 事务连接
             lock (_txLock)
             {
@@ -209,7 +210,7 @@ namespace VRCX
         /// <returns><c>true</c> if initialised with a connection string.</returns>
         public bool IsConnected()
         {
-            return _initialized && !string.IsNullOrEmpty(_connectionString);
+            return _initialized && _dataSource != null;
         }
 
         /// <summary>
@@ -231,8 +232,7 @@ namespace VRCX
         {
             try
             {
-                using var connection = new MySqlConnection(_connectionString);
-                connection.Open();
+                using var connection = _dataSource.OpenConnection();
                 using var cmd = connection.CreateCommand();
                 cmd.CommandText = "SELECT 1";
                 cmd.ExecuteScalar();
@@ -267,8 +267,7 @@ namespace VRCX
                 return ExecutePinned(connId.Value, sql, args);
             }
             EnsureInitialized();
-            using var connection = new MySqlConnection(_connectionString);
-            connection.Open();
+            using var connection = _dataSource.OpenConnection();
             using var command = new MySqlCommand(sql, connection);
             AddParameters(command, args);
 
@@ -303,8 +302,7 @@ namespace VRCX
                 return ExecuteNonQueryPinned(connId.Value, sql, args);
             }
             EnsureInitialized();
-            using var connection = new MySqlConnection(_connectionString);
-            connection.Open();
+            using var connection = _dataSource.OpenConnection();
             using var command = new MySqlCommand(sql, connection);
             AddParameters(command, args);
             return command.ExecuteNonQuery();
@@ -321,8 +319,8 @@ namespace VRCX
         /// </summary>
         public string ExecuteJson(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var connection = new MySqlConnection(connectionString);
-            connection.Open();
+            using var dataSource = new MySqlDataSource(connectionString);
+            using var connection = dataSource.OpenConnection();
 
             using var command = new MySqlCommand(sql, connection);
             AddParameters(command, args);
@@ -352,8 +350,8 @@ namespace VRCX
         /// </summary>
         public int ExecuteNonQuery(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var connection = new MySqlConnection(connectionString);
-            connection.Open();
+            using var dataSource = new MySqlDataSource(connectionString);
+            using var connection = dataSource.OpenConnection();
 
             using var command = new MySqlCommand(sql, connection);
             AddParameters(command, args);
@@ -389,7 +387,7 @@ namespace VRCX
 
         private void EnsureInitialized()
         {
-            if (!_initialized || string.IsNullOrEmpty(_connectionString))
+            if (!_initialized || _dataSource == null)
                 throw new InvalidOperationException(
                     "MySQL backend not initialised. Call Init() first.");
         }
@@ -516,8 +514,7 @@ namespace VRCX
         {
             EnsureInitialized();
             var connId = Interlocked.Increment(ref _nextConnId);
-            var conn = new MySqlConnection(_connectionString);
-            conn.Open();
+            var conn = _dataSource.OpenConnection();
             var holder = new TxHolder { Conn = conn };
             using (var beginCmd = conn.CreateCommand())
             {
