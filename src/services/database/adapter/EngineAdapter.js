@@ -869,16 +869,35 @@ class EngineAdapter {
      * Pure in-memory counter read on the C# side, no network call. Sampled
      * once per second by the StatusBar database monitor (Issue #14).
      *
-     * On CefSharp (Windows) the bridge is synchronous; on Electron (Linux)
-     * the bridge wraps the call in a Promise via IPC. The adapter method
-     * is async to cover both runtimes.
-     *
      * @abstract
      * @returns {Promise<{ active: number, pinnedIdle: number, poolIdle: number, max: number }>}
      */
     async getPoolStats() {
         throw new Error('abstract');
     }
+
+    // ── Health / pool probes ────────────────────────────────────────
+    //
+    // The following methods (isConnected / getHealth / getPoolStats) call
+    // C# bridge methods that are synchronous on the C# side but are
+    // declared async here because of the dual-runtime bridge:
+    //
+    //   - CefSharp (Windows): binds C# methods directly → returns plain
+    //     synchronous values (string / boolean).
+    //   - Electron (Linux): wraps ALL C# calls in a Promise via the
+    //     InteropApi Proxy (src/ipc-electron/interopApi.js:16), which does
+    //     `async (...args) => await target.callMethod(...)`.
+    //
+    // `await` works uniformly across both runtimes: awaiting a plain
+    // value returns it immediately; awaiting a Promise waits for
+    // resolution.  All callers MUST `await` these methods — calling them
+    // synchronously would get a Promise on Electron but a raw value on
+    // CefSharp, producing platform-dependent bugs.
+    //
+    // globals.d.ts types these as `Promise<>` to match the widest
+    // runtime (Electron IPC).  See also:
+    //   - src/ipc-electron/interopApi.js (Electron bridge Proxy)
+    //   - src/types/globals.d.ts (type declarations)
 
     /**
      * Compute ISO date string for N days ago.
