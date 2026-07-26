@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -20,6 +21,7 @@ namespace VRCX
         private int _activeCount;
         private int _pinnedActive;
         private int _maxPoolSize;
+        private DateTime _lastHealthCheck;
 
         // ── Transaction pinning ────────────────────────────────────────────
         // 与 PostgreSQL.cs / MySQL.cs 对称:_pinned Map 持有借出的连接,
@@ -425,6 +427,95 @@ namespace VRCX
             }
             // 清空 ADO.NET 池(System.Data.SQLite 专属 API)
             try { SQLiteConnection.ClearAllPools(); } catch { }
+        }
+
+        // ── Health checks (与 PostgreSQL.cs / MySQL.cs 对称) ──────────────
+
+        /// <summary>
+        /// Return true when the backend has been initialised. Does not probe
+        /// the file system — callers needing a real liveness check should
+        /// use <see cref="Ping"/> (SELECT 1) or <see cref="GetHealth"/>.
+        /// </summary>
+        public bool IsConnected()
+        {
+            return _initialized && !string.IsNullOrEmpty(_connectionString);
+        }
+
+        /// <summary>
+        /// Probe the database file with <c>SELECT 1</c> and return a JSON
+        /// health snapshot: <c>{ connected, latencyMs, lastHealthCheck }</c>.
+        /// </summary>
+        public string GetHealth()
+        {
+            bool connected = IsConnected();
+            long latencyMs = -1;
+            if (connected)
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    Interlocked.Increment(ref _totalBorrowed);
+                    using var conn = new SQLiteConnection(_connectionString);
+                    conn.Open();
+                    try
+                    {
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = "SELECT 1";
+                        cmd.ExecuteScalar();
+                        sw.Stop();
+                        latencyMs = sw.ElapsedMilliseconds;
+                        _lastHealthCheck = DateTime.Now;
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _totalBorrowed);
+                    }
+                }
+                catch
+                {
+                    connected = false;
+                }
+            }
+
+            var health = new
+            {
+                connected,
+                latencyMs,
+                lastHealthCheck = _lastHealthCheck == default
+                    ? null
+                    : _lastHealthCheck.ToString("o")
+            };
+            return JsonSerializer.Serialize(health);
+        }
+
+        /// <summary>
+        /// Lightweight liveness probe. Returns true when <c>SELECT 1</c>
+        /// succeeds against a fresh pooled connection.
+        /// </summary>
+        public bool Ping()
+        {
+            try
+            {
+                Interlocked.Increment(ref _totalBorrowed);
+                using var conn = new SQLiteConnection(_connectionString);
+                conn.Open();
+                try
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT 1";
+                    cmd.ExecuteScalar();
+                    _lastHealthCheck = DateTime.Now;
+                    return true;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // for Electron

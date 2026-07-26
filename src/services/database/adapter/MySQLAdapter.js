@@ -1189,6 +1189,16 @@ class MySQLAdapter extends EngineAdapter {
         );
     }
 
+    /**
+     * Async health probe backed by C# `MySQL.GetHealth()`.
+     *
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        const json = await MySQL.GetHealth();
+        return json ? JSON.parse(json) : { connected: false };
+    }
+
     async getPoolStats() {
         const json = await MySQL.GetPoolStats();
         return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading;
 using MySqlConnector;
@@ -42,6 +43,7 @@ namespace VRCX
         private int _activeCount;
         private int _pinnedActive;
         private int _maxPoolSize;
+        private DateTime _lastHealthCheck;
 
         // ── Transaction pinning ────────────────────────────────────────────
         // 与 PostgreSQL.cs 对称:_pinned Map 持有借出的连接,sliding Timer
@@ -257,6 +259,53 @@ namespace VRCX
             {
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Probe the server with <c>SELECT 1</c> and return a JSON health
+        /// snapshot: <c>{ connected, latencyMs, lastHealthCheck }</c>.
+        /// Symmetric to <see cref="PostgreSQL.GetHealth"/>.
+        /// </summary>
+        public string GetHealth()
+        {
+            bool connected = IsConnected();
+            long latencyMs = -1;
+            if (connected)
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    Interlocked.Increment(ref _totalBorrowed);
+                    using var conn = _dataSource.OpenConnection();
+                    try
+                    {
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = "SELECT 1";
+                        cmd.ExecuteScalar();
+                        sw.Stop();
+                        latencyMs = sw.ElapsedMilliseconds;
+                        _lastHealthCheck = DateTime.Now;
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _totalBorrowed);
+                    }
+                }
+                catch
+                {
+                    connected = false;
+                }
+            }
+
+            var health = new
+            {
+                connected,
+                latencyMs,
+                lastHealthCheck = _lastHealthCheck == default
+                    ? null
+                    : _lastHealthCheck.ToString("o")
+            };
+            return JsonSerializer.Serialize(health);
         }
 
         /// <summary>

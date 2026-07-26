@@ -1130,6 +1130,27 @@ class SQLiteAdapter extends EngineAdapter {
         const json = await SQLite.GetPoolStats();
         return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
     }
+
+    /**
+     * Synchronous liveness probe backed by C# `SQLite.Ping()`.
+     *
+     * @returns {boolean}
+     */
+    isConnected() {
+        return Boolean(
+            typeof SQLite !== 'undefined' && SQLite?.Ping?.()
+        );
+    }
+
+    /**
+     * Async health probe backed by C# `SQLite.GetHealth()`.
+     *
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        const json = await SQLite.GetHealth();
+        return json ? JSON.parse(json) : { connected: false };
+    }
 }
 
 export { SQLiteAdapter };

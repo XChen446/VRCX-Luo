@@ -154,6 +154,23 @@ declare global {
          * (Issue #14).
          */
         GetPoolStats: () => string;
+        /**
+         * Returns true when the backend has been initialised. Does not
+         * probe the file system — a true return does not guarantee the
+         * database file is accessible. Prefer `Ping` for a real liveness
+         * check.
+         */
+        IsConnected: () => Promise<boolean>;
+        /**
+         * Lightweight liveness probe: executes `SELECT 1` against the pool.
+         * Returns true on success, false on failure.
+         */
+        Ping: () => Promise<boolean>;
+        /**
+         * Probe with `SELECT 1` and return a JSON health snapshot:
+         * `{ connected, latencyMs, lastHealthCheck }`.
+         */
+        GetHealth: () => Promise<string>;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -516,6 +533,12 @@ declare global {
          * (Issue #14).
          */
         GetPoolStats: () => string;
+        /**
+         * Probe with `SELECT 1` and return a JSON health snapshot:
+         * `{ connected, latencyMs, lastHealthCheck }`. Symmetric to
+         * PostgreSQL.GetHealth.
+         */
+        GetHealth: () => Promise<string>;
     };
 
     const webApiService: {
