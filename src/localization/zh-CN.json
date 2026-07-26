@@ -3481,6 +3481,11 @@
         "auto_follow_active": "跟随中",
         "reorder": "调整顺序",
         "move_up": "上移",
-        "move_down": "下移"
+        "move_down": "下移",
+        "db": "数据库",
+        "db_active": "{active}/{max}",
+        "db_tooltip_active": "正在执行 SQL: {count}",
+        "db_tooltip_pinned_idle": "事务占用(空闲): {count}",
+        "db_tooltip_pool_idle": "池中空闲: {count}"
     }
 }

@@ -14,7 +14,8 @@ export const defaultVisibility = {
     uptime: true,
     clocks: true,
     zoom: true,
-    servers: true
+    servers: true,
+    db: true
 };
 
 export const defaultOrder = [
@@ -24,6 +25,7 @@ export const defaultOrder = [
     'autoFollow',
     'servers',
     'ws',
+    'db',
     'nowPlaying',
     'clocks',
     'zoom',

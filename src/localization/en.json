@@ -3432,6 +3432,11 @@
         "move_down": "Move Down",
         "view_mode": "View Mode",
         "view_merged": "Merged View",
-        "view_primary": "Primary Account"
+        "view_primary": "Primary Account",
+        "db": "Database",
+        "db_active": "{active}/{max}",
+        "db_tooltip_active": "Executing SQL: {count}",
+        "db_tooltip_pinned_idle": "Pinned (idle): {count}",
+        "db_tooltip_pool_idle": "Pool idle: {count}"
     }
 }
