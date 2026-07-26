@@ -157,7 +157,8 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async execute(callback, sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
-        const json = await PostgreSQL.ExecuteJson(pgSql, pgArgs);
+        const connId = this._txStack.at(-1);
+        const json = await PostgreSQL.ExecuteJson(pgSql, pgArgs, connId);
         if (!json) return;
         const items = JSON.parse(json);
         if (Array.isArray(items)) {
@@ -175,7 +176,8 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
-        return await PostgreSQL.ExecuteNonQuery(pgSql, pgArgs);
+        const connId = this._txStack.at(-1);
+        return await PostgreSQL.ExecuteNonQuery(pgSql, pgArgs, connId);
     }
 
     // ── CRUD ──────────────────────────────────────────────────────────
@@ -910,19 +912,49 @@ class PgSQLAdapter extends EngineAdapter {
 
     // ── Transaction ───────────────────────────────────────────────────
 
-    /** BEGIN transaction. */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    /**
+     * 借一条 pooled 连接 + BEGIN 事务,返回 connId 供后续
+     * execute/executeNonQuery 路由到同一连接。C# 侧 sliding 30s 超时
+     * 防泄漏。详见 PostgreSQL.cs `_pinned` + `BeginTransaction`。
+     *
+     * @override
+     * @returns {Promise<number>} connId
+     * @protected
+     */
+    async _doBegin() {
+        return PostgreSQL.BeginTransaction();
     }
 
-    /** COMMIT transaction. */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * COMMIT 事务 + 还池。connId 已超时回滚时抛错(调用方应重试)。
+     *
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doCommit(connId) {
+        PostgreSQL.CommitTransaction(connId);
     }
 
-    /** ROLLBACK transaction. */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * ROLLBACK 事务 + 还池。connId 已超时回滚时静默 no-op。
+     *
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doRollback(connId) {
+        PostgreSQL.RollbackTransaction(connId);
+    }
+
+    /**
+     * @override
+     * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        return PostgreSQL.KeepAliveTransaction(connId);
     }
 
     // ── Maintenance ───────────────────────────────────────────────────
@@ -1073,27 +1105,36 @@ class PgSQLAdapter extends EngineAdapter {
     }
 
     /**
-     * Synchronous connection-state check backed by C# `PostgreSQL.IsConnected()`.
+     * Async liveness probe backed by C# `PostgreSQL.Ping()`.
      *
-     * Defensive against the vitest `noopAsync` stub (returns `Promise<''>`)
-     * and against environments where the binding is absent entirely
-     * (bare `PostgreSQL` reference would throw `ReferenceError` under
-     * optional chaining — `?.` only handles `null`/`undefined`, not
-     * undeclared identifiers). The `typeof` guard short-circuits both the
-     * undeclared case and the `undefined` value case. `Boolean(...)` of a
-     * thenable is `true`, which is acceptable for a liveness probe — the
-     * real C# binding returns a synchronous `bool`.
+     * `Ping` executes `SELECT 1` against the pooled data source, so it
+     * confirms the backend is actually reachable — unlike `IsConnected`,
+     * which only reports initialisation state. Worst-case latency when the
+     * server is unreachable is bounded by the connection string `Timeout`
+     * (default 15s); in the common connected case it is sub-millisecond.
      *
-     * @returns {boolean}
+     * Used by `pullEngine`/`pushEngine` as a fail-fast guard before
+     * attempting a long copy operation, so a disconnected backend produces
+     * a clear "backend is not connected" error rather than a delayed,
+     * mid-copy SQL failure.
+     *
+     * Declared `async` and `await`s the C# bridge so the result is
+     * correct on both runtimes: on CefSharp `Ping()` returns a plain
+     * `boolean` (awaiting it is a no-op); on Electron `Ping()` returns
+     * a `Promise<boolean>` via the InteropApi Proxy, and `Boolean(Promise)`
+     * would otherwise always be `true`. The `typeof` guard short-circuits
+     * both the undeclared-binding case and the `undefined` value case,
+     * returning `false` without touching the bridge.
+     *
+     * @returns {Promise<boolean>}
      */
-    isConnected() {
-        return Boolean(
-            typeof PostgreSQL !== 'undefined' && PostgreSQL?.IsConnected?.()
-        );
+    async isConnected() {
+        if (typeof PostgreSQL === 'undefined' || !PostgreSQL?.Ping) return false;
+        return Boolean(await PostgreSQL.Ping());
     }
 
     /**
-     * Async health probe backed by C# `PostgreSQL.GetHealth()`.
+     * Health probe backed by C# `PostgreSQL.GetHealth()`.
      *
      * Returns the parsed JSON payload from the C# bridge. The actual C#
      * payload (verified against `Dotnet/PostgreSQL.cs` GetHealth) is
@@ -1112,6 +1153,15 @@ class PgSQLAdapter extends EngineAdapter {
     async getHealth() {
         const json = await PostgreSQL.GetHealth();
         return json ? JSON.parse(json) : { connected: false };
+    }
+
+    async getPoolStats() {
+        const json = await PostgreSQL.GetPoolStats();
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+    }
+
+    async clearIdleConnections() {
+        await PostgreSQL.ClearIdleConnections();
     }
 
     // ── Schema (initUserSchema / initGlobalSchema) ────────────────────

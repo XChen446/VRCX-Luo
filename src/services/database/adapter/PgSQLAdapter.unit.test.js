@@ -29,6 +29,14 @@ import { PgSQLAdapter } from './PgSQLAdapter.js';
  *   - `listTables` / `_describeColumns` / `listTablesTypes` catalog
  *     queries (covered by the integration test when `PG_TEST_HOST` is set)
  *
+ * TODO: 事务单元测试覆盖空白。`beginTransaction`/`commit`/`rollback`
+ *   (现已标 @private) 及 `withTransaction` 的 PG 引擎级语义
+ *   (pinned 连接生命周期、C# `BeginTransaction/CommitTransaction`
+ *   往返、超时 sliding Timer 回收后 rollback no-op)目前仅由
+ *   `transaction.test.js` 用 MemorySQLiteAdapter 做引擎无关的栈
+ *   契约验证。PG 特定的事务行为需真实 Npgsql 后端 + C# 桥,
+ *   无法在纯 JS unit test 中覆盖,待 follow-up 补集成测试。
+ *
  * JS has no true private methods — the `_`-prefixed methods are accessed
  * directly on the instance. This is intentional and matches the
  * codebase convention (the SQLiteAdapter tests do the same).
@@ -341,22 +349,23 @@ describe('PgSQLAdapter', () => {
     });
 
     describe('isConnected', () => {
-        it('returns a boolean and does not throw under the vitest noopAsync stub', () => {
-            // Under vitest.setup.js, PostgreSQL.IsConnected is noopAsync
-            // → returns Promise.resolve(''). Boolean(Promise) === true.
-            // The real C# binding returns a synchronous bool. Either way
-            // the call must not throw and must return a boolean.
-            const result = adapter.isConnected();
+        it('resolves to a boolean and does not throw under the vitest noopAsync stub', async () => {
+            // Under vitest.setup.js, PostgreSQL is a Proxy returning noopAsync
+            // for any property access, so PostgreSQL.Ping is noopAsync
+            // → returns Promise.resolve(''). `await` it → '' → Boolean('') === false.
+            // The real C# binding returns a synchronous bool (CefSharp) or a
+            // Promise<boolean> (Electron); either way `await` yields a boolean.
+            const result = await adapter.isConnected();
             expect(typeof result).toBe('boolean');
-            expect(() => adapter.isConnected()).not.toThrow();
+            await expect(adapter.isConnected()).resolves.toBeDefined();
         });
 
-        it('returns false when the PostgreSQL binding is absent', () => {
+        it('resolves false when the PostgreSQL binding is absent', async () => {
             const saved = globalThis.PostgreSQL;
             // @ts-expect-error — deliberately delete the global for this test
             delete globalThis.PostgreSQL;
             try {
-                expect(adapter.isConnected()).toBe(false);
+                await expect(adapter.isConnected()).resolves.toBe(false);
             } finally {
                 globalThis.PostgreSQL = saved;
             }
@@ -365,7 +374,6 @@ describe('PgSQLAdapter', () => {
 
     describe('getHealth', () => {
         it('returns { connected: false } when the bridge returns an empty payload (vitest stub)', async () => {
-            // noopAsync → Promise.resolve('') → falsy → fallback.
             const result = await adapter.getHealth();
             expect(result).toEqual({ connected: false });
         });
@@ -376,9 +384,6 @@ describe('PgSQLAdapter', () => {
                 latencyMs: 7,
                 lastHealthCheck: '2026-07-19T00:00:00.000Z'
             };
-            // Stub the binding method directly on the Proxy target.
-            // PostgreSQL is a Proxy with get → noopAsync; override the
-            // specific property by defining it on the proxy.
             const saved = globalThis.PostgreSQL;
             globalThis.PostgreSQL = {
                 GetHealth: () => Promise.resolve(JSON.stringify(payload))

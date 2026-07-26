@@ -64,12 +64,17 @@ const database = {
         await adapter.initGlobalSchema();
     },
 
-    begin() {
-        adapter.begin();
-    },
-
-    commit() {
-        adapter.commit();
+    /**
+     * 在事务中执行 fn。委托给 adapter.withTransaction,自动管理
+     * connId 获取/提交/回滚 + 事务上下文栈。fn 内调用 database
+     * 模块的写方法自动走 pinned 连接(事务态)。
+     *
+     * @template T
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     */
+    async withTransaction(fn) {
+        return adapter.withTransaction(fn);
     },
 
     async vacuum() {

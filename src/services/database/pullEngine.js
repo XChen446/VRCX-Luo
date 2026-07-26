@@ -30,8 +30,10 @@
 //     `adapter.engineType` is a remote engine (not 'sqlite'/'unknown').
 //   - `id` / `session_id` columns are copied verbatim (SELECT * includes
 //     them, bulkInsert writes them through).
-//   - Errors per-table are collected and the run continues — a single
-//     broken table does not abort the whole backup.
+//   - Errors per-GROUP are collected and the run continues — a single
+//     broken group (global / per-prefix / mirror) does not abort the
+//     whole pull. Tables within a group share one transaction (atomic +
+//     1 fsync per group instead of per-batch).
 //   - Row-count verification per table; deeper sampling left to QA.
 //   - DATA-INTEGRITY PRIORITY: the 16 global + 22 user base-name whitelists
 //     cover the *known* schema, but the backup MUST NOT silently drop tables
@@ -153,9 +155,9 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  *
  * The body is engine-agnostic: it only touches abstract `EngineAdapter`
  * methods every adapter implements, so PG and MySQL share one code path.
- * `isConnected` (a PgSQLAdapter extension) is probed best-effort when
- * present; subclasses without it are assumed connected after a successful
- * Init.
+ * `isConnected` (a real `SELECT 1` liveness probe on both PgSQLAdapter
+ * and MySQLAdapter) is probed best-effort when present; subclasses
+ * without it (SQLite) are assumed connected after a successful Init.
  *
  * @param {string} dstConnStr - SQLite connection string like 'sqlite:///C:/path/to/backup.sqlite3'.
  * @param {object} [options] - Optional { batchSize=500, onProgress? }.
@@ -176,7 +178,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     // switched engine + restarted yet — refuse to run rather than produce
     // a useless SQLite → SQLite copy that masquerades as a remote backup.
     const engine =
-        /** @type {{ engineType?: string, isConnected?: () => boolean }} */ (
+        /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
             adapter
         ).engineType;
     if (!engine || engine === 'sqlite' || engine === 'unknown') {
@@ -186,10 +188,10 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                 'restart the app before running the backup.'
         );
     }
-    const adapterAny = /** @type {{ isConnected?: () => boolean }} */ (adapter);
+    const adapterAny = /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
     if (
         typeof adapterAny.isConnected === 'function' &&
-        !adapterAny.isConnected()
+        !await adapterAny.isConnected()
     ) {
         throw new Error(
             `pullToSqlite: ${engine} backend is not connected. ` +
@@ -221,12 +223,14 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     /** @type {Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>} */
     const globalSchema = [];
     /**
-     * User tables as a list of copy tasks: `{ srcTable, dstTable, columns }`.
+     * User tables as a per-prefix Map of copy tasks: `{ srcTable, dstTable, columns }`.
+     * Keyed by prefix so §4 can wrap each prefix's tables in their own
+     * transaction (per-account atomicity, 1 fsync per prefix).
      * Built uniformly for both PG (schema-qualified source → flat dest)
      * and MySQL (flat source → flat dest), so §4 has one code path.
-     * @type {Array<{srcTable: string, dstTable: string, columns: Array<{name: string, isHidden: boolean}>}>}
+     * @type {Map<string, Array<{srcTable: string, dstTable: string, columns: Array<{name: string, isHidden: boolean}>}>>}
      */
-    const userTasks = [];
+    const userTasksByPrefix = new Map();
     /** @type {string[]} non-whitelist table names to mirror in §5 */
     const unknownNames = [];
     /** @type {Map<string, {tableName: string, columns: Array}>} */
@@ -248,7 +252,10 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         const pgUser = await adapter.listTablesTypes();
         for (const entry of pgUser) {
             const { prefix, name } = splitPgUserTable(entry.tableName);
-            userTasks.push({
+            if (!userTasksByPrefix.has(prefix)) {
+                userTasksByPrefix.set(prefix, []);
+            }
+            userTasksByPrefix.get(prefix).push({
                 srcTable: entry.tableName,
                 dstTable: dstAdapter.userTable(prefix, name),
                 columns: entry.columns
@@ -280,13 +287,16 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                 unknownNames.push(tableName);
             }
         }
-        // Flatten the grouped map into per-table copy tasks so §4 has a
-        // single uniform loop (same shape as the PG branch).
+        // Group into per-prefix map so §4 has a single uniform loop
+        // (same shape as the PG branch) + per-prefix transaction wrapping.
         for (const [prefix, names] of userTablesByPrefix) {
+            if (!userTasksByPrefix.has(prefix)) {
+                userTasksByPrefix.set(prefix, []);
+            }
             for (const name of names) {
                 const srcTable = `${prefix}_${name}`;
                 const entry = srcSchemaMap.get(srcTable);
-                userTasks.push({
+                userTasksByPrefix.get(prefix).push({
                     srcTable,
                     dstTable: dstAdapter.userTable(prefix, name),
                     columns: entry?.columns || []
@@ -296,68 +306,74 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     }
 
     // ── 3. Ensure destination global schema exists + copy global tables ─
+    // 整组包一个事务(目标 SQLite 单连接,1 次 fsync)。
     await dstAdapter.initGlobalSchema();
     const globalTotal = globalSchema.length;
     let globalIdx = 0;
-    for (const { tableName, columns } of globalSchema) {
-        globalIdx += 1;
-        // PG returns `public.gamelog_location`; MySQL/SQLite return the
-        // bare `gamelog_location`. The destination SQLite always uses the
-        // bare name (its global tables are flat), so strip any `public.`
-        // prefix.
-        const dstTable = stripSchemaPrefix(tableName);
-        if (typeof onProgress === 'function') {
-            onProgress({
-                phase: 'global',
-                table: dstTable,
-                current: globalIdx,
-                total: globalTotal,
-                rowsCopied
-            });
-        }
-        try {
-            const copied = await copyTable(
-                adapter,
-                dstAdapter,
-                tableName, // source identifier (PG: schema-qualified)
-                dstTable, // destination flat name
-                batchSize,
-                columns
-            );
-            rowsCopied += copied;
-            globalTables += 1;
-        } catch (err) {
-            errors.push(`global:${dstTable}: ${err.message || String(err)}`);
-        }
+    try {
+        await dstAdapter.withTransaction(async () => {
+            for (const { tableName, columns } of globalSchema) {
+                globalIdx += 1;
+                const dstTable = stripSchemaPrefix(tableName);
+                if (typeof onProgress === 'function') {
+                    onProgress({
+                        phase: 'global',
+                        table: dstTable,
+                        current: globalIdx,
+                        total: globalTotal,
+                        rowsCopied
+                    });
+                }
+                const copied = await copyTable(
+                    adapter,
+                    dstAdapter,
+                    tableName,
+                    dstTable,
+                    batchSize,
+                    columns
+                );
+                rowsCopied += copied;
+                globalTables += 1;
+            }
+        });
+    } catch (err) {
+        errors.push(`global-group: ${err.message || String(err)}`);
     }
 
-    // ── 4. Copy user tables (uniform task list for both engines) ─────
-    const userTotal = userTasks.length;
+    // ── 4. Copy user tables (per-prefix transaction) ──────────────
+    const userTotal = Array.from(userTasksByPrefix.values()).reduce(
+        (acc, tasks) => acc + tasks.length,
+        0
+    );
     let userIdx = 0;
-    for (const task of userTasks) {
-        userIdx += 1;
-        if (typeof onProgress === 'function') {
-            onProgress({
-                phase: 'user',
-                table: task.dstTable,
-                current: userIdx,
-                total: userTotal,
-                rowsCopied
-            });
-        }
+    for (const [, tasks] of userTasksByPrefix) {
         try {
-            const copied = await copyTable(
-                adapter,
-                dstAdapter,
-                task.srcTable,
-                task.dstTable,
-                batchSize,
-                task.columns
-            );
-            rowsCopied += copied;
-            userTables += 1;
+            await dstAdapter.withTransaction(async () => {
+                for (const task of tasks) {
+                    userIdx += 1;
+                    if (typeof onProgress === 'function') {
+                        onProgress({
+                            phase: 'user',
+                            table: task.dstTable,
+                            current: userIdx,
+                            total: userTotal,
+                            rowsCopied
+                        });
+                    }
+                    const copied = await copyTable(
+                        adapter,
+                        dstAdapter,
+                        task.srcTable,
+                        task.dstTable,
+                        batchSize,
+                        task.columns
+                    );
+                    rowsCopied += copied;
+                    userTables += 1;
+                }
+            });
         } catch (err) {
-            errors.push(`user:${task.dstTable}: ${err.message || String(err)}`);
+            errors.push(`user-group: ${err.message || String(err)}`);
         }
     }
 
@@ -377,37 +393,39 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     }
     const mirrorTotal = unknownNames.length;
     let mirrorIdx = 0;
-    for (const srcTable of unknownNames) {
-        mirrorIdx += 1;
-        const dstTable = srcTable;
-        const entry = srcSchemaMap.get(srcTable);
-        if (typeof onProgress === 'function') {
-            onProgress({
-                phase: 'mirror',
-                table: dstTable,
-                current: mirrorIdx,
-                total: mirrorTotal,
-                rowsCopied
-            });
-        }
-        try {
-            const colDefs = buildMirroredColumns(entry);
-            if (colDefs.length > 0) {
-                await dstAdapter.createTable(dstTable, colDefs);
+    try {
+        await dstAdapter.withTransaction(async () => {
+            for (const srcTable of unknownNames) {
+                mirrorIdx += 1;
+                const dstTable = srcTable;
+                const entry = srcSchemaMap.get(srcTable);
+                if (typeof onProgress === 'function') {
+                    onProgress({
+                        phase: 'mirror',
+                        table: dstTable,
+                        current: mirrorIdx,
+                        total: mirrorTotal,
+                        rowsCopied
+                    });
+                }
+                const colDefs = buildMirroredColumns(entry);
+                if (colDefs.length > 0) {
+                    await dstAdapter.createTable(dstTable, colDefs);
+                }
+                const copied = await copyTable(
+                    adapter,
+                    dstAdapter,
+                    srcTable,
+                    dstTable,
+                    batchSize,
+                    entry?.columns || []
+                );
+                rowsCopied += copied;
+                unknownTables += 1;
             }
-            const copied = await copyTable(
-                adapter,
-                dstAdapter,
-                srcTable,
-                dstTable,
-                batchSize,
-                entry?.columns || []
-            );
-            rowsCopied += copied;
-            unknownTables += 1;
-        } catch (err) {
-            errors.push(`mirror:${dstTable}: ${err.message || String(err)}`);
-        }
+        });
+    } catch (err) {
+        errors.push(`mirror-group: ${err.message || String(err)}`);
     }
 
     return {
@@ -502,15 +520,33 @@ async function copyTable(
     if (visibleColumns.length === 0) return 0;
     const colList = visibleColumns.map((c) => c.name).join(', ');
 
-    // Paged read: LIMIT/OFFSET loop. Memory stays O(batchSize) regardless
-    // of source table size. The remote adapters' `execute` callbacks
-    // receive positional arrays in SELECT-column order. We use named
-    // `@limit` / `@offset` params so both PG (`_bind` → `$N`) and MySQL
-    // (`_normalizeArgs` → `@limit`) bind them correctly.
+    // ── 游标分页(keyset pagination)─────────────────────────────────
+    // 旧实现用 LIMIT/OFFSET,O(N²)。改用 WHERE pk > @lastPk ORDER BY pk
+    // LIMIT @limit,O(N)。复合 PK 或无 PK 退回 OFFSET 模式。
+    // 与 pushEngine.js 的 copyTable 对称。
+    const pkCols = visibleColumns.filter((c) => c.isPK);
+    const useCursor = pkCols.length === 1;
+    const pkCol = useCursor ? pkCols[0].name : null;
+
+    let lastPk = null;
     let offset = 0;
     let totalCopied = 0;
     while (true) {
         const batch = [];
+        let sql;
+        let params;
+        if (useCursor) {
+            if (lastPk === null) {
+                sql = `SELECT ${colList} FROM ${srcTable} ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize };
+            } else {
+                sql = `SELECT ${colList} FROM ${srcTable} WHERE ${pkCol} > @lastPk ORDER BY ${pkCol} LIMIT @limit`;
+                params = { limit: batchSize, lastPk };
+            }
+        } else {
+            sql = `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`;
+            params = { limit: batchSize, offset };
+        }
         await srcAdapter.execute(
             (row) => {
                 const obj = {};
@@ -519,22 +555,36 @@ async function copyTable(
                 });
                 batch.push(obj);
             },
-            `SELECT ${colList} FROM ${srcTable} LIMIT @limit OFFSET @offset`,
-            { limit: batchSize, offset }
+            sql,
+            params
         );
         if (batch.length === 0) break;
         await dstAdapter.bulkInsert(dstTable, batch, 'ignore');
-        offset += batch.length;
         totalCopied += batch.length;
+        if (useCursor) {
+            const lastRow = batch[batch.length - 1];
+            lastPk = lastRow[pkCol];
+        } else {
+            offset += batch.length;
+        }
         if (batch.length < batchSize) break;
     }
 
-    // Row-count verification per table.
-    const srcCount = await srcAdapter.countWhere(srcTable);
+    // Row-count verification: totalCopied 是源侧实际读到的行数,等价于
+    // srcCount 但无需全表 COUNT。只校验 dstCount == totalCopied。
+    // 与 pushEngine.js 对称。
+    // TODO(review #7):当 push/pull 支持增量/合并场景时,目标可能已有
+    // 数据,bulkInsert('ignore') 遇 PK 冲突跳过行,导致 dstCount <
+    // totalCopied。此时本校验无法区分"源读丢失"(真 bug)与"目标冲突
+    // 跳过"(正常)。需要让 bulkInsert 返回实际写入行数(affected rows),
+    // 在 copyTable 中累加 actualInserted,用 actualInserted 替代
+    // totalCopied 与 dstCount 比较。这需要 C# 三引擎 + JS 三 adapter +
+    // 基类协同改造(目前 bulkInsert 返回 Promise<void>),应在增量/合并
+    // 功能落地时一并实施。
     const dstCount = await dstAdapter.countWhere(dstTable);
-    if (srcCount !== dstCount) {
+    if (dstCount !== totalCopied) {
         throw new Error(
-            `row count mismatch after copy: src=${srcCount} dst=${dstCount}`
+            `row count mismatch after copy: copied=${totalCopied} dst=${dstCount}`
         );
     }
 

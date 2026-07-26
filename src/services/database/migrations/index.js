@@ -435,18 +435,10 @@ async function executeMigration(migration, options, engine) {
                 (data.description ? ` (${data.description})` : '')
         );
         try {
-            await adapter.begin();
-            await recordCheckpoint(version);
-            await adapter.commit();
+            await adapter.withTransaction(async () => {
+                await recordCheckpoint(version);
+            });
         } catch (err) {
-            try {
-                await adapter.rollback();
-            } catch (rollbackErr) {
-                console.error(
-                    `[迁移] v${version} ${type} skip 回滚失败:`,
-                    rollbackErr
-                );
-            }
             console.error(`[迁移] v${version} ${type} skip 记录检查点失败:`, err);
             throw new Error(
                 `迁移 v${version} (${type}) 跳过记录检查点失败: ${err.message}`
@@ -464,26 +456,19 @@ async function executeMigration(migration, options, engine) {
     // 如果 data fix 失败而 schema change 成功，未更新的版本号会阻止下次重试（checkpoint 在 COMMIT 前）
     // 但由于所有操作设计为幂等，重试迁移即可安全恢复
     try {
-        await adapter.begin();
-
-        if (type === 'schema') {
-            await executeSchemaMigration(data, version);
-        } else if (type === 'data') {
-            await executeDataMigration(data, options, version);
-        }
-
-        // 执行成功后记录检查点
-        await recordCheckpoint(version);
-        await adapter.commit();
+        await adapter.withTransaction(async () => {
+            if (type === 'schema') {
+                await executeSchemaMigration(data, version);
+            } else if (type === 'data') {
+                await executeDataMigration(data, options, version);
+            }
+            // 执行成功后记录检查点
+            await recordCheckpoint(version);
+        });
 
         console.log(`[迁移] v${version} ${type} 完成`);
     } catch (err) {
-        try {
-            await adapter.rollback();
-        } catch (rollbackErr) {
-            console.error(`[迁移] v${version} ${type} 回滚失败:`, rollbackErr);
-        }
-        console.error(`[迁移] v${version} ${type} 失败:`, err);
+        console.error(`[迁移] v${version} ${type} 失败,已回滚:`, err);
         throw new Error(`迁移 v${version} (${type}) 失败: ${err.message}`);
     }
 }

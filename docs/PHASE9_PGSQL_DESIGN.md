@@ -1,11 +1,17 @@
 # Design Document — Phase 9 PostgreSQL 适配器
 
-> **版本**:v1.1(已并入 8 项待核实结论)· **分支**:`database-refactor-PgSQL` · **日期**:2026-07-18
+> **版本**:v1.2(并入 PR #13 review #3 的健康检查 async 化 + 连接池 `poolIdle` → `availableCapacity` 语义修正)· **分支**:`database-refactor-AsyncEvent-fix` · **日期**:2026-07-26
 > **覆盖范围**:Issue #3 Phase 9 task 9.2–9.16(共 15 个子任务)
 > **设计约束**:D1–D5(用户已拍板,不可违背)
-> **接口基线**:EngineAdapter.js 42 abstract + 3 optional(2026-07-16 冻结)
+> **接口基线**:EngineAdapter.js 42 abstract + 3 optional + 健康检查 3 抽象(`isConnected()`/`getHealth()`/`getPoolStats()`,2026-07-26 破例提升入基类)
 >
 > **v1.1 更新(2026-07-18)**:8 项待核实事项已全部核实(详见 §11.3 结尾"核实结论"附录)。3 项修订实现条款(§4.1.5 insert replace 分层、§4.1.7 session_id 用 BY DEFAULT、§4.1.12 sqlEnterTime 改 to_char);3 项印证假设关闭风险(R4/R13/§3.2.11);2 项重新定性(R14 待产品决策、搬迁 UI 必须新建于 AdvancedTab)。
+>
+> **v1.2 更新(2026-07-26)**:PR #13 第三轮 review 后的修正:
+>   1. **接口冻结破例**:`isConnected()` / `getHealth()` 从 PgSQLAdapter 扩展方法提升为 EngineAdapter 基类抽象方法(三引擎对称 commit `c08c62e1`)。原 §4.1.15 / §11.1 / §11.2 / §11.3 末尾的"不入基类"决定撤销。
+>   2. **`isConnected()` 改 async**:Electron 下 C# 桥返回 `Promise<boolean>`,`Boolean(Ping())` 恒 true 会导致探针失真。统一 `async isConnected()` + 调用方 `await`(commit `9dedc048`,fixup 到 `762b8943`)。
+>   3. **`GetPoolStats().poolIdle` 语义修正**:旧公式 `_totalBorrowed - _pinned.Count` 算的是"非 pinned 借出连接数"而非"池中空闲连接数",误导 StatusBar 绿色波线。改名 `availableCapacity` + 公式改 `_maxPoolSize - _totalBorrowed`(commit `9429cca8`)。
+>   4. **`getHealth()` payload 字段订正**:C# 实际返回 `{ connected, latencyMs, lastHealthCheck }`,**无 `poolSize` 字段**(原 §4.1.15 JSDoc 笔误,代码从未生成过该字段)。
 
 ---
 
@@ -112,7 +118,7 @@
 
 | 文件路径 | 用途 | 任务 |
 |----------|------|------|
-| `src/services/database/adapter/PgSQLAdapter.js` | PgSQL 方言适配器(继承 EngineAdapter,实现 42+3 方法 + `_bind` + `dropUserSchema` + `isConnected`/`getHealth` 扩展) | 9.3-9.9, 9.11, 9.14 |
+| `src/services/database/adapter/PgSQLAdapter.js` | PgSQL 方言适配器(继承 EngineAdapter,实现 42+3 方法 + `_bind`/`dropUserSchema` PgSQL 特有扩展 + v1.2 提升入基类的 `isConnected`/`getHealth`/`getPoolStats` 健康检查抽象) | 9.3-9.9, 9.11, 9.14 |
 | `.github/workflows/ci.yaml`(扩展 test_pgsql job) | CI 集成测试 PG matrix,使用 `ikalnytskyi/action-setup-postgres` action | 9.15 |
 | `test/contract/adapter-contract.pgsql.js`(或扩展现有契约,见 §7.2) | PgSQL 镜像契约测试 wrapper | 9.3/10.3 |
 
@@ -204,7 +210,7 @@
 
 **文件**:`src/services/database/adapter/PgSQLAdapter.js`
 **签名**:`class PgSQLAdapter extends EngineAdapter`
-**实现**:42 abstract + 3 optional 全部实现,另加 3 个 PgSQL 扩展方法(`_bind`/`dropUserSchema`/`isConnected`/`getHealth`)
+**实现**:42 abstract + 3 optional 全部实现,另加 2 个 PgSQL 特有扩展方法(`_bind`/`dropUserSchema`)。`isConnected()` / `getHealth()` / `getPoolStats()` 在 v1.2 已提升为 EngineAdapter 基类抽象方法,三引擎对称实现(详见 §4.1.15)。
 
 #### 4.1.1 核心参数绑定:`_bind(sql, args)`(D1 核心,R1 风险点)
 
@@ -492,15 +498,19 @@ async listTablesTypes():
 | `vacuum` | `VACUUM` | `VACUUM ANALYZE`(PgSQL 需在事务外执行,与 SQLite 同) |
 | `optimize` | `PRAGMA optimize` | `ANALYZE`(全 schema 统计信息更新) |
 
-#### 4.1.15 PgSQL 扩展方法(不破接口冻结)
+#### 4.1.15 PgSQL 扩展方法 + 已提升入基类的健康检查抽象
 
-| 方法 | 签名 | 用途 | 任务 |
-|------|------|------|------|
-| `dropUserSchema(prefix)` | `(prefix: string) => Promise<number>` | `DROP SCHEMA IF EXISTS account_${prefix} CASCADE`,删用户时清理 | 9.11 |
-| `isConnected()` | `() => boolean` | 调 C# `PostgreSQL.IsConnected()` 返回连接状态 | 9.14 |
-| `getHealth()` | `() => Promise<object>` | 调 C# `PostgreSQL.GetHealth()` 返回 `{ connected, poolSize, latencyMs }` | 9.14 |
+> **v1.1 原稿**:把 `isConnected()` / `getHealth()` 作为 PgSQLAdapter 特有扩展方法,"不入基类"。
+> **v1.2 修订(commit `c08c62e1`)**:为三引擎对称(PgSQL/MySQL/SQLite),`isConnected()` / `getHealth()` / `getPoolStats()` 已从 PgSQL 特有扩展**提升为 EngineAdapter 基类抽象方法**。原"不入基类"决定撤销。下表保留 v1.1 原文以便追溯,以 v1.2 实际代码为准。
 
-**接口冻结说明**:这三个方法不在 EngineAdapter 42+3 中。作为 **PgSQLAdapter 特有方法**,不加入基类。调用方按引擎能力检测:
+| 方法 | 签名(v1.2) | 用途 | 任务 | v1.1 原签名 | 备注 |
+|------|--------------|------|------|-------------|------|
+| `dropUserSchema(prefix)` | `(prefix: string) => Promise<number>` | `DROP SCHEMA IF EXISTS account_${prefix} CASCADE`,删用户时清理 | 9.11 | 同 | 仍为 PgSQL 特有扩展,不入基类 |
+| `isConnected()` | `() => Promise<boolean>` | `await C# PostgreSQL.Ping()`(SELECT 1)探活,不是只看初始化的 `IsConnected()`。async 是为兼容 Electron 的 `Promise<boolean>` 返回(CefSharp 下是同步 bool,await 是 no-op) | 9.14 | `() => boolean`(号称调 `PostgreSQL.IsConnected()`) | **v1.2 改 async + 调 Ping**。原签名描述错误(v1.1 曾写"调 IsConnected",但实际一直调 Ping;且把 boolean 同步返回错揭为不 await 化的同步类型,Electron 下 `Boolean(Promise)` 恒 true) |
+| `getHealth()` | `() => Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string \| null }>` | 调 C# `PostgreSQL.GetHealth()`(SELECT 1 + Stopwatch) | 9.14 | `() => Promise<object>` 返回 `{ connected, poolSize, latencyMs }` | **v1.2 字段订正**:C# 实际返回 `{ connected, latencyMs, lastHealthCheck }`,**无 `poolSize` 字段**(原 JSDoc 笔误,代码从未生成过该字段)。见 PgSQLAdapter.js:1142-1148 F-13.1 注释 |
+| `getPoolStats()` | `() => Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>` | C# `PostgreSQL.GetPoolStats()` 三态快照,纯内存计数器,不探网络 | 9.14(v1.2 新增) | — | **v1.2 新增**。三态语义:`active` = 正在执行 SQL、`pinnedIdle` = 事务持有但未执行 SQL、`availableCapacity` = `_maxPoolSize - _totalBorrowed`(可用容量 = 池空闲 + 未用配额)。原连接池监控 PR 起初用 `poolIdle`(公式 `_totalBorrowed - _pinned.Count`,实为"非 pinned 借出",误导),经 PR #13 review #3 改名为 `availableCapacity` + 公式改 `_maxPoolSize - _totalBorrowed`(commit `9429cca8`) |
+
+**接口冻结说明(v1.2 修订)**:`dropUserSchema` 仍为 PgSQLAdapter 特有方法,不加入基类(只 PG 有 schema)。`isConnected()` / `getHealth()` / `getPoolStats()` **已提升入 EngineAdapter 基类抽象方法**(v1.1 原稿的"不入基类"决定撤销,见顶部 v1.2 更新条目 1)。三引擎必须实现这三个抽象方法,实现内部允许 `noopAsync` 走空值 fallback。调用方按引擎能力检测:
 ```
 if (typeof adapter.dropUserSchema === 'function') {
   await adapter.dropUserSchema(prefix);
@@ -1179,7 +1189,7 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 | **9.11** | ① `dropUserSchema('abc')` 执行 `DROP SCHEMA IF EXISTS account_abc CASCADE`;② 集成测试:建 schema 后 drop,pg_tables 查询返回空;③ **R14 待产品决策**:dropUserSchema 作为预留能力存在,暂不接入 UI 调用点(当前无既有"删除用户数据"流程,DB 数据永久保留是有意设计) |
 | **9.12** | ① `getDatabaseEngine()` 运行时读 mode(非硬编码);② `checkDatabaseCompatibility` 对非 sqlite + `database.after:'sqlite'` 返回 skip;③ 调度入口处理 skip(continue + warn);④ 集成测试:PgSQL 首次 runMigrations,v16 跳过(INV-04),checkpoint 记录 LATEST;⑤ **R13 已缓解:无需补加任何 .map 引擎锁(全仓 .map 锁已覆盖,空集 ∅)** |
 | **9.13** | ① 搬迁管道 `migrateSqliteToPgsql(srcConnStr, dstConfig)` 存在;② 集成测试:SQLite 内存库 20 全局表 + 50 用户表搬到 PG,行数一致 + 抽样校验 + 时间戳范围校验;③ 分批 bulkInsert 无 PG 参数超限;④ **R6 已缓解:activity_sessions_v2 用 GENERATED BY DEFAULT,搬迁管道直接 copyTableData 即可**;⑤ **UI 入口(已确定)**:AdvancedTab 新增"数据库引擎"组,含模式选择 + 连接字段 + 测试连接 + 迁移并切换按钮,进度复用 DatabaseUpgradeDialog |
-| **9.14** | ① `adapter.isConnected()` 返回 boolean;② `adapter.getHealth()` 返回 `{connected, poolStats, latencyMs}`;③ C# `Ping()` 执行 `SELECT 1` 探活;④ 集成测试:断开 PG 后 isConnected()=false |
+| **9.14** | ① `adapter.isConnected()` 返回 `Promise<boolean>`,调用方 `await`(v1.2 改 async —— Electron 桥返回 Promise,同步 `Boolean(Ping())` 恒 true);② `adapter.getHealth()` 返回 `{ connected, latencyMs, lastHealthCheck }`(**v1.2 字段订正**:原稿写成 `{connected, poolStats, latencyMs}`,但 `poolSize`/`poolStats` 字段从未在 C# `GetHealth` 中生成过);③ C# `Ping()` 执行 `SELECT 1` 探活;④ 集成测试:断开 PG 后 `await adapter.isConnected()===false` |
 | **9.15** | ① CI workflow 含 PG 16 + PG 17 matrix;② 使用 `ikalnytskyi/action-setup-postgres` action(无需 service container);③ CI 在 PG 16/17 上跑集成测试(S4/S5/S8/S9)全绿;④ `npm run test` 在 CI PG 环境通过 |
 | **9.16** | **降级**(PR #7 review 采纳):① `docker-compose.pgsql.yml` 已移除;② 开发者本地用 `docker run postgres:16` + `pg_isready` 验证可连接;③ CI 不依赖 docker-compose(改用 action) |
 
@@ -1190,7 +1200,7 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 3. **D3 配置**:设 `VRCX_Database.{mode=postgresql, host=localhost, port=5432, username=vrcx, password=vrcx, name=vrcx}` 启动成功;name 含 `;` 被拒
 4. **D4 限定名**:`listTables('%_feed_gps')` 返回值每项含 `.` 且可直用于 `ALTER TABLE ${ret}`
 5. **D5 透明**:`feed.js` L600 withPrefix 未改,多账号 PgSQL 查询正确
-6. **接口冻结**:EngineAdapter.js 零改动;PgSQLAdapter 扩展方法(dropUserSchema/isConnected/getHealth)不加入基类
+6. **接口冻结(v1.2 修订)**:EngineAdapter.js "42 abstract + 3 optional" 接口仍然冻结,但已破例将健康检查 3 抽象(`isConnected()`/`getHealth()`/`getPoolStats()`)提升入基类(commit `c08c62e1`,对称三个适配器实现);`dropUserSchema` 仍为 PgSQLAdapter 特有扩展不入基类。原 v1.1 的"三个扩展都不入基类"决定撤销
 7. **回归**:现有 SQLiteAdapter 单测 + 契约测试 + 业务模块测试全绿(PgSQL stub 不影响 sqlite 模式)
 8. **CI**:PG 16/17 集成测试矩阵全绿
 
@@ -1222,7 +1232,7 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 5. **D5 withPrefix**:feed.js L600 串行单 prefix 透明适配,不新建跨账号聚合视图。
 6. **类型映射**:TEXT→TEXT,INTEGER→BIGINT,`INTEGER PRIMARY KEY`→`BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY`,`...AUTOINCREMENT`→`BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY`(**v1.1 修订**:原 ALWAYS,搬迁管道 `vrcx.js:492-513 copyTableData` 显式复制 session_id 原值,ALWAYS 会拒绝,统一改 BY DEFAULT)。
 7. **schema 隔离**:userTable → `account_{prefix}.{name}`;全局表 `public.`;用户索引名去 prefix(schema 内唯一)。
-8. **接口冻结**:EngineAdapter 42+3 不改;PgSQL 扩展(dropUserSchema/isConnected/getHealth)不入基类。
+8. **接口冻结(v1.2 修订)**:EngineAdapter 42+3 不改;健康检查 3 抽象(`isConnected`/`getHealth`/`getPoolStats`)破例提升入基类;`dropUserSchema` 仍为 PgSQL 特有扩展不入基类。
 9. **桥注册 4 处**:JavascriptBindings.cs L13 后,main.js L121-124,Program.cs L241-244,vitest.setup.js L18 后。
 10. **切片顺序**:S1(9.2)→S2(9.3+9.4+9.5)→S3(9.6)→S4(9.7+9.8)→S5(9.9)→S6(9.11)→S7(9.10)→S8(9.12)→S9(9.13+UI)→S10(9.14)→S12(9.15),S11(9.16)并行。
 11. **测试**:纯单元测试(_bind/映射/fragment,不需 PG)+ 真实 PG 集成测试(CI 由 `action-setup-postgres` action provision,本地 `docker run postgres:16`),不用 pg-mem。**docker-compose.pgsql.yml 经 PR #7 review 移除**(2026-07-19)。

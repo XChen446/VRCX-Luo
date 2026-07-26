@@ -233,6 +233,22 @@
                             </div>
                         </TooltipWrapper>
 
+                        <TooltipWrapper v-if="visibility.db" :content="dbTooltip" side="top">
+                            <div
+                                class="flex items-center gap-1 px-2 h-[22px] whitespace-nowrap border-r border-border cursor-pointer hover:bg-muted/50"
+                                :style="statusBarItemStyle('db')"
+                                @click="handleDbClick">
+                                <span class="text-foreground text-[11px]">{{ t('status_bar.db') }}</span>
+                                <canvas ref="dbCanvasRef" class="shrink-0 rounded-sm" />
+                                <span class="text-[10px] text-foreground tabular-nums">{{
+                                    t('status_bar.db_active', {
+                                        active: dbActiveCount,
+                                        max: dbMaxPool
+                                    })
+                                }}</span>
+                            </div>
+                        </TooltipWrapper>
+
                         <div
                             v-if="visibility.nowPlaying && nowPlaying.url"
                             class="flex items-center gap-1 px-2 h-[22px] whitespace-nowrap border-r border-border min-w-0 max-w-[400px]"
@@ -438,6 +454,12 @@
                     WebSocket
                 </ContextMenuCheckboxItem>
                 <ContextMenuCheckboxItem
+                    :model-value="visibility.db"
+                    @select.prevent
+                    @update:model-value="toggleVisibility('db')">
+                    {{ t('status_bar.db') }}
+                </ContextMenuCheckboxItem>
+                <ContextMenuCheckboxItem
                     :model-value="visibility.profileInfoSync"
                     @select.prevent
                     @update:model-value="toggleVisibility('profileInfoSync')">
@@ -548,7 +570,8 @@
         useAutoFollowStore,
         useUserStore,
         useVrcStatusStore,
-        useVrcxStore
+        useVrcxStore,
+        useModalStore
     } from '@/stores';
     import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
     import { formatSeconds, timeToText } from '@/shared/utils';
@@ -577,6 +600,15 @@
 
     import configRepository from '../services/config';
     import { accountHub } from '../services/accountHub.js';
+    // Statically importing the adapter singleton avoids a per-second dynamic
+    // `await import()` inside `useIntervalFn`. ESM live bindings keep `adapter`
+    // observation in sync after `initAdapter(mode)` swaps the singleton across
+    // engine switches. This import only evaluates `adapter/index.js`, whose
+    // sole static dependency is `SQLiteAdapter.js`; the PgSQL/MySQL adapter
+    // bodies remain lazy-loaded via string-variable `import(spec.path)` inside
+    // `initAdapter`/`createAdapter` (see that module's header comment), so the
+    // sqlite-mode test contract (no PgSQL/MySQL transform) is preserved.
+    import { adapter } from '@/services/database/adapter';
 
     dayjs.extend(utc);
     dayjs.extend(timezone);
@@ -740,6 +772,7 @@
         autoFollow: t('status_bar.auto_follow'),
         servers: t('status_bar.servers'),
         ws: 'WebSocket',
+        db: t('status_bar.db'),
         profileInfoSync: t('view.tools.system_tools.info_completion'),
         nowPlaying: t('status_bar.now_playing'),
         uptime: t('status_bar.app_uptime_short'),
@@ -891,6 +924,149 @@
         return `WebSocket: ${state}`;
     });
 
+    // --- Database connection pool three-state monitor (Issue #14) ---
+
+    const DB_CANVAS_WIDTH = 64;
+    const DB_CANVAS_HEIGHT = 14;
+    const dbCanvasRef = ref(null);
+    const dbActiveHistory = ref(new Array(GRAPH_POINTS).fill(0));
+    const dbPinnedIdleHistory = ref(new Array(GRAPH_POINTS).fill(0));
+    const dbAvailableHistory = ref(new Array(GRAPH_POINTS).fill(0));
+    const dbActiveCount = ref(0);
+    const dbPinnedIdleCount = ref(0);
+    const dbAvailableCount = ref(0);
+    const dbMaxPool = ref(0);
+    // Y-axis dynamic scale levels
+    const DB_SCALE_LEVELS = [5, 20, 50, 80, 100];
+    const dbScaleLevel = ref(0);
+
+    useIntervalFn(async () => {
+        if (!adapter || typeof adapter.getPoolStats !== 'function') return;
+        try {
+            const stats = await adapter.getPoolStats();
+            const active = stats.active || 0;
+            const pinnedIdle = stats.pinnedIdle || 0;
+            const availableCapacity = stats.availableCapacity || 0;
+            const max = stats.max || 0;
+
+            dbActiveCount.value = active;
+            dbPinnedIdleCount.value = pinnedIdle;
+            dbAvailableCount.value = availableCapacity;
+            dbMaxPool.value = max;
+
+            const arrA = dbActiveHistory.value;
+            arrA.shift();
+            arrA.push(active);
+            dbActiveHistory.value = arrA;
+
+            const arrP = dbPinnedIdleHistory.value;
+            arrP.shift();
+            arrP.push(pinnedIdle);
+            dbPinnedIdleHistory.value = arrP;
+
+            const arrAv = dbAvailableHistory.value;
+            arrAv.shift();
+            arrAv.push(availableCapacity);
+            dbAvailableHistory.value = arrAv;
+
+            // Dynamic scale: upgrade immediately, downgrade when all points below next-lower threshold
+            const peak = Math.max(active, pinnedIdle, availableCapacity);
+            const currentLevel = DB_SCALE_LEVELS[dbScaleLevel.value];
+            if (peak > currentLevel && dbScaleLevel.value < DB_SCALE_LEVELS.length - 1) {
+                // Find the lowest level that fits the peak
+                for (let i = 0; i < DB_SCALE_LEVELS.length; i++) {
+                    if (DB_SCALE_LEVELS[i] >= peak) {
+                        dbScaleLevel.value = i;
+                        break;
+                    }
+                }
+            } else if (dbScaleLevel.value > 0) {
+                const nextLowerThreshold = DB_SCALE_LEVELS[dbScaleLevel.value - 1];
+                // 降级只看 active + pinnedIdle(压力信号),不看 availableCapacity(容量信号)
+                // availableCapacity 空闲时恒=100,纳入降级判定会永久卡最高档
+                const allBelow = arrA.every((v) => v <= nextLowerThreshold)
+                    && arrP.every((v) => v <= nextLowerThreshold);
+                if (allBelow) {
+                    dbScaleLevel.value--;
+                }
+            }
+
+            drawDbSparkline();
+        } catch {
+            // adapter not ready or bridge error — skip this tick
+        }
+    }, 1000);
+
+    function drawDbSparkline() {
+        const canvas = dbCanvasRef.value;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(DB_CANVAS_WIDTH * dpr);
+        canvas.height = Math.floor(DB_CANVAS_HEIGHT * dpr);
+        canvas.style.width = `${DB_CANVAS_WIDTH}px`;
+        canvas.style.height = `${DB_CANVAS_HEIGHT}px`;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const w = DB_CANVAS_WIDTH;
+        const h = DB_CANVAS_HEIGHT;
+
+        const max = DB_SCALE_LEVELS[dbScaleLevel.value] || 100;
+        const step = w / (GRAPH_POINTS - 1);
+
+        ctx.clearRect(0, 0, w, h);
+
+        // Three independent stroke lines
+        const drawLine = (data, color, alpha) => {
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let i = 0; i < data.length; i++) {
+                const x = i * step;
+                const y = h - (data[i] / max) * (h - 2);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.stroke();
+        };
+
+        // available (green), pinned-idle (yellow/amber), active (red)
+        drawLine(dbAvailableHistory.value, '#22c55e', 0.7);
+        drawLine(dbPinnedIdleHistory.value, '#eab308', 0.7);
+        drawLine(dbActiveHistory.value, '#ef4444', 0.8);
+        ctx.globalAlpha = 1;
+    }
+
+    const dbTooltip = computed(() => {
+        return t('status_bar.db_tooltip_active', { count: dbActiveCount.value })
+            + '\n' + t('status_bar.db_tooltip_pinned_idle', { count: dbPinnedIdleCount.value })
+            + '\n' + t('status_bar.db_tooltip_available', { count: dbAvailableCount.value });
+    });
+
+    async function handleDbClick() {
+        const modalStore = useModalStore();
+        const result = await modalStore.confirm({
+            title: t('status_bar.db_release_title'),
+            description: t('status_bar.db_release_description'),
+            confirmText: t('status_bar.db_release_confirm'),
+            cancelText: t('dialog.alertdialog.cancel'),
+            destructive: true
+        });
+        if (!result.ok) return;
+        try {
+            if (adapter && typeof adapter.clearIdleConnections === 'function') {
+                await adapter.clearIdleConnections();
+            }
+        } catch {
+            // adapter not ready or bridge error — silently ignore
+        }
+    }
+
     const infoFetchTooltip = computed(() => {
         if (infoFetchState.status === 'running') {
             return t('view.tools.system_tools.info_completion_tooltip_running', {
@@ -1015,6 +1191,7 @@
         }
 
         drawSparkline();
+        drawDbSparkline();
     });
 
     onBeforeUnmount(() => {
@@ -1032,6 +1209,17 @@
             if (enabled) {
                 nextTick(() => {
                     drawSparkline();
+                });
+            }
+        }
+    );
+
+    watch(
+        () => visibility.db,
+        (enabled) => {
+            if (enabled) {
+                nextTick(() => {
+                    drawDbSparkline();
                 });
             }
         }

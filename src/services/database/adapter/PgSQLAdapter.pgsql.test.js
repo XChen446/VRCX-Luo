@@ -17,6 +17,13 @@ import { describe, it, expect } from 'vitest';
  * reachability of the PG instance. Full adapter integration tests
  * (initUserSchema / listTables / CRUD / migration parity) will be added in
  * follow-up slices.
+ *
+ * TODO: 事务集成测试覆盖空白。PG 引擎级事务语义
+ *   (C# `BeginTransaction/CommitTransaction/RollbackTransaction` 往返、
+ *   pinned 连接生命周期、超时 sliding Timer 回收后 rollback no-op、
+ *   事务内 `execute` 走 pinned 连接读得到未 commit 的写)需真实
+ *   Npgsql 后端 + C# 桥,待 follow-up 补集成测试。当前栈契约由
+ *   `transaction.test.js` 引擎无关覆盖。
  */
 const pgHost = process.env.PG_TEST_HOST;
 const describeIntegration = pgHost ? describe : describe.skip;

@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -11,8 +13,44 @@ namespace VRCX
     public class SQLite
     {
         public static SQLite Instance;
-        private readonly ReaderWriterLockSlim m_ConnectionLock;
-        private SQLiteConnection m_Connection;
+        private string _connectionString;
+        private bool _initialized;
+
+        // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
+        private int _totalBorrowed;
+        private int _activeCount;
+        private int _pinnedActive;
+        private int _maxPoolSize;
+        private DateTime _lastHealthCheck;
+
+        // ── Transaction pinning ────────────────────────────────────────────
+        // 与 PostgreSQL.cs / MySQL.cs 对称:_pinned Map 持有借出的连接,
+        // sliding Timer 防泄漏。connId 有值时 Execute/ExecuteNonQuery 走
+        // pinned 连接 + 重置 Timer;无值时走池自动派发。
+        // System.Data.SQLite 通过连接字符串 `Pooling=True` 启用 ADO.NET
+        // 池化,每次 `new SQLiteConnection(connStr)` + `Open()` 借池中连接,
+        // `Dispose()` 还池。SQLite 文件锁串行化写操作,池化的主要收益
+        // 是事务期间其他查询走独立连接(不被事务阻塞)。
+        private readonly object _txLock = new();
+        private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
+        private long _nextConnId;
+        private const int TX_IDLE_MS = 60000;
+
+        private sealed class TxHolder
+        {
+            public SQLiteConnection Conn = null!;
+            public Timer Timer = null!;
+            /// <summary>
+            /// 正在执行 SQL 的计数。所有读写都在 _txLock 内,锁提供
+            /// happens-before,无需 Interlocked/volatile。OnTxTimeout
+            /// 检测到 InFlight &gt; 0 时不立即回滚,设 TimedOut 标记让
+            /// ExecutePinned 的 finally 自行清理,避免 SQL 执行期间
+            /// Dispose 连接。
+            /// </summary>
+            public int InFlight;
+            /// <summary>OnTxTimeout 已来过,等 SQL 执行完由 finally 清理。</summary>
+            public bool TimedOut;
+        }
 
         private static readonly Dictionary<string, string> DefaultOptions = new()
         {
@@ -86,7 +124,6 @@ namespace VRCX
 
         public SQLite()
         {
-            m_ConnectionLock = new ReaderWriterLockSlim();
         }
 
         public void Init()
@@ -107,17 +144,54 @@ namespace VRCX
             var parts = new List<string>
             {
                 $"Data Source=\"{dataSource}\"",
-                "Version=3"
+                "Version=3",
+                // ADO.NET 池化:System.Data.SQLite 在连接字符串含 Pooling=True
+                // 时启用连接池。每次 new SQLiteConnection(connStr) + Open()
+                // 借池中连接,Dispose() 还池。与 Npgsql/MySqlConnector 对称。
+                //
+                // System.Data.SQLite 池没有 idle timeout 参数(不像 MySQL
+                // ConnectionIdleTimeout=300),连接一旦创建就常驻到进程退出。
+                // 这在桌面单用户场景下可接受:本地文件无网络开销,100 连接
+                // 上限实际用不到(< 5 活跃),每连接约 2MB page cache + 2-3
+                // 文件句柄,驻留开销远低于服务器场景。若未来改多用户/服务端
+                // 部署,应重新评估。
+                //
+                // ── Min Pool Size 对称性:PG/MySQL 都显式设了 MinimumPoolSize=1
+                // 保活,确保挂机数小时后下次查询不必重建连。System.Data.SQLite
+                // 的池不支持 Min Pool Size 参数(只有 Max Pool Size),但 SQLite
+                // 池没有 idle timeout,首次 Open 后连接天然常驻到 ClearAllPools,
+                // 效果等价于 MinPoolSize=1 保活(甚至更强,不会被 idle 回收)。
+                // TODO(future):若未来迁移到 Microsoft.Data.Sqlite(支持更完整
+                // 的池参数),可显式补上 Min Pool Size=1 对称。
+                //
+                // ── 并发写安全:池化后多个连接可能同时写同一 .db 文件,
+                // SQLite 只支持一个并发写事务,竞争时其他连接阻塞等锁。
+                // 通过 DefaultOptions 的三个 PRAGMA 缓解(拼入连接字符串,
+                // 每个池化连接 Open 时执行):
+                //   busy_timeout=5000  — 锁竞争时等 5s 而非立即抛
+                //                        "database is locked",让短写事务
+                //                        (ms 级)有机会完成。5s 足够桌面
+                //                        场景;若仍超时说明有死锁/长事务,
+                //                        应快速失败而非让 UI 卡 60s。
+                //   journal_mode=WAL   — Write-Ahead Logging,读写并发,
+                //                        写写串行。读不被写阻塞,写事务
+                //                        持锁时间 = 单条 SQL 执行时间(几 ms)。
+                //   locking_mode=NORMAL — 每条 SQL 执行完释放文件锁,不
+                //                        独占。与池化目标一致(让事务外
+                //                        读不被事务阻塞)。EXCLUSIVE 会
+                //                        独占文件到 Exit,阻塞外部工具
+                //                        (DB Browser 等)和其他进程,不采用。
+                "Pooling=True",
+                "Max Pool Size=100"
             };
             foreach (var (key, val) in mergedOptions)
             {
                 var sanitized = SanitizePragmaValue(key, val);
                 parts.Add($"PRAGMA {key}={sanitized}");
             }
-            var connStr = string.Join(";", parts);
-
-            m_Connection = new SQLiteConnection(connStr, true);
-            m_Connection.Open();
+            _connectionString = string.Join(";", parts);
+            _maxPoolSize = 100; // 连接字符串硬编码 Max Pool Size=100
+            _initialized = true;
         }
 
         /// <summary>
@@ -339,72 +413,200 @@ namespace VRCX
 
         public void Exit()
         {
-            m_Connection.Close();
-            m_Connection.Dispose();
+            _initialized = false;
+            _connectionString = null;
+            // 清理任何残留的 pinned 事务连接
+            lock (_txLock)
+            {
+                foreach (var kv in _pinned)
+                {
+                    try { kv.Value.Timer?.Dispose(); } catch { }
+                    try { kv.Value.Conn?.Dispose(); } catch { }
+                }
+                _pinned.Clear();
+            }
+            // 清空 ADO.NET 池(System.Data.SQLite 专属 API)
+            try { SQLiteConnection.ClearAllPools(); } catch { }
+        }
+
+        // ── Health checks (与 PostgreSQL.cs / MySQL.cs 对称) ──────────────
+
+        /// <summary>
+        /// Return true when the backend has been initialised. Does not probe
+        /// the file system — callers needing a real liveness check should
+        /// use <see cref="Ping"/> (SELECT 1) or <see cref="GetHealth"/>.
+        /// </summary>
+        public bool IsConnected()
+        {
+            return _initialized && !string.IsNullOrEmpty(_connectionString);
+        }
+
+        /// <summary>
+        /// Probe the database file with <c>SELECT 1</c> and return a JSON
+        /// health snapshot: <c>{ connected, latencyMs, lastHealthCheck }</c>.
+        /// </summary>
+        public string GetHealth()
+        {
+            bool connected = IsConnected();
+            long latencyMs = -1;
+            if (connected)
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    Interlocked.Increment(ref _totalBorrowed);
+                    using var conn = new SQLiteConnection(_connectionString);
+                    conn.Open();
+                    try
+                    {
+                        using var cmd = conn.CreateCommand();
+                        cmd.CommandText = "SELECT 1";
+                        cmd.ExecuteScalar();
+                        sw.Stop();
+                        latencyMs = sw.ElapsedMilliseconds;
+                        _lastHealthCheck = DateTime.Now;
+                    }
+                    finally
+                    {
+                        Interlocked.Decrement(ref _totalBorrowed);
+                    }
+                }
+                catch
+                {
+                    connected = false;
+                }
+            }
+
+            var health = new
+            {
+                connected,
+                latencyMs,
+                lastHealthCheck = _lastHealthCheck == default
+                    ? null
+                    : _lastHealthCheck.ToString("o")
+            };
+            return JsonSerializer.Serialize(health);
+        }
+
+        /// <summary>
+        /// Lightweight liveness probe. Returns true when <c>SELECT 1</c>
+        /// succeeds against a fresh pooled connection.
+        /// </summary>
+        public bool Ping()
+        {
+            try
+            {
+                Interlocked.Increment(ref _totalBorrowed);
+                using var conn = new SQLiteConnection(_connectionString);
+                conn.Open();
+                try
+                {
+                    using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "SELECT 1";
+                    cmd.ExecuteScalar();
+                    _lastHealthCheck = DateTime.Now;
+                    return true;
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // for Electron
-        public string ExecuteJson(string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            var result = Execute(sql, args);
+            var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
         }
 
-        public object[][] Execute(string sql, IDictionary<string, object>? args = null)
+        public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            m_ConnectionLock.EnterReadLock();
+            if (connId.HasValue)
+            {
+                return ExecutePinned(connId.Value, sql, args);
+            }
+            EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
+            using var connection = new SQLiteConnection(_connectionString);
+            connection.Open();
             try
             {
-                using var command = new SQLiteCommand(sql, m_Connection);
-                if (args != null)
+                Interlocked.Increment(ref _activeCount);
+                try
                 {
-                    foreach (var arg in args)
+                    using var command = new SQLiteCommand(sql, connection);
+                    if (args != null)
                     {
-                        command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        foreach (var arg in args)
+                        {
+                            command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        }
                     }
-                }
 
-                using var reader = command.ExecuteReader();
-                var result = new List<object[]>();
-                while (reader.Read())
-                {
-                    var values = new object[reader.FieldCount];
-                    for (var i = 0; i < reader.FieldCount; i++)
+                    using var reader = command.ExecuteReader();
+                    var result = new List<object[]>();
+                    while (reader.Read())
                     {
-                        values[i] = reader.GetValue(i);
+                        var values = new object[reader.FieldCount];
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            values[i] = reader.GetValue(i);
+                        }
+                        result.Add(values);
                     }
-                    result.Add(values);
+                    return result.ToArray();
                 }
-                return result.ToArray();
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
             }
             finally
             {
-                m_ConnectionLock.ExitReadLock();
+                Interlocked.Decrement(ref _totalBorrowed);
             }
         }
 
-        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
-            var result = -1;
-            m_ConnectionLock.EnterWriteLock();
+            if (connId.HasValue)
+            {
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
+            }
+            EnsureInitialized();
+            Interlocked.Increment(ref _totalBorrowed);
+            using var connection = new SQLiteConnection(_connectionString);
+            connection.Open();
             try
             {
-                using var command = new SQLiteCommand(sql, m_Connection);
-                if (args != null)
+                Interlocked.Increment(ref _activeCount);
+                try
                 {
-                    foreach (var arg in args)
+                    using var command = new SQLiteCommand(sql, connection);
+                    if (args != null)
                     {
-                        command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        foreach (var arg in args)
+                        {
+                            command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                        }
                     }
+                    return command.ExecuteNonQuery();
                 }
-                result = command.ExecuteNonQuery();
+                finally
+                {
+                    Interlocked.Decrement(ref _activeCount);
+                }
             }
             finally
             {
-                m_ConnectionLock.ExitWriteLock();
+                Interlocked.Decrement(ref _totalBorrowed);
             }
-
-            return result;
         }
 
         /// <summary>
@@ -412,7 +614,7 @@ namespace VRCX
         /// executes the given SQL, and returns the result set serialized as a JSON array.
         /// The connection is closed (and disposed) after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely independent,
+        /// This does NOT touch the pooled connection — it is completely independent,
         /// intended for querying an EXTERNAL database (e.g. during migration).
         /// The caller controls read/write behaviour via the <paramref name="connectionString"/>.
         /// </summary>
@@ -454,7 +656,7 @@ namespace VRCX
         /// executes a non-query SQL (INSERT/UPDATE/DELETE/DDL), and returns the number
         /// of rows affected. The connection is closed after the query completes.
         ///
-        /// This does NOT touch <see cref="m_Connection"/> — it is completely independent.
+        /// This does NOT touch the pooled connection — it is completely independent.
         /// </summary>
         /// <param name="connectionString">Full SQLite connection string.</param>
         /// <param name="sql">SQL to execute.</param>
@@ -475,6 +677,309 @@ namespace VRCX
             }
 
             return command.ExecuteNonQuery();
+        }
+
+        // ── Transaction pinning implementation ───────────────────────────────
+        // 与 PostgreSQL.cs / MySQL.cs 对称。
+
+        private void EnsureInitialized()
+        {
+            if (!_initialized || string.IsNullOrEmpty(_connectionString))
+                throw new InvalidOperationException(
+                    "SQLite backend not initialised. Call Init() first.");
+        }
+
+        private static SQLiteCommand CreateTxCommand(TxHolder h, string sql, IDictionary<string, object>? args)
+        {
+            var command = h.Conn.CreateCommand();
+            command.CommandText = sql;
+            if (args != null)
+            {
+                foreach (var arg in args)
+                {
+                    command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                }
+            }
+            return command;
+        }
+
+        /// <summary>
+        /// 回滚并释放一条已超时的事务连接。调用方必须持有 _txLock 且
+        /// 已从 _pinned 中 TryRemove 出 holder。Timer 由调用方 Dispose。
+        /// </summary>
+        private static void CleanupTx(TxHolder h)
+        {
+            try
+            {
+                using var cmd = h.Conn.CreateCommand();
+                cmd.CommandText = "ROLLBACK";
+                cmd.ExecuteNonQuery();
+            } catch { /* 可能已超时回滚 */ }
+            try { h.Conn.Dispose(); } catch { }
+        }
+
+        private object[][] ExecutePinned(long connId, string sql, IDictionary<string, object>? args)
+        {
+            // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚。
+            // InFlight 标记让 OnTxTimeout 知道 SQL 正在跑,不立即
+            // Dispose 连接,而是设 TimedOut 让本方法的 finally 自行清理。
+            // TryGetValue 与 InFlight++/Timer.Change 必须在同一 _txLock 内,
+            // 否则 OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
+            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException,
+            // 且 _activeCount/_pinnedActive 永久泄漏(finally 不执行)。
+            TxHolder h;
+            lock (_txLock)
+            {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
+                h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
+                h.Timer.Change(Timeout.Infinite, -1);
+            }
+            try
+            {
+                using var command = CreateTxCommand(h, sql, args);
+                using var reader = command.ExecuteReader();
+                var result = new List<object[]>();
+                while (reader.Read())
+                {
+                    var values = new object[reader.FieldCount];
+                    for (var i = 0; i < reader.FieldCount; i++)
+                    {
+                        values[i] = reader.GetValue(i);
+                    }
+                    result.Add(values);
+                }
+                return result.ToArray();
+            }
+            finally
+            {
+                lock (_txLock)
+                {
+                    h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
+                    if (h.TimedOut)
+                    {
+                        _pinned.TryRemove(connId, out _);
+                        h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
+                        CleanupTx(h);
+                    }
+                    else
+                    {
+                        h.Timer.Change(TX_IDLE_MS, -1);
+                    }
+                }
+            }
+        }
+
+        private int ExecuteNonQueryPinned(long connId, string sql, IDictionary<string, object>? args)
+        {
+            TxHolder h;
+            lock (_txLock)
+            {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
+                h.InFlight++;
+                Interlocked.Increment(ref _activeCount);
+                Interlocked.Increment(ref _pinnedActive);
+                h.Timer.Change(Timeout.Infinite, -1);
+            }
+            try
+            {
+                using var command = CreateTxCommand(h, sql, args);
+                return command.ExecuteNonQuery();
+            }
+            finally
+            {
+                lock (_txLock)
+                {
+                    h.InFlight--;
+                    Interlocked.Decrement(ref _activeCount);
+                    Interlocked.Decrement(ref _pinnedActive);
+                    if (h.TimedOut)
+                    {
+                        _pinned.TryRemove(connId, out _);
+                        h.Timer.Dispose();
+                        Interlocked.Decrement(ref _totalBorrowed);
+                        CleanupTx(h);
+                    }
+                    else
+                    {
+                        h.Timer.Change(TX_IDLE_MS, -1);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Borrow a pooled connection, BEGIN a transaction on it, and return
+        /// a connId for subsequent Execute/ExecuteNonQuery calls. A sliding
+        /// idle timer auto-rolls-back after TX_IDLE_MS of inactivity.
+        /// JS 侧应在事务内长时间非 DB await 前调 keepAlive() 提前续命,
+        /// 而非"卡着 60s 的点回来打卡"——临近超时才发 SQL 会进入
+        /// Timer 回调与 SQL 执行的竞态窗口(虽有 InFlight 防御不崩,
+        /// 但事务仍会被判定超时回滚)。
+        /// </summary>
+        public long BeginTransaction()
+        {
+            EnsureInitialized();
+            var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
+            var conn = new SQLiteConnection(_connectionString);
+            conn.Open();
+            var holder = new TxHolder { Conn = conn };
+            using (var beginCmd = conn.CreateCommand())
+            {
+                beginCmd.CommandText = "BEGIN";
+                beginCmd.ExecuteNonQuery();
+            }
+            holder.Timer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
+        }
+
+        /// <summary>
+        /// Borrow a connection to the specified external database file, BEGIN a
+        /// transaction on it, and return a connId. Used by pullEngine's dstAdapter
+        /// (constructed with a connectionString) so that withTransaction bodies
+        /// route writes to the target file atomically. The connId enters the same
+        /// _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
+        /// (the target connection), independent of the singleton _connectionString.
+        /// Does NOT call EnsureInitialized — the target DB is independent of the
+        /// singleton app DB and need not be open.
+        /// </summary>
+        public long BeginTransaction(string connectionString)
+        {
+            var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
+            var conn = new SQLiteConnection(connectionString);
+            conn.Open();
+            var holder = new TxHolder { Conn = conn };
+            using (var beginCmd = conn.CreateCommand())
+            {
+                beginCmd.CommandText = "BEGIN";
+                beginCmd.ExecuteNonQuery();
+            }
+            holder.Timer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
+        }
+
+        /// <summary>
+        /// COMMIT the transaction + return connection to pool.
+        /// </summary>
+        public void CommitTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryRemove(connId, out var h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,无法 commit");
+                h.Timer.Dispose();
+                try
+                {
+                    using var cmd = h.Conn.CreateCommand();
+                    cmd.CommandText = "COMMIT";
+                    cmd.ExecuteNonQuery();
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _totalBorrowed);
+                    h.Conn.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// ROLLBACK the transaction + return connection to pool. No-op if
+        /// connId already timed out.
+        /// </summary>
+        public void RollbackTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryRemove(connId, out var h)) return;
+                h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
+                CleanupTx(h);
+            }
+        }
+
+        /// <summary>
+        /// Reset the sliding idle timer for the transaction pinned to
+        /// <paramref name="connId"/> without executing any SQL. Use this
+        /// when the JS side needs to await a long-running non-DB operation
+        /// (e.g. user confirmation dialog) inside a withTransaction block
+        /// to prevent the 60s idle timeout from auto-rolling-back.
+        /// </summary>
+        /// <returns><c>true</c> if the timer was reset; <c>false</c> if the
+        /// connId has already timed out / rolled back (no-op).</returns>
+        public bool KeepAliveTransaction(long connId)
+        {
+            lock (_txLock)
+            {
+                if (_pinned.TryGetValue(connId, out var h))
+                {
+                    h.Timer.Change(TX_IDLE_MS, -1);
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        private void OnTxTimeout(long connId)
+        {
+            lock (_txLock)
+            {
+                if (!_pinned.TryGetValue(connId, out var h)) return;
+                Console.Error.WriteLine(
+                    $"[SQLite] 事务 connId={connId} 空闲 {TX_IDLE_MS}ms,自动回滚");
+                if (h.InFlight > 0)
+                {
+                    // SQL 正在执行(ExecutePinned 的 ExecuteReader 未返回),
+                    // 不能现在 Dispose 连接,否则 ObjectDisposedException。
+                    // 设标记,让 ExecutePinned 的 finally 检测到后自行清理。
+                    h.TimedOut = true;
+                    return;
+                }
+                _pinned.TryRemove(connId, out _);
+                h.Timer.Dispose();
+                Interlocked.Decrement(ref _totalBorrowed);
+                CleanupTx(h);
+            }
+        }
+
+        // ── Pool stats ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        /// </summary>
+        public string GetPoolStats()
+        {
+            var stats = new
+            {
+                active = _activeCount,
+                pinnedIdle = _pinned.Count - _pinnedActive,
+                availableCapacity = _maxPoolSize - _totalBorrowed,
+                max = _maxPoolSize
+            };
+            return JsonSerializer.Serialize(stats);
+        }
+
+        /// <summary>
+        /// Clear idle connections from the pool. System.Data.SQLite's
+        /// ClearAllPools() only drops idle connections; busy connections
+        /// are unaffected and continue to work normally.
+        /// </summary>
+        public void ClearIdleConnections()
+        {
+            SQLiteConnection.ClearAllPools();
         }
     }
 }

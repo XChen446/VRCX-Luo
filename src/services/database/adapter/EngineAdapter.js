@@ -12,6 +12,21 @@
  *
  * Interface frozen at 42 abstract + 3 optional methods (2026-07-16).
  *
+ * 2026-07-25 破例:事务接口 begin()/commit()/rollback() 改名为
+ * beginTransaction()/commit(connId)/rollback(connId),并新增
+ * withTransaction(fn) 默认实现 + _txStack 实例字段。原因是
+ * PostgreSQL.cs 的池化设计导致跨调用事务断裂,修复需要在 JS
+ * 层维护事务上下文栈,以让 withTransaction 体内的所有
+ * execute/executeNonQuery/bulkInsert 等自动走 pinned 连接。
+ * 22 个数据方法签名不变(栈顶在 execute/executeNonQuery 内部读)。
+ *
+ * 2026-07-25 补充:beginTransaction/commit/rollback 三个低级方法
+ * 标为 @private —— 生产代码应使用 withTransaction(fn),手动调用
+ * 这三个方法只在测试中验证栈契约时出现。@private 触发 IDE 高亮
+ * 但不触发 lint 失败(eslint-plugin-jsdoc 未在 eslint.config.mjs
+ * 启用),WebStorm 仍会对外部调用显示警告,达到引导效果。
+ * 详见 docs/TRANSACTION_DESIGN.md。
+ *
  * The `engineType` getter below is metadata, not part of the 42+3
  * method interface — it carries no SQL semantics and exists solely so
  * the migration runner can detect the active engine without importing
@@ -21,6 +36,16 @@
 class EngineAdapter {
     /** @type {string|null} */
     _prefixOverride = null;
+
+    /**
+     * 事务 connId 栈,withTransaction 自动 push/pop。
+     * execute/executeNonQuery 实现里读 `this._txStack.at(-1)` 决定走
+     * pinned 连接(事务中)还是默认池(事务外)。
+     * 实例属性,每个 adapter 实例独立,srcAdapter/dstAdapter 天然隔离。
+     * @type {number[]}
+     * @protected
+     */
+    _txStack = [];
 
     constructor() {
         if (new.target === EngineAdapter) {
@@ -450,33 +475,220 @@ class EngineAdapter {
     // ── Transaction ──────────────────────────────────────────────────
 
     /**
-     * BEGIN transaction.
+     * 引擎级事务开启钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.BeginTransaction()` 返回真实 connId
+     * - SQLiteAdapter/MySQLAdapter:发 `BEGIN` SQL,返回 0(单连接无需 pin)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @returns {Promise<number>} connId(0 表示单连接引擎无需 pin)
+     * @protected
      */
-    begin() {
+    _doBegin() {
         throw new Error('abstract');
     }
 
     /**
-     * COMMIT transaction.
+     * 引擎级事务提交钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.CommitTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:发 `COMMIT` SQL(connId 忽略)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @param {number} _connId
+     * @returns {Promise<void>}
+     * @protected
      */
-    commit() {
+    _doCommit(_connId) {
         throw new Error('abstract');
     }
 
     /**
-     * ROLLBACK transaction.
+     * 引擎级事务回滚钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.RollbackTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:发 `ROLLBACK` SQL(connId 忽略)
      *
      * @abstract
-     * @returns {Promise<number>} rows affected (0 for transaction control)
+     * @param {number} _connId
+     * @returns {Promise<void>}
+     * @protected
      */
-    rollback() {
+    _doRollback(_connId) {
         throw new Error('abstract');
+    }
+
+    /**
+     * 引擎级事务心跳钩子。子类实现:
+     * - PgSQLAdapter:调 C# `PostgreSQL.KeepAliveTransaction(connId)`
+     * - SQLiteAdapter/MySQLAdapter:同上,调对应 C# 方法
+     * - MemorySQLiteAdapter:返回 true(无 C# Timer,事务永不过期)
+     *
+     * 返回 `true` 表示 timer 已重置(续命成功);`false` 表示 connId
+     * 已超时回滚(C# 侧 TryGetValue 失败)。调用方可在 await 用户
+     * 交互后通过返回值判断事务是否仍然存活,决定是否提前退出。
+     *
+     * @abstract
+     * @param {number} _connId
+     * @returns {Promise<boolean>} true=续命成功,false=已超时回滚
+     * @protected
+     */
+    _doKeepAlive(_connId) {
+        throw new Error('abstract');
+    }
+
+    /**
+     * 开启一个事务,返回 connId 并 push 到 `_txStack`。
+     * execute/executeNonQuery 读栈顶决定走 pinned 连接还是默认池。
+     * 必须配对调用 commit(connId) 或 rollback(connId) 以 pop 栈。
+     *
+     * 不支持嵌套:栈非空时抛错(与 SQLite 现有 nested begin throws 一致)。
+     * 生产代码请使用 withTransaction(fn) 自动管理栈,而非手动调用
+     * 本方法——手动调用仅在测试中用于验证栈契约。
+     *
+     * @private
+     * @returns {Promise<number>} connId
+     */
+    async beginTransaction() {
+        if (this._txStack.length > 0) {
+            throw new Error(
+                'beginTransaction: 不支持嵌套事务(当前已在事务中)'
+            );
+        }
+        const connId = await this._doBegin();
+        this._txStack.push(connId);
+        return connId;
+    }
+
+    /**
+     * 提交当前事务并 pop `_txStack`。
+     *
+     * 仅由 withTransaction(fn) 内部调用;手动调用仅在测试中用于验证
+     * 栈契约。生产代码请使用 withTransaction(fn)。
+     *
+     * @private
+     * @param {number} connId - beginTransaction 返回的 connId
+     * @returns {Promise<void>}
+     */
+    async commit(connId) {
+        try {
+            await this._doCommit(connId);
+        } finally {
+            this._txStack.pop();
+        }
+    }
+
+    /**
+     * 回滚当前事务并 pop `_txStack`。已超时/不存在的 connId 静默
+     * no-op,不抛错(withTransaction 的 catch 可无条件调用)。
+     *
+     * 仅由 withTransaction(fn) 内部调用;手动调用仅在测试中用于验证
+     * 栈契约。生产代码请使用 withTransaction(fn)。
+     *
+     * @private
+     * @param {number} connId - beginTransaction 返回的 connId
+     * @returns {Promise<void>}
+     */
+    async rollback(connId) {
+        try {
+            await this._doRollback(connId);
+        } finally {
+            this._txStack.pop();
+        }
+    }
+
+    /**
+     * 重置当前事务的 sliding idle timer,不执行任何 SQL。
+     *
+     * 用于 withTransaction 体内 await 长时间非 DB 操作(如用户确认
+     * 对话框、输入框等待)时,防止 60s idle 超时自动回滚。调用后
+     * Timer 重新从 TX_IDLE_MS 开始计时。
+     *
+     * @returns {Promise<boolean>} `true` 表示续命成功(事务仍存活,
+     *   timer 已重置);`false` 表示事务已超时回滚或当前不在事务中
+     *   (调用方应提前退出事务体,避免后续 SQL 抛 "connId 已超时
+     *   回滚" 的延迟错误)。注意:即使返回 `false`,withTransaction
+     *   的 catch 仍会在后续 SQL 调用失败时 rollback + 重新抛出,
+     *   keepAlive 返回 `false` 只是让调用方有机会提前干净退出。
+     *
+     * 推荐用法 — 在每段可能超过 60s 的非 DB await 前调用,
+     * 并检查返回值:
+     * ```
+     * await adapter.withTransaction(async () => {
+     *     await adapter.insert(...);
+     *     if (!await adapter.keepAlive()) return; // 事务已死,提前退出
+     *     const ok = await dialog.confirm(...);    // 用户慢慢想
+     *     if (!ok) throw new Error('用户取消');
+     *     if (!await adapter.keepAlive()) return; // 事务已死,提前退出
+     *     await adapter.update(...);
+     * });
+     * ```
+     *
+     * ⚠️ 注意:keepAlive 是逃生舱,不是鼓励在事务内做长交互。
+     * 事务应尽可能短——长时间持有事务锁会阻塞其他操作。能拆到
+     * 事务外确认的,优先拆出去(乐观锁模式)。
+     */
+    async keepAlive() {
+        const connId = this._txStack.at(-1);
+        if (connId === undefined) return false;
+        try {
+            return await this._doKeepAlive(connId);
+        } catch {
+            // C# 桥异常或 binding 缺失,视为事务已死
+            return false;
+        }
+    }
+
+    /**
+     * 在事务中执行 `fn`。自动管理 connId 的获取/提交/回滚 + `_txStack`
+     * 的 push/pop。业务代码在 `fn` 内部调用的 execute/insert/bulkInsert
+     * 等方法会自动走 pinned 连接(读栈顶 connId),无需显式传 connId。
+     *
+     * - 成功:commit + pop 栈
+     * - 抛错:rollback + pop 栈 + 重新抛出
+     * - 嵌套:栈非空时抛错(不支持嵌套事务)
+     *
+     * ⚠️ 事务内禁止 await 用户交互(对话框、输入框等)。C# 侧有
+     * 60 秒 idle 超时自动回滚,用户不在电脑前会导致事务被静默
+     * 回滚,后续 SQL 抛 "connId 已超时回滚" 错误。如必须在事务
+     * 内等待用户,需在每段可能超时的 await 前调用 `keepAlive()`
+     * 续命;但更推荐将用户交互拆到事务外(乐观锁模式):
+     * ```
+     * // ✅ 推荐:事务外确认
+     * const data = await adapter.select(...);
+     * const ok = await dialog.confirm(data);
+     * if (!ok) return;
+     * await adapter.withTransaction(async () => {
+     *     await adapter.update(...);
+     * });
+     * ```
+     *
+     * @optional
+     * @template T
+     * @param {() => Promise<T>} fn
+     * @returns {Promise<T>}
+     */
+    async withTransaction(fn) {
+        if (this._txStack.length > 0) {
+            throw new Error(
+                'withTransaction: 不支持嵌套事务(当前已在事务中)'
+            );
+        }
+        const connId = await this.beginTransaction();
+        try {
+            const result = await fn();
+            await this.commit(connId);
+            return result;
+        } catch (err) {
+            try {
+                await this.rollback(connId);
+            } catch (rollbackErr) {
+                // 不掩盖原始业务错误,但记录 rollback 失败供诊断
+                // (连接断、SQLite 损坏等,否则完全无日志)
+                console.error(
+                    '[adapter] withTransaction rollback 失败:',
+                    rollbackErr
+                );
+            }
+            throw err;
+        }
     }
 
     // ── Maintenance ──────────────────────────────────────────────────
@@ -648,6 +860,97 @@ class EngineAdapter {
     }
 
     // ── JS utilities ─────────────────────────────────────────────────
+
+    /**
+     * Connection pool three-state metrics snapshot.
+     *
+     * Calls the C# bridge's `GetPoolStats()` (SQLite / PostgreSQL / MySQL)
+     * and returns the parsed JSON: `{ active, pinnedIdle, availableCapacity, max }`.
+     * Pure in-memory counter read on the C# side, no network call. Sampled
+     * once per second by the StatusBar database monitor (Issue #14).
+     *
+     * The three states are:
+     *   - `active`: connections currently executing SQL (pinned + non-pinned).
+     *   - `pinnedIdle`: connections held by an open transaction but not
+     *     currently executing SQL (`_pinned.Count - _pinnedActive`).
+     *   - `availableCapacity`: `_maxPoolSize - _totalBorrowed` — the number
+     *     of connections that can still be borrowed without growing the pool.
+     *     This is the closest available proxy for "pool health" since the
+     *     driver public APIs do not expose the real idle-in-pool count; it
+     *     conflates idle connections sitting in the pool with unused quota.
+     *     A high value = healthy/cool; a low value = pressure.
+     *
+     * @abstract
+     * @returns {Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>}
+     */
+    async getPoolStats() {
+        throw new Error('abstract');
+    }
+
+    /**
+     * Clear idle connections from the pool. Calls the C# bridge's
+     * `ClearIdleConnections()` (SQLite / PostgreSQL / MySQL). Only
+     * affects pool-idle connections; active and pinned connections
+     * continue to work normally.
+     *
+     * @abstract
+     * @returns {Promise<void>}
+     */
+    async clearIdleConnections() {
+        throw new Error('abstract');
+    }
+
+    /**
+     * Async liveness probe. Resolves true when the C# backend is
+     * initialised and the server is reachable (Ping succeeds). On
+     * CefSharp the bridge is synchronous; on Electron the bridge returns
+     * a Promise — see the dual-runtime note below. Declared `async` so
+     * `await` works uniformly across both runtimes; calling sites MUST
+     * `await` the result (awaiting a plain boolean returns it
+     * immediately on CefSharp).
+     *
+     * @abstract
+     * @returns {Promise<boolean>}
+     */
+    async isConnected() {
+        throw new Error('abstract');
+    }
+
+    /**
+     * Async health probe. Returns a JSON snapshot from the C# bridge:
+     * `{ connected, latencyMs, lastHealthCheck }`.
+     *
+     * @abstract
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        throw new Error('abstract');
+    }
+
+    // ── Health / pool probes ────────────────────────────────────────
+    //
+    // The following methods (isConnected / getHealth / getPoolStats) call
+    // C# bridge methods that are synchronous on the C# side but are
+    // declared async here because of the dual-runtime bridge:
+    //
+    //   - CefSharp (Windows): binds C# methods directly → returns plain
+    //     synchronous values (string / boolean).
+    //   - Electron (Linux): wraps ALL C# calls in a Promise via the
+    //     InteropApi Proxy (src/ipc-electron/interopApi.js:16), which does
+    //     `async (...args) => await target.callMethod(...)`.
+    //
+    // `await` works uniformly across both runtimes: awaiting a plain
+    // value returns it immediately; awaiting a Promise waits for
+    // resolution.  All callers MUST `await` these methods — calling them
+    // synchronously would get a Promise on Electron but a raw value on
+    // CefSharp, producing platform-dependent bugs.  `isConnected` is
+    // async for the same reason: `Boolean(Ping())` would be
+    // `Boolean(Promise)` (always true) on Electron.
+    //
+    // globals.d.ts types these as `Promise<>` to match the widest
+    // runtime (Electron IPC).  See also:
+    //   - src/ipc-electron/interopApi.js (Electron bridge Proxy)
+    //   - src/types/globals.d.ts (type declarations)
 
     /**
      * Compute ISO date string for N days ago.

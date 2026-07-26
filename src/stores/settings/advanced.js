@@ -1327,12 +1327,14 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Probe the MySQL/MariaDB backend health. Symmetric to `testPgsqlConnection`;
-     * unlike PG, the MySQL C# binding exposes `IsConnected` rather than a
-     * JSON `GetHealth` payload, so we interpret a truthy `IsConnected` as
-     * connected. Only meaningful when the app booted in `mysql`/`mariadb` mode
-     * (so `MySQL.Instance` is initialised); in `sqlite` mode we can only
-     * report that a switch + restart is required.
+     * Probe the MySQL/MariaDB backend health. Symmetric to `testPgsqlConnection`:
+     * both ultimately execute `SELECT 1` against the pooled data source via
+     * the C# `Ping()` method, returning a real liveness result rather than
+     * just an initialisation-state check. Only meaningful when the app
+     * booted in `mysql`/`mariadb` mode (so `MySQL.Instance` is initialised);
+     * in `sqlite` mode we can only report that a switch + restart is required.
+     * Worst-case latency bounded by `ConnectionTimeout` (15s) when the
+     * server is unreachable.
      *
      * @returns {Promise<{connected: boolean, error?: string}>}
      */
@@ -1343,7 +1345,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             // `testPgsqlConnection` for the full rationale: the user may
             // have persisted `mysql`/`mariadb` without restarting, in
             // which case `MySQL.Instance` was never `Init()`'d this boot
-            // and `MySQL.IsConnected` returns false for the wrong reason.
+            // and `MySQL.Ping` would attempt to connect with an empty
+            // connection string, returning false for the wrong reason.
             // `MySQLAdapter.engineType` is `'mysql'` for both `mysql` and
             // `mariadb` modes (mariadb is a mysql alias), so a single
             // check covers both.
@@ -1356,7 +1359,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                         'Save the engine selection and restart VRCX, then test the connection again.'
                 };
             }
-            const connected = await MySQL.IsConnected?.();
+            const connected = await MySQL.Ping?.();
             mysqlConnectionStatus.value = connected ? 'connected' : 'failed';
             return { connected: !!connected };
         } catch (err) {

@@ -37,19 +37,23 @@ globalThis.speechSynthesis = {
 };
 
 // matchMedia polyfill (standard jsdom workaround)
-Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation((query) => ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn()
-    }))
-});
+// Guard:只在 jsdom 环境(window 存在)执行,node 环境的测试文件
+// (如 SQLiteConcurrentWrite.test.js 用 @vitest-environment node)无 window。
+if (typeof window !== 'undefined') {
+    Object.defineProperty(window, 'matchMedia', {
+        writable: true,
+        value: vi.fn().mockImplementation((query) => ({
+            matches: false,
+            media: query,
+            onchange: null,
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            addEventListener: vi.fn(),
+            removeEventListener: vi.fn(),
+            dispatchEvent: vi.fn()
+        }))
+    });
+}
 
 // localStorage polyfill (jsdom may not provide a full implementation)
 if (

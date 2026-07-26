@@ -240,9 +240,9 @@ export function promptClearAvatarHistory() {
             title: t('confirm.title'),
             destructive: true
         })
-        .then(({ ok }) => {
+        .then(async ({ ok }) => {
             if (!ok) return;
-            avatarStore.clearAvatarHistory();
+            await avatarStore.clearAvatarHistory();
         })
         .catch(() => {});
 }

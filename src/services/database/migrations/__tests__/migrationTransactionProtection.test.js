@@ -16,6 +16,11 @@
  * (the first DDL on `gamelog_location` in v16/schema.map — the add_column
  * of `group_name`). This is string-based, not callCount-based, so it is
  * robust against reordering of the schema changes.
+ *
+ * 注意:Block 1 "explicit transaction semantics" 直接调用 EngineAdapter
+ * 的 @private 方法 beginTransaction/commit/rollback —— 这是有意为之,
+ * 用于验证 withTransaction 所依赖的底层栈契约(rollback no-op 容错、
+ * commit 缺事务抛错等)。生产代码请使用 withTransaction(fn)。
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -111,43 +116,39 @@ const PREFIXES = ['userA1', 'userB2'];
 describe('explicit transaction semantics', () => {
     test('begin → insert → commit persists the row', async () => {
         db.exec('CREATE TABLE txn_test (id INTEGER PRIMARY KEY, val TEXT)');
-        await memAdapter.begin();
+        const connId = await memAdapter.beginTransaction();
         await memAdapter.executeNonQuery(
             'INSERT INTO txn_test (id, val) VALUES (@id, @val)',
             { id: 1, val: 'committed' }
         );
-        await memAdapter.commit();
+        await memAdapter.commit(connId);
         expect(tableRowCount('txn_test')).toBe(1);
     });
 
     test('begin → insert → rollback leaves the table empty', async () => {
         db.exec('CREATE TABLE txn_test (id INTEGER PRIMARY KEY, val TEXT)');
-        await memAdapter.begin();
+        const connId = await memAdapter.beginTransaction();
         await memAdapter.executeNonQuery(
             'INSERT INTO txn_test (id, val) VALUES (@id, @val)',
             { id: 1, val: 'will-rollback' }
         );
-        await memAdapter.rollback();
+        await memAdapter.rollback(connId);
         expect(tableRowCount('txn_test')).toBe(0);
     });
 
-    test('rollback() without an active transaction throws "no transaction is active"', async () => {
-        // SQLite's ROLLBACK without BEGIN raises SQLITE_ERROR "cannot
-        // rollback - no transaction is active". This documents the actual
-        // node:sqlite behavior: exec('ROLLBACK') throws when no transaction
-        // is active. The runner's catch block always calls rollback() after
-        // a successful begin(), so this path is never hit in production —
-        // but documenting it here explains why the runner's rollback is
-        // wrapped in its own try/catch.
-        await expect(memAdapter.rollback()).rejects.toThrow(/no transaction/i);
+    test('rollback() without an active transaction is silently no-op (aligned with PG timeout semantics)', async () => {
+        // SQLite's ROLLBACK without BEGIN raises "no transaction is active",
+        // but _doRollback now catches this error to align with PG's
+        // "connId已超时回滚后 rollback no-op" semantics. This lets
+        // withTransaction's catch block call rollback() unconditionally.
+        await expect(memAdapter.rollback(0)).resolves.toBeUndefined();
     });
 
     test('commit() without an active transaction throws "no transaction is active"', async () => {
-        // SQLite's COMMIT without BEGIN raises SQLITE_ERROR "cannot commit -
-        // no transaction is active". This documents the actual node:sqlite
-        // behavior so the runner's try/catch in executeMigration is
-        // understood to never hit this path (it only commits after begin).
-        await expect(memAdapter.commit()).rejects.toThrow(/no transaction/i);
+        // COMMIT without BEGIN still raises — _doCommit does NOT catch
+        // this (unlike rollback), so calling commit on a stale/missing
+        // transaction surfaces loudly (caller bug, not a cleanup path).
+        await expect(memAdapter.commit(0)).rejects.toThrow(/no transaction/i);
     });
 });
 

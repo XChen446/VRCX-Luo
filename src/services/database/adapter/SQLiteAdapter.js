@@ -159,7 +159,19 @@ class SQLiteAdapter extends EngineAdapter {
     /** Execute raw SQL with row callback. Normalizes named-param keys. */
     async execute(callback, sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
+            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
+            // 可能是活动库或 connectionString 目标库),保证事务原子性。
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(sql, args, connId);
+                const items = JSON.parse(json);
+                items.forEach((item) => { callback(item); });
+                return;
+            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -173,14 +185,14 @@ class SQLiteAdapter extends EngineAdapter {
                 if (args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await SQLite.ExecuteJson(sql, args);
+                const json = await SQLite.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
                 });
                 return;
             }
-            const data = await SQLite.Execute(sql, args);
+            const data = await SQLite.Execute(sql, args, connId);
             data.forEach((row) => {
                 callback(row);
             });
@@ -197,7 +209,16 @@ class SQLiteAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
+            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
+            // 可能是活动库或 connectionString 目标库),保证事务原子性。
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                return await SQLite.ExecuteNonQuery(sql, args, connId);
+            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -207,7 +228,7 @@ class SQLiteAdapter extends EngineAdapter {
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
             }
-            return await SQLite.ExecuteNonQuery(sql, args);
+            return await SQLite.ExecuteNonQuery(sql, args, connId);
         } catch (e) {
             await this.handleSQLiteError(e);
         }
@@ -1063,19 +1084,60 @@ class SQLiteAdapter extends EngineAdapter {
         );
     }
 
-    /** BEGIN transaction. */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    // ── Transaction ──────────────────────────────────────────────────
+    // SQLite 单连接模式:BEGIN/COMMIT/ROLLBACK 通过 C# 的
+    // BeginTransaction/CommitTransaction/RollbackTransaction 管理,
+    // C# 侧 _pinnedConnId 单槽 + sliding Timer 防泄漏。
+    // execute/executeNonQuery 读栈顶 connId 传给 C# 重置 Timer
+    // (单连接无需路由,但保持三引擎 JS 层统一)。
+
+    /**
+     * @override
+     * @returns {Promise<number>} C# 返回的真实 connId
+     * @protected
+     */
+    async _doBegin() {
+        // connectionString 模式(pullEngine dstAdapter):在目标文件上开 pinned 事务,
+        // 使 withTransaction 体内的写操作走 pinned 连接,保证原子性。
+        if (this.connectionString) {
+            return SQLite.BeginTransaction(this.connectionString);
+        }
+        return SQLite.BeginTransaction();
     }
 
-    /** COMMIT transaction. */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doCommit(connId) {
+        SQLite.CommitTransaction(connId);
     }
 
-    /** ROLLBACK transaction. */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doRollback(connId) {
+        try {
+            SQLite.RollbackTransaction(connId);
+        } catch (e) {
+            // C# 侧已超时回滚的 connId 静默 no-op;其他错误重新抛出
+            if (!String(e?.message || '').includes('已超时')) {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * @override
+     * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        return SQLite.KeepAliveTransaction(connId);
     }
 
     /** VACUUM — reclaim storage. */
@@ -1086,6 +1148,35 @@ class SQLiteAdapter extends EngineAdapter {
     /** PRAGMA optimize — maintenance hint. SQLite-specific; replace with ANALYZE on other engines. */
     optimize() {
         return this.executeNonQuery('PRAGMA optimize');
+    }
+
+    async getPoolStats() {
+        const json = await SQLite.GetPoolStats();
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+    }
+
+    async clearIdleConnections() {
+        await SQLite.ClearIdleConnections();
+    }
+
+    /**
+     * Async liveness probe backed by C# `SQLite.Ping()`.
+     *
+     * @returns {Promise<boolean>}
+     */
+    async isConnected() {
+        if (typeof SQLite === 'undefined' || !SQLite?.Ping) return false;
+        return Boolean(await SQLite.Ping());
+    }
+
+    /**
+     * Health probe backed by C# `SQLite.GetHealth()`.
+     *
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        const json = await SQLite.GetHealth();
+        return json ? JSON.parse(json) : { connected: false };
     }
 }
 

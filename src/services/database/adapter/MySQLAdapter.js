@@ -42,7 +42,7 @@ class MySQLAdapter extends EngineAdapter {
     /**
      * @param {object} [config]
      * @param {string} [config.connection] - mysql:// URI 或原始连接字符串
-     * @param {...object} [config.params] - 额外连接参数（覆盖默认）
+     * @param {object} [config.params] - 额外连接参数（覆盖默认）
      */
     constructor({ connection, ...params } = {}) {
         super();
@@ -157,6 +157,7 @@ class MySQLAdapter extends EngineAdapter {
      */
     async execute(callback, sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -173,14 +174,14 @@ class MySQLAdapter extends EngineAdapter {
                 if (args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await MySQL.ExecuteJson(sql, args);
+                const json = await MySQL.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
                 });
                 return;
             }
-            const data = await MySQL.Execute(sql, args);
+            const data = await MySQL.Execute(sql, args, connId);
             data.forEach((row) => {
                 callback(row);
             });
@@ -198,6 +199,7 @@ class MySQLAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         args = this._normalizeArgs(args);
+        const connId = this._txStack.at(-1);
         try {
             if (this.connectionString) {
                 if (LINUX && args) {
@@ -208,7 +210,7 @@ class MySQLAdapter extends EngineAdapter {
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
             }
-            return await MySQL.ExecuteNonQuery(sql, args);
+            return await MySQL.ExecuteNonQuery(sql, args, connId);
         } catch (e) {
             await this.handleMySqlError(e);
         }
@@ -615,20 +617,51 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     // ── Transaction ──────────────────────────────────────────────────
+    // MySQL 单连接模式(同 SQLite):BEGIN/COMMIT/ROLLBACK 通过 C# 的
+    // BeginTransaction/CommitTransaction/RollbackTransaction 管理,
+    // C# 侧 _pinnedConnId 单槽 + sliding Timer 防泄漏。
 
-    /** @override */
-    begin() {
-        return this.executeNonQuery('BEGIN');
+    /**
+     * @override
+     * @returns {Promise<number>} C# 返回的真实 connId
+     * @protected
+     */
+    async _doBegin() {
+        return MySQL.BeginTransaction();
     }
 
-    /** @override */
-    commit() {
-        return this.executeNonQuery('COMMIT');
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doCommit(connId) {
+        MySQL.CommitTransaction(connId);
     }
 
-    /** @override */
-    rollback() {
-        return this.executeNonQuery('ROLLBACK');
+    /**
+     * @override
+     * @param {number} connId
+     * @protected
+     */
+    async _doRollback(connId) {
+        try {
+            MySQL.RollbackTransaction(connId);
+        } catch (e) {
+            if (!String(e?.message || '').includes('已超时')) {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * @override
+     * @param {number} connId
+     * @returns {Promise<boolean>} C# KeepAliveTransaction 返回值
+     * @protected
+     */
+    async _doKeepAlive(connId) {
+        return MySQL.KeepAliveTransaction(connId);
     }
 
     // ── SQL fragments (engine-specific syntax) ───────────────────────
@@ -1122,6 +1155,55 @@ class MySQLAdapter extends EngineAdapter {
     userTable(prefix, name) {
         const p = this._prefixOverride ?? prefix;
         return `${p}_${name}`;
+    }
+
+    /**
+     * Async liveness probe backed by C# `MySQL.Ping()`.
+     *
+     * Symmetric to `PgSQLAdapter.isConnected()`. `Ping` executes
+     * `SELECT 1` against the pooled MySQL/MariaDB connection, confirming
+     * the backend is actually reachable — unlike `IsConnected`, which only
+     * reports initialisation state. Worst-case latency when the server is
+     * unreachable is bounded by `ConnectionTimeout` (default 15s); in the
+     * common connected case it is sub-millisecond.
+     *
+     * Used by `pullEngine`/`pushEngine` as a fail-fast guard before
+     * attempting a long copy operation, so a disconnected backend produces
+     * a clear "backend is not connected" error rather than a delayed,
+     * mid-copy SQL failure.
+     *
+     * Declared `async` and `await`s the C# bridge so the result is
+     * correct on both runtimes: on CefSharp `Ping()` returns a plain
+     * `boolean` (awaiting it is a no-op); on Electron `Ping()` returns
+     * a `Promise<boolean>` via the InteropApi Proxy, and `Boolean(Promise)`
+     * would otherwise always be `true`. The `typeof` guard short-circuits
+     * both the undeclared-binding case and the `undefined` value case,
+     * returning `false` without touching the bridge.
+     *
+     * @returns {Promise<boolean>}
+     */
+    async isConnected() {
+        if (typeof MySQL === 'undefined' || !MySQL?.Ping) return false;
+        return Boolean(await MySQL.Ping());
+    }
+
+    /**
+     * Health probe backed by C# `MySQL.GetHealth()`.
+     *
+     * @returns {Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string|null }>}
+     */
+    async getHealth() {
+        const json = await MySQL.GetHealth();
+        return json ? JSON.parse(json) : { connected: false };
+    }
+
+    async getPoolStats() {
+        const json = await MySQL.GetPoolStats();
+        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+    }
+
+    async clearIdleConnections() {
+        await MySQL.ClearIdleConnections();
     }
 }
 

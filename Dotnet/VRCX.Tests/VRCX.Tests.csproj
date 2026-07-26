@@ -31,8 +31,8 @@
            1. Stubs' by-design fields (Program.AppDataDirectory / ConfigLocation are assigned
               in test Setup, not at field declaration; VRCXStorage.Get intentionally returns
               null as fail-fast sentinel).
-           2. Link'd SQLite.cs m_Connection field (initialized in Init(), not ctor; security
-              tests never call Init() so the field stays null at test time — by design).
+            2. Link'd SQLite.cs _connectionString field (initialized in Init(), not ctor; security
+               tests never call Init() so the field stays null at test time — by design).
          Task constraint forbids modifying stub content; suppressing here is the minimal fix. -->
     <NoWarn>CS8618;CS8603</NoWarn>
     <!-- 不设 EnableWindowsTargeting，TFM 无 -windows 后缀，可在 Linux CI 跑 -->

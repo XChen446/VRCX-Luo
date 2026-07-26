@@ -197,9 +197,9 @@ export const useAvatarStore = defineStore('Avatar', () => {
     /**
      *
      */
-    function clearAvatarHistory() {
+    async function clearAvatarHistory() {
         avatarHistory.value = [];
-        database.clearAvatarHistory();
+        await database.clearAvatarHistory();
     }
 
     /**

@@ -24,6 +24,14 @@ import { MySQLAdapter } from './MySQLAdapter.js';
  * deferred to a follow-up slice that can provision the .NET runtime.
  * The construct-time assertions below exercise the pure synchronous
  * `_buildConnectionString` path, which has no external dependency.
+ *
+ * TODO: 事务单元测试覆盖空白。`beginTransaction`/`commit`/`rollback`
+ *   (现已标 @private) 及 `withTransaction` 的 MySQL 引擎级语义
+ *   (pooled 连接 + `BEGIN/COMMIT/ROLLBACK` SQL 往返、事务内读未
+ *   commit 写)目前仅由 `transaction.test.js` 用 MemorySQLiteAdapter
+ *   做引擎无关的栈契约验证。MySQL 特定的事务行为需真实 MySQL
+ *   后端 + C# 桥,无法在纯 JS unit test 中覆盖,待 follow-up 补
+ *   集成测试。
  */
 const mysqlHost = process.env.MYSQL_TEST_HOST;
 const describeIntegration = mysqlHost ? describe : describe.skip;
