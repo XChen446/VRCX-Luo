@@ -271,6 +271,19 @@ namespace VRCX
         }
 
         /// <summary>
+        /// Clear idle connections from the pool. NpgsqlDataSource.Clear()
+        /// drops idle connections immediately and marks busy connections to
+        /// be closed when returned to the pool (rather than reused). In the
+        /// VRCX desktop scenario busy connections are typically 0-3, so the
+        /// cost of rebuilding them is acceptable — and the side effect is
+        /// beneficial when the user suspects a connection leak.
+        /// </summary>
+        public void ClearIdleConnections()
+        {
+            _dataSource?.Clear();
+        }
+
+        /// <summary>
         /// Return true when the data source has been initialized.
         /// Does not probe the network — callers needing a real liveness
         /// check should use <see cref="Ping"/> (SELECT 1) or

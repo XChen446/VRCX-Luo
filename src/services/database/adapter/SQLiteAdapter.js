@@ -1131,6 +1131,10 @@ class SQLiteAdapter extends EngineAdapter {
         return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
     }
 
+    async clearIdleConnections() {
+        await SQLite.ClearIdleConnections();
+    }
+
     /**
      * Synchronous liveness probe backed by C# `SQLite.Ping()`.
      *

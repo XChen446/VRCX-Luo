@@ -941,5 +941,15 @@ namespace VRCX
             };
             return JsonSerializer.Serialize(stats);
         }
+
+        /// <summary>
+        /// Clear idle connections from the pool. System.Data.SQLite's
+        /// ClearAllPools() only drops idle connections; busy connections
+        /// are unaffected and continue to work normally.
+        /// </summary>
+        public void ClearIdleConnections()
+        {
+            SQLiteConnection.ClearAllPools();
+        }
     }
 }

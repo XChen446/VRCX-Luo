@@ -876,6 +876,19 @@ class EngineAdapter {
         throw new Error('abstract');
     }
 
+    /**
+     * Clear idle connections from the pool. Calls the C# bridge's
+     * `ClearIdleConnections()` (SQLite / PostgreSQL / MySQL). Only
+     * affects pool-idle connections; active and pinned connections
+     * continue to work normally.
+     *
+     * @abstract
+     * @returns {Promise<void>}
+     */
+    async clearIdleConnections() {
+        throw new Error('abstract');
+    }
+
     // ── Health / pool probes ────────────────────────────────────────
     //
     // The following methods (isConnected / getHealth / getPoolStats) call

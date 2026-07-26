@@ -235,8 +235,9 @@
 
                         <TooltipWrapper v-if="visibility.db" :content="dbTooltip" side="top">
                             <div
-                                class="flex items-center gap-1 px-2 h-[22px] whitespace-nowrap border-r border-border"
-                                :style="statusBarItemStyle('db')">
+                                class="flex items-center gap-1 px-2 h-[22px] whitespace-nowrap border-r border-border cursor-pointer hover:bg-muted/50"
+                                :style="statusBarItemStyle('db')"
+                                @click="handleDbClick">
                                 <span class="text-foreground text-[11px]">{{ t('status_bar.db') }}</span>
                                 <canvas ref="dbCanvasRef" class="shrink-0 rounded-sm" />
                                 <span class="text-[10px] text-foreground tabular-nums">{{
@@ -569,7 +570,8 @@
         useAutoFollowStore,
         useUserStore,
         useVrcStatusStore,
-        useVrcxStore
+        useVrcxStore,
+        useModalStore
     } from '@/stores';
     import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
     import { formatSeconds, timeToText } from '@/shared/utils';
@@ -1036,6 +1038,26 @@
             + '\n' + t('status_bar.db_tooltip_pinned_idle', { count: dbPinnedIdleCount.value })
             + '\n' + t('status_bar.db_tooltip_pool_idle', { count: dbPoolIdleCount.value });
     });
+
+    async function handleDbClick() {
+        const modalStore = useModalStore();
+        const result = await modalStore.confirm({
+            title: t('status_bar.db_release_title'),
+            description: t('status_bar.db_release_description'),
+            confirmText: t('status_bar.db_release_confirm'),
+            cancelText: t('dialog.alertdialog.cancel'),
+            destructive: true
+        });
+        if (!result.ok) return;
+        try {
+            const { adapter } = await import('@/services/database/adapter');
+            if (adapter && typeof adapter.clearIdleConnections === 'function') {
+                await adapter.clearIdleConnections();
+            }
+        } catch {
+            // adapter not ready or bridge error — silently ignore
+        }
+    }
 
     const infoFetchTooltip = computed(() => {
         if (infoFetchState.status === 'running') {

@@ -155,6 +155,12 @@ declare global {
          */
         GetPoolStats: () => Promise<string>;
         /**
+         * Clear idle connections from the pool. Busy connections (active /
+         * pinned) are unaffected on SQLite/MySQL; Npgsql's Clear() also
+         * marks busy connections to close on return (see C# docs).
+         */
+        ClearIdleConnections: () => Promise<void>;
+        /**
          * Returns true when the backend has been initialised. Does not
          * probe the file system — a true return does not guarantee the
          * database file is accessible. Prefer `Ping` for a real liveness
@@ -211,6 +217,11 @@ declare global {
          * (Issue #14).
          */
         GetPoolStats: () => Promise<string>;
+        /**
+         * Clear idle connections from the pool. Npgsql's Clear() also
+         * marks busy connections to close on return (see C# docs).
+         */
+        ClearIdleConnections: () => Promise<void>;
     };
 
     const LogWatcher: {
@@ -539,6 +550,11 @@ declare global {
          * PostgreSQL.GetHealth.
          */
         GetHealth: () => Promise<string>;
+        /**
+         * Clear idle connections from the pool. Busy connections are
+         * unaffected (MySqlConnector ClearAllPools only drops idle).
+         */
+        ClearIdleConnections: () => Promise<void>;
     };
 
     const webApiService: {

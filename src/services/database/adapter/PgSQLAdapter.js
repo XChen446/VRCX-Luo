@@ -1162,6 +1162,10 @@ class PgSQLAdapter extends EngineAdapter {
         return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, poolIdle: 0, max: 0 };
     }
 
+    async clearIdleConnections() {
+        await PostgreSQL.ClearIdleConnections();
+    }
+
     // ── Schema (initUserSchema / initGlobalSchema) ────────────────────
     // Slice S4 (§4.1.7 + §4.1.8 + §5.2/§5.3 + §10.2). The 5 metadata
     // methods (`listTables` / `getTableColumns` / `listTablesTypes`)
