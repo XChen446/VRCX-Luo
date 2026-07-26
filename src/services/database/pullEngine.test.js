@@ -472,3 +472,4 @@ describe('pullEngine — guard + 行数校验', () => {
         expect(await dstCount('cache_avatar')).toBe(12);
     });
 });
+

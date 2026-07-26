@@ -161,6 +161,17 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
+            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
+            // 可能是活动库或 connectionString 目标库),保证事务原子性。
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(sql, args, connId);
+                const items = JSON.parse(json);
+                items.forEach((item) => { callback(item); });
+                return;
+            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -200,6 +211,14 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
+            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
+            // 可能是活动库或 connectionString 目标库),保证事务原子性。
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                return await SQLite.ExecuteNonQuery(sql, args, connId);
+            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -1078,6 +1097,11 @@ class SQLiteAdapter extends EngineAdapter {
      * @protected
      */
     async _doBegin() {
+        // connectionString 模式(pullEngine dstAdapter):在目标文件上开 pinned 事务,
+        // 使 withTransaction 体内的写操作走 pinned 连接,保证原子性。
+        if (this.connectionString) {
+            return SQLite.BeginTransaction(this.connectionString);
+        }
         return SQLite.BeginTransaction();
     }
 
