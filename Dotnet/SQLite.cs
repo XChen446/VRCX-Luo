@@ -720,17 +720,19 @@ namespace VRCX
 
         private object[][] ExecutePinned(long connId, string sql, IDictionary<string, object>? args)
         {
-            if (!_pinned.TryGetValue(connId, out var h))
-                throw new InvalidOperationException(
-                    $"connId={connId} 已超时回滚或不存在,请重试事务");
             // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚。
             // InFlight 标记让 OnTxTimeout 知道 SQL 正在跑,不立即
             // Dispose 连接,而是设 TimedOut 让本方法的 finally 自行清理。
-            // InFlight++ 与 Timer.Change 必须在同一 _txLock 内,否则
-            // OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
-            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException。
+            // TryGetValue 与 InFlight++/Timer.Change 必须在同一 _txLock 内,
+            // 否则 OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
+            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException,
+            // 且 _activeCount/_pinnedActive 永久泄漏(finally 不执行)。
+            TxHolder h;
             lock (_txLock)
             {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
                 h.InFlight++;
                 Interlocked.Increment(ref _activeCount);
                 Interlocked.Increment(ref _pinnedActive);
@@ -776,11 +778,12 @@ namespace VRCX
 
         private int ExecuteNonQueryPinned(long connId, string sql, IDictionary<string, object>? args)
         {
-            if (!_pinned.TryGetValue(connId, out var h))
-                throw new InvalidOperationException(
-                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            TxHolder h;
             lock (_txLock)
             {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
                 h.InFlight++;
                 Interlocked.Increment(ref _activeCount);
                 Interlocked.Increment(ref _pinnedActive);
@@ -828,6 +831,33 @@ namespace VRCX
             var connId = Interlocked.Increment(ref _nextConnId);
             Interlocked.Increment(ref _totalBorrowed);
             var conn = new SQLiteConnection(_connectionString);
+            conn.Open();
+            var holder = new TxHolder { Conn = conn };
+            using (var beginCmd = conn.CreateCommand())
+            {
+                beginCmd.CommandText = "BEGIN";
+                beginCmd.ExecuteNonQuery();
+            }
+            holder.Timer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
+        }
+
+        /// <summary>
+        /// Borrow a connection to the specified external database file, BEGIN a
+        /// transaction on it, and return a connId. Used by pullEngine's dstAdapter
+        /// (constructed with a connectionString) so that withTransaction bodies
+        /// route writes to the target file atomically. The connId enters the same
+        /// _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
+        /// (the target connection), independent of the singleton _connectionString.
+        /// Does NOT call EnsureInitialized — the target DB is independent of the
+        /// singleton app DB and need not be open.
+        /// </summary>
+        public long BeginTransaction(string connectionString)
+        {
+            var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
+            var conn = new SQLiteConnection(connectionString);
             conn.Open();
             var holder = new TxHolder { Conn = conn };
             using (var beginCmd = conn.CreateCommand())

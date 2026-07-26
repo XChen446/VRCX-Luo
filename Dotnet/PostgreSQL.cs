@@ -445,17 +445,19 @@ namespace VRCX
 
         private object[][] ExecutePinned(long connId, string sql, object[]? args)
         {
-            if (!_pinned.TryGetValue(connId, out var h))
-                throw new InvalidOperationException(
-                    $"connId={connId} 已超时回滚或不存在,请重试事务");
             // 暂停 Timer 防止慢查询(SQL 执行中)触发超时回滚。
             // InFlight 标记让 OnTxTimeout 知道 SQL 正在跑,不立即
             // Dispose 连接,而是设 TimedOut 让本方法的 finally 自行清理。
-            // InFlight++ 与 Timer.Change 必须在同一 _txLock 内,否则
-            // OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
-            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException。
+            // TryGetValue 与 InFlight++/Timer.Change 必须在同一 _txLock 内,
+            // 否则 OnTxTimeout 可能在两者之间排队看到 InFlight=0 立即清理,
+            // 随后本方法拿到 h.Conn 时已被 Dispose → ObjectDisposedException,
+            // 且 _activeCount/_pinnedActive 永久泄漏(finally 不执行)。
+            TxHolder h;
             lock (_txLock)
             {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
                 h.InFlight++;
                 Interlocked.Increment(ref _activeCount);
                 Interlocked.Increment(ref _pinnedActive);
@@ -504,11 +506,12 @@ namespace VRCX
 
         private int ExecuteNonQueryPinned(long connId, string sql, object[]? args)
         {
-            if (!_pinned.TryGetValue(connId, out var h))
-                throw new InvalidOperationException(
-                    $"connId={connId} 已超时回滚或不存在,请重试事务");
+            TxHolder h;
             lock (_txLock)
             {
+                if (!_pinned.TryGetValue(connId, out h))
+                    throw new InvalidOperationException(
+                        $"connId={connId} 已超时回滚或不存在,请重试事务");
                 h.InFlight++;
                 Interlocked.Increment(ref _activeCount);
                 Interlocked.Increment(ref _pinnedActive);
