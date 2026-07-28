@@ -47,7 +47,10 @@ class MySQLAdapter extends EngineAdapter {
     constructor({ connection, ...params } = {}) {
         super();
         if (connection) {
-            this.connectionString = this._buildConnectionString(connection, params);
+            this.connectionString = this._buildConnectionString(
+                connection,
+                params
+            );
         }
     }
 
@@ -163,7 +166,11 @@ class MySQLAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await MySQL.ExecuteJson(this.connectionString, sql, args);
+                const json = await MySQL.ExecuteJson(
+                    this.connectionString,
+                    sql,
+                    args
+                );
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
@@ -205,7 +212,11 @@ class MySQLAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                return await MySQL.ExecuteNonQuery(this.connectionString, sql, args);
+                return await MySQL.ExecuteNonQuery(
+                    this.connectionString,
+                    sql,
+                    args
+                );
             }
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
@@ -501,11 +512,7 @@ class MySQLAdapter extends EngineAdapter {
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
-        await this.execute(
-            (row) => rows.push(row),
-            finalSql,
-            allParams
-        );
+        await this.execute((row) => rows.push(row), finalSql, allParams);
         return rows;
     }
 
@@ -778,7 +785,10 @@ class MySQLAdapter extends EngineAdapter {
         const upper = type.toUpperCase();
         if (upper === 'INTEGER') return 'INT';
         if (upper === 'TEXT') {
-            if (constraints && constraints.toUpperCase().includes('PRIMARY KEY')) {
+            if (
+                constraints &&
+                constraints.toUpperCase().includes('PRIMARY KEY')
+            ) {
                 return 'VARCHAR(255)';
             }
             return 'TEXT';
@@ -1199,7 +1209,16 @@ class MySQLAdapter extends EngineAdapter {
 
     async getPoolStats() {
         const json = await MySQL.GetPoolStats();
-        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+        return json
+            ? JSON.parse(json)
+            : {
+                  active: 0,
+                  pinnedIdle: 0,
+                  availableCapacity: 0,
+                  max: 0,
+                  totalOpen: 0,
+                  idleInPool: 0
+              };
     }
 
     async clearIdleConnections() {

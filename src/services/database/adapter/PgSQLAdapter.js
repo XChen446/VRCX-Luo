@@ -1129,7 +1129,8 @@ class PgSQLAdapter extends EngineAdapter {
      * @returns {Promise<boolean>}
      */
     async isConnected() {
-        if (typeof PostgreSQL === 'undefined' || !PostgreSQL?.Ping) return false;
+        if (typeof PostgreSQL === 'undefined' || !PostgreSQL?.Ping)
+            return false;
         return Boolean(await PostgreSQL.Ping());
     }
 
@@ -1157,7 +1158,16 @@ class PgSQLAdapter extends EngineAdapter {
 
     async getPoolStats() {
         const json = await PostgreSQL.GetPoolStats();
-        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+        return json
+            ? JSON.parse(json)
+            : {
+                  active: 0,
+                  pinnedIdle: 0,
+                  availableCapacity: 0,
+                  max: 0,
+                  totalOpen: 0,
+                  idleInPool: 0
+              };
     }
 
     async clearIdleConnections() {

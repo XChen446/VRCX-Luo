@@ -37,7 +37,10 @@ class SQLiteAdapter extends EngineAdapter {
     constructor({ connection, ...params } = {}) {
         super();
         if (connection) {
-            this.connectionString = this._buildConnectionString(connection, params);
+            this.connectionString = this._buildConnectionString(
+                connection,
+                params
+            );
         }
     }
 
@@ -65,11 +68,12 @@ class SQLiteAdapter extends EngineAdapter {
         const isIO = msg.includes('disk I/O error');
         if (!isMalformed && !isFull && !isLocked && !isIO) throw e;
 
-        const [{ useModalStore }, { i18n }, { openExternalLink }] = await Promise.all([
-            import('../../../stores/modal'),
-            import('../../../plugins/i18n'),
-            import('../../../shared/utils/appActions')
-        ]);
+        const [{ useModalStore }, { i18n }, { openExternalLink }] =
+            await Promise.all([
+                import('../../../stores/modal'),
+                import('../../../plugins/i18n'),
+                import('../../../shared/utils/appActions')
+            ]);
         const modalStore = useModalStore();
         if (isMalformed) {
             modalStore
@@ -147,7 +151,7 @@ class SQLiteAdapter extends EngineAdapter {
         const defaults = {
             'Data Source': `"${dataSource.replace(/"/g, '""')}"`,
             'Read Only': 'True',
-            'Version': '3'
+            Version: '3'
         };
 
         const merged = { ...defaults, ...params };
@@ -169,16 +173,24 @@ class SQLiteAdapter extends EngineAdapter {
                 }
                 const json = await SQLite.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
-                items.forEach((item) => { callback(item); });
+                items.forEach((item) => {
+                    callback(item);
+                });
                 return;
             }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await SQLite.ExecuteJson(this.connectionString, sql, args);
+                const json = await SQLite.ExecuteJson(
+                    this.connectionString,
+                    sql,
+                    args
+                );
                 const items = JSON.parse(json);
-                items.forEach((item) => { callback(item); });
+                items.forEach((item) => {
+                    callback(item);
+                });
                 return;
             }
             if (LINUX) {
@@ -223,7 +235,11 @@ class SQLiteAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                return await SQLite.ExecuteNonQuery(this.connectionString, sql, args);
+                return await SQLite.ExecuteNonQuery(
+                    this.connectionString,
+                    sql,
+                    args
+                );
             }
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
@@ -576,11 +592,7 @@ class SQLiteAdapter extends EngineAdapter {
         if (order) finalSql += ` ORDER BY ${order}`;
         if (limit) finalSql += ` LIMIT ${limit}`;
         const rows = [];
-        await this.execute(
-            (row) => rows.push(row),
-            finalSql,
-            allParams
-        );
+        await this.execute((row) => rows.push(row), finalSql, allParams);
         return rows;
     }
 
@@ -1152,7 +1164,16 @@ class SQLiteAdapter extends EngineAdapter {
 
     async getPoolStats() {
         const json = await SQLite.GetPoolStats();
-        return json ? JSON.parse(json) : { active: 0, pinnedIdle: 0, availableCapacity: 0, max: 0 };
+        return json
+            ? JSON.parse(json)
+            : {
+                  active: 0,
+                  pinnedIdle: 0,
+                  availableCapacity: 0,
+                  max: 0,
+                  totalOpen: 0,
+                  idleInPool: 0
+              };
     }
 
     async clearIdleConnections() {

@@ -160,9 +160,13 @@ declare global {
         KeepAliveTransaction: (connId: number) => boolean;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
-         * counter read, no network call. Sampled once per second by
-         * StatusBar (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max, totalOpen, idleInPool }.
+         * Pure in-memory counter read, no network call. Sampled once per
+         * second by StatusBar (Issue #14).
+         * totalOpen/idleInPool are extended fields: PG reflects
+         * PoolingDataSource.Statistics for true values; MySQL/SQLite
+         * estimate from base fields. UI prefers C#-provided extended fields
+         * with fallback to base-field computation when absent.
          */
         GetPoolStats: () => Promise<string>;
         /**
@@ -196,9 +200,21 @@ declare global {
     // positional `object[]` bound by `$N`; `IsConnected`/`GetHealth`/`Ping`
     // are status probes used by PgSQLAdapter health checks.
     const PostgreSQL: {
-        Execute: (sql: string, args: any[] | null, connId?: number) => Promise<any[]>;
-        ExecuteJson: (sql: string, args: any[] | null, connId?: number) => Promise<string>;
-        ExecuteNonQuery: (sql: string, args: any[] | null, connId?: number) => Promise<number>;
+        Execute: (
+            sql: string,
+            args: any[] | null,
+            connId?: number
+        ) => Promise<any[]>;
+        ExecuteJson: (
+            sql: string,
+            args: any[] | null,
+            connId?: number
+        ) => Promise<string>;
+        ExecuteNonQuery: (
+            sql: string,
+            args: any[] | null,
+            connId?: number
+        ) => Promise<number>;
         BeginTransaction: () => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
@@ -223,9 +239,13 @@ declare global {
         GetHealth: () => Promise<string>;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
-         * counter read, no network call. Sampled once per second by
-         * StatusBar (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max, totalOpen, idleInPool }.
+         * Pure in-memory counter read, no network call. Sampled once per
+         * second by StatusBar (Issue #14).
+         * totalOpen/idleInPool are extended fields: PG reflects
+         * PoolingDataSource.Statistics for true values; MySQL/SQLite
+         * estimate from base fields. UI prefers C#-provided extended fields
+         * with fallback to base-field computation when absent.
          */
         GetPoolStats: () => Promise<string>;
         /**
@@ -550,9 +570,13 @@ declare global {
         Ping: () => Promise<boolean>;
         /**
          * Returns a JSON snapshot of connection pool three-state metrics:
-         * { active, pinnedIdle, availableCapacity, max }. Pure in-memory
-         * counter read, no network call. Sampled once per second by
-         * StatusBar (Issue #14).
+         * { active, pinnedIdle, availableCapacity, max, totalOpen, idleInPool }.
+         * Pure in-memory counter read, no network call. Sampled once per
+         * second by StatusBar (Issue #14).
+         * totalOpen/idleInPool are extended fields: PG reflects
+         * PoolingDataSource.Statistics for true values; MySQL/SQLite
+         * estimate from base fields. UI prefers C#-provided extended fields
+         * with fallback to base-field computation when absent.
          */
         GetPoolStats: () => Promise<string>;
         /**
