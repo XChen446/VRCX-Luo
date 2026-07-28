@@ -7,6 +7,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
+using System.Reflection;
 
 namespace VRCX
 {
@@ -35,6 +36,14 @@ namespace VRCX
         private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
         private long _nextConnId;
         private const int TX_IDLE_MS = 60000;
+
+        // ── SQLITE_BUSY 重试策略 (Issue: database is locked) ─────────────
+        // WAL 模式下写写仍串行,并发写竞争时 busy_timeout=5000 先等 5s 后抛
+        // BUSY。重试机制作为第二道防线,指数退避消化短时锁争用。
+        private const int MaxRetryAttempts = 5;
+        private const int RetryBaseDelayMs = 50;
+        private const int RetryMaxDelayMs = 2000;
+        private static readonly Random _retryRandom = new();
 
         private sealed class TxHolder
         {
@@ -182,7 +191,7 @@ namespace VRCX
                 //                        独占文件到 Exit,阻塞外部工具
                 //                        (DB Browser 等)和其他进程,不采用。
                 "Pooling=True",
-                "Max Pool Size=100"
+                "Max Pool Size=16"
             };
             foreach (var (key, val) in mergedOptions)
             {
@@ -190,8 +199,9 @@ namespace VRCX
                 parts.Add($"PRAGMA {key}={sanitized}");
             }
             _connectionString = string.Join(";", parts);
-            _maxPoolSize = 100; // 连接字符串硬编码 Max Pool Size=100
+            _maxPoolSize = 16; // 连接字符串硬编码 Max Pool Size=16
             _initialized = true;
+            Debug.Assert(_maxPoolSize == 16, "_maxPoolSize must match connection string Max Pool Size");
         }
 
         /// <summary>
@@ -519,17 +529,18 @@ namespace VRCX
         }
 
         // for Electron
-        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
             var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
         }
 
-        public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public object[][] Execute(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var typedConnId = NormalizeConnId(connId);
+            if (typedConnId.HasValue)
             {
-                return ExecutePinned(connId.Value, sql, args);
+                return ExecutePinned(typedConnId.Value, sql, args);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -540,27 +551,30 @@ namespace VRCX
                 Interlocked.Increment(ref _activeCount);
                 try
                 {
-                    using var command = new SQLiteCommand(sql, connection);
-                    if (args != null)
+                    return ExecuteWithRetry(() =>
                     {
-                        foreach (var arg in args)
+                        using var command = new SQLiteCommand(sql, connection);
+                        if (args != null)
                         {
-                            command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                            foreach (var arg in args)
+                            {
+                                command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
+                            }
                         }
-                    }
 
-                    using var reader = command.ExecuteReader();
-                    var result = new List<object[]>();
-                    while (reader.Read())
-                    {
-                        var values = new object[reader.FieldCount];
-                        for (var i = 0; i < reader.FieldCount; i++)
+                        using var reader = command.ExecuteReader();
+                        var result = new List<object[]>();
+                        while (reader.Read())
                         {
-                            values[i] = reader.GetValue(i);
+                            var values = new object[reader.FieldCount];
+                            for (var i = 0; i < reader.FieldCount; i++)
+                            {
+                                values[i] = reader.GetValue(i);
+                            }
+                            result.Add(values);
                         }
-                        result.Add(values);
-                    }
-                    return result.ToArray();
+                        return result.ToArray();
+                    }, "Execute(pool)");
                 }
                 finally
                 {
@@ -573,11 +587,12 @@ namespace VRCX
             }
         }
 
-        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var typedConnId = NormalizeConnId(connId);
+            if (typedConnId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(typedConnId.Value, sql, args);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -596,7 +611,7 @@ namespace VRCX
                             command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
                         }
                     }
-                    return command.ExecuteNonQuery();
+                    return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pool)");
                 }
                 finally
                 {
@@ -676,7 +691,78 @@ namespace VRCX
                 }
             }
 
-            return command.ExecuteNonQuery();
+            return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(fresh)");
+        }
+
+        /// <summary>
+        /// 将 CefSharp 传入的 object? connId 规范化为 long?。
+        /// 处理: null, DBNull, Missing, int, long, 整值 double。
+        /// </summary>
+        internal static long? NormalizeConnId(object? connId)
+        {
+            return connId switch
+            {
+                null => null,
+                DBNull => null,
+                Missing => null,
+                int i => i,
+                long l => l,
+                double d when !double.IsNaN(d) && !double.IsInfinity(d)
+                             && d >= long.MinValue && d <= long.MaxValue
+                             && d == Math.Truncate(d) => (long)d,
+                _ => throw new ArgumentException(
+                    $"connId 参数必须为数值类型或 null，当前类型: {connId.GetType().Name}")
+            };
+        }
+
+        /// <summary>
+        /// 判断异常是否为可重试的 SQLite 错误（BUSY, LOCKED）。
+        /// </summary>
+        internal static bool IsRetryableSqliteException(Exception ex)
+        {
+            return ex is SQLiteException sqlEx &&
+                   (sqlEx.ResultCode == SQLiteErrorCode.Busy ||
+                    sqlEx.ResultCode == SQLiteErrorCode.Locked);
+        }
+
+        /// <summary>
+        /// 执行操作，在遇到可重试 SQLite 错误时以指数退避重试。
+        /// </summary>
+        internal static T ExecuteWithRetry<T>(Func<T> operation, string context)
+        {
+            for (int attempt = 0; attempt <= MaxRetryAttempts; attempt++)
+            {
+                try
+                {
+                    return operation();
+                }
+                catch (Exception ex) when (IsRetryableSqliteException(ex))
+                {
+                    if (attempt == MaxRetryAttempts) throw;
+                    var delayMs = CalculateRetryDelay(attempt + 1);
+                    var resultCode = (ex is SQLiteException sqlEx) ? sqlEx.ResultCode.ToString() : "unknown";
+                    Console.Error.WriteLine(
+                        $"[SQLite] {context} attempt={attempt + 1}/{MaxRetryAttempts} " +
+                        $"failed (ResultCode={resultCode}), retrying in {delayMs}ms...");
+                    Thread.Sleep(delayMs);
+                }
+            }
+            throw new InvalidOperationException("Unreachable");
+        }
+
+        /// <summary>
+        /// 计算指数退避延迟（带 ±25% jitter，上限 RetryMaxDelayMs）。
+        /// </summary>
+        internal static int CalculateRetryDelay(int attempt)
+        {
+            var baseDelay = RetryBaseDelayMs * (1 << Math.Min(attempt - 1, 10));
+            var capped = Math.Min(baseDelay, RetryMaxDelayMs);
+            int jitter;
+            lock (_retryRandom)
+            {
+                jitter = (int)(capped * 0.25 * (_retryRandom.NextDouble() - 0.5));
+            }
+            return capped + jitter;
         }
 
         // ── Transaction pinning implementation ───────────────────────────────
@@ -740,19 +826,22 @@ namespace VRCX
             }
             try
             {
-                using var command = CreateTxCommand(h, sql, args);
-                using var reader = command.ExecuteReader();
-                var result = new List<object[]>();
-                while (reader.Read())
+                return ExecuteWithRetry(() =>
                 {
-                    var values = new object[reader.FieldCount];
-                    for (var i = 0; i < reader.FieldCount; i++)
+                    using var command = CreateTxCommand(h, sql, args);
+                    using var reader = command.ExecuteReader();
+                    var result = new List<object[]>();
+                    while (reader.Read())
                     {
-                        values[i] = reader.GetValue(i);
+                        var values = new object[reader.FieldCount];
+                        for (var i = 0; i < reader.FieldCount; i++)
+                        {
+                            values[i] = reader.GetValue(i);
+                        }
+                        result.Add(values);
                     }
-                    result.Add(values);
-                }
-                return result.ToArray();
+                    return result.ToArray();
+                }, "Execute(pinned)");
             }
             finally
             {
@@ -792,7 +881,7 @@ namespace VRCX
             try
             {
                 using var command = CreateTxCommand(h, sql, args);
-                return command.ExecuteNonQuery();
+                return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pinned)");
             }
             finally
             {
@@ -957,17 +1046,39 @@ namespace VRCX
         // ── Pool stats ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// 返回当前连接池的三态 + 扩展快照,纯内存计数器读取,不涉及网络调用。
         /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        ///
+        /// 基础字段(所有引擎对称,JS 主用):
+        ///   active            = 正在执行 SQL 的连接数(pinned + 非 pinned)
+        ///   pinnedIdle        = 事务持有但未执行 SQL 的连接数
+        ///   availableCapacity = 可用容量(_maxPoolSize - _totalBorrowed)
+        ///   max               = 连接池上限
+        ///
+        /// 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
+        ///   totalOpen  = 池中当前存活的物理连接总数(SQLite 估算,无公开 API)
+        ///   idleInPool = 池中存活且空闲的物理连接数(SQLite 估算,无公开 API)
+        /// System.Data.SQLite 无任何连接池统计 API,池不自动 prune(连接常驻
+        /// 到 ClearAllPools),故估算与真值偏差小:
+        ///   totalOpen  = active + pinnedIdle + availableCapacity
+        ///   idleInPool = availableCapacity
+        /// 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle。
         /// </summary>
         public string GetPoolStats()
         {
+            var active = _activeCount;
+            var pinnedIdle = _pinned.Count - _pinnedActive;
+            var availableCapacity = _maxPoolSize - _totalBorrowed;
+            var totalOpen = active + pinnedIdle + availableCapacity;
+            var idleInPool = availableCapacity;
             var stats = new
             {
-                active = _activeCount,
-                pinnedIdle = _pinned.Count - _pinnedActive,
-                availableCapacity = _maxPoolSize - _totalBorrowed,
-                max = _maxPoolSize
+                active,
+                pinnedIdle,
+                availableCapacity,
+                max = _maxPoolSize,
+                totalOpen,
+                idleInPool
             };
             return JsonSerializer.Serialize(stats);
         }

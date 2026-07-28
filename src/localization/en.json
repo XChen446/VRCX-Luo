@@ -3437,6 +3437,7 @@
         "db_active": "{active}/{max}",
         "db_tooltip_active": "Executing SQL: {count}",
         "db_tooltip_pinned_idle": "Pinned (idle): {count}",
+        "db_tooltip_idle_in_pool": "Idle in pool: {count}",
         "db_tooltip_available": "Available capacity: {count}",
         "db_release_title": "Release Database Connections",
         "db_release_description": "Clears idle connections from the pool, releasing memory and network resources. Only affects idle connections — active SQL and transaction connections continue to work normally. The next request will need to rebuild connections (remote databases may have a brief cold-start delay). Not recommended for frequent use.",

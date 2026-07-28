@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Reflection;
 using Npgsql;
 
 namespace VRCX
@@ -38,6 +39,17 @@ namespace VRCX
         private int _activeCount;   // 正在执行 SQL 的连接数(含 pinned + 非 pinned)
         private int _pinnedActive;  // pinned 事务连接中正在执行 SQL 的数量
         private int _maxPoolSize;   // 连接池上限,Init() 时从连接字符串解析
+
+        // ── Driver-internal statistics reflection (Issue #14 扩展) ───────────
+        // Npgsql 的 PoolingDataSource(internal sealed)实现了 internal abstract
+        // Statistics 属性,返回 (int Total, int Idle, int Busy) 真值三元组。
+        // 公开 API 不暴露,只能通过反射读。反射 PropertyInfo 缓存一次,运行
+        // 时仅 GetValue + 拆 ValueTuple<int,int,int>。任何反射异常回退到估算
+        // (totalOpen=active+pinnedIdle+availableCapacity, idleInPool=availableCapacity),
+        // 保证 GetPoolStats 永不抛。上层 JS 主用基础字段自算 idleInPool,
+        // 此处提供的真值字段作为冗余校验,驱动版本变化失效时不影响 UI。
+        private PropertyInfo _statisticsProp;
+        private bool _statisticsReflected;  // true=已尝试反射(成功或失败均置 true)
 
         // ── Transaction pinning ────────────────────────────────────────────
         // A pinned connection is borrowed from the pool and held across
@@ -255,17 +267,74 @@ namespace VRCX
         // ── Health checks ────────────────────────────────────────────────────
 
         /// <summary>
-        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// 返回当前连接池的三态 + 扩展快照,纯内存计数器读取,不涉及网络调用。
         /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        ///
+        /// 基础字段(所有引擎对称,JS 主用):
+        ///   active           = 正在执行 SQL 的连接数(pinned + 非 pinned)
+        ///   pinnedIdle       = 事务持有但未执行 SQL 的连接数
+        ///   availableCapacity = 可用容量(_maxPoolSize - _totalBorrowed)
+        ///   max              = 连接池上限
+        ///
+        /// 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
+        ///   totalOpen  = 池中当前存活的物理连接总数(PG 反射真值;MySQL/SQLite 估算)
+        ///   idleInPool = 池中存活且空闲的物理连接数(PG 反射真值;MySQL/SQLite 估算)
+        /// 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle,
+        /// 扩展字段仅供诊断/校验,不参与 UI 主显示链路。
         /// </summary>
         public string GetPoolStats()
         {
+            var active = _activeCount;
+            var pinnedIdle = _pinned.Count - _pinnedActive;
+            var availableCapacity = _maxPoolSize - _totalBorrowed;
+
+            // 默认估算:假设所有可用容量都是空闲物理连接(下界估算,偏高)。
+            // 反射成功后用真值覆盖。
+            var totalOpen = active + pinnedIdle + availableCapacity;
+            var idleInPool = availableCapacity;
+
+            // 反射 PoolingDataSource.Statistics 拿真值。懒初始化,失败回退估算。
+            if (!_statisticsReflected)
+            {
+                try
+                {
+                    // Statistics 是 NpgsqlDataSource 基类上的 internal abstract 属性,
+                    // 运行时由 PoolingDataSource(internal sealed)实现。
+                    // NonPublic | Instance 跨 internal 访问修饰符可见。
+                    _statisticsProp = typeof(NpgsqlDataSource).GetProperty(
+                        "Statistics",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+                catch
+                {
+                    _statisticsProp = null;
+                }
+                _statisticsReflected = true;
+            }
+
+            if (_statisticsProp != null && _dataSource != null)
+            {
+                try
+                {
+                    var tuple = (ValueTuple<int, int, int>)_statisticsProp.GetValue(_dataSource);
+                    // Item1=Total, Item2=Idle, Item3=Busy
+                    totalOpen = tuple.Item1;
+                    idleInPool = tuple.Item2;
+                }
+                catch
+                {
+                    // 反射执行失败(驱动版本变化/对象已 Dispose):保持估算值。
+                }
+            }
+
             var stats = new
             {
-                active = _activeCount,
-                pinnedIdle = _pinned.Count - _pinnedActive,
-                availableCapacity = _maxPoolSize - _totalBorrowed,
-                max = _maxPoolSize
+                active,
+                pinnedIdle,
+                availableCapacity,
+                max = _maxPoolSize,
+                totalOpen,
+                idleInPool
             };
             return JsonSerializer.Serialize(stats);
         }

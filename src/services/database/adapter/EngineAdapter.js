@@ -548,9 +548,7 @@ class EngineAdapter {
      */
     async beginTransaction() {
         if (this._txStack.length > 0) {
-            throw new Error(
-                'beginTransaction: 不支持嵌套事务(当前已在事务中)'
-            );
+            throw new Error('beginTransaction: 不支持嵌套事务(当前已在事务中)');
         }
         const connId = await this._doBegin();
         this._txStack.push(connId);
@@ -667,9 +665,7 @@ class EngineAdapter {
      */
     async withTransaction(fn) {
         if (this._txStack.length > 0) {
-            throw new Error(
-                'withTransaction: 不支持嵌套事务(当前已在事务中)'
-            );
+            throw new Error('withTransaction: 不支持嵌套事务(当前已在事务中)');
         }
         const connId = await this.beginTransaction();
         try {
@@ -865,11 +861,12 @@ class EngineAdapter {
      * Connection pool three-state metrics snapshot.
      *
      * Calls the C# bridge's `GetPoolStats()` (SQLite / PostgreSQL / MySQL)
-     * and returns the parsed JSON: `{ active, pinnedIdle, availableCapacity, max }`.
+     * and returns the parsed JSON:
+     * `{ active, pinnedIdle, availableCapacity, max, totalOpen, idleInPool }`.
      * Pure in-memory counter read on the C# side, no network call. Sampled
      * once per second by the StatusBar database monitor (Issue #14).
      *
-     * The three states are:
+     * 基础字段(所有引擎对称,UI 主用):
      *   - `active`: connections currently executing SQL (pinned + non-pinned).
      *   - `pinnedIdle`: connections held by an open transaction but not
      *     currently executing SQL (`_pinned.Count - _pinnedActive`).
@@ -879,9 +876,22 @@ class EngineAdapter {
      *     driver public APIs do not expose the real idle-in-pool count; it
      *     conflates idle connections sitting in the pool with unused quota.
      *     A high value = healthy/cool; a low value = pressure.
+     *   - `max`: pool size cap (`_maxPoolSize`).
+     *
+     * 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
+     *   - `totalOpen`: total live physical connections in the pool
+     *     (PG: reflected `PoolingDataSource.Statistics.Total` 真值;
+     *      MySQL/SQLite: 估算 = active + pinnedIdle + availableCapacity)
+     *   - `idleInPool`: live-but-idle physical connections in the pool
+     *     (PG: reflected `Statistics.Idle` 真值;
+     *      MySQL/SQLite: 估算 = availableCapacity)
+     *
+     * 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle,
+     * 扩展字段仅供诊断/校验。驱动公开 API 不暴露物理连接生命周期事件,
+     * 因此 MySQL/SQLite 的扩展字段是下界估算(偏高),PG 是反射真值。
      *
      * @abstract
-     * @returns {Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>}
+     * @returns {Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number, totalOpen: number, idleInPool: number }>}
      */
     async getPoolStats() {
         throw new Error('abstract');
