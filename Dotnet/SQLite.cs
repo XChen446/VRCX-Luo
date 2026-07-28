@@ -1046,17 +1046,39 @@ namespace VRCX
         // ── Pool stats ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// 返回当前连接池的三态快照,纯内存计数器读取,不涉及网络调用。
+        /// 返回当前连接池的三态 + 扩展快照,纯内存计数器读取,不涉及网络调用。
         /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
+        ///
+        /// 基础字段(所有引擎对称,JS 主用):
+        ///   active            = 正在执行 SQL 的连接数(pinned + 非 pinned)
+        ///   pinnedIdle        = 事务持有但未执行 SQL 的连接数
+        ///   availableCapacity = 可用容量(_maxPoolSize - _totalBorrowed)
+        ///   max               = 连接池上限
+        ///
+        /// 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
+        ///   totalOpen  = 池中当前存活的物理连接总数(SQLite 估算,无公开 API)
+        ///   idleInPool = 池中存活且空闲的物理连接数(SQLite 估算,无公开 API)
+        /// System.Data.SQLite 无任何连接池统计 API,池不自动 prune(连接常驻
+        /// 到 ClearAllPools),故估算与真值偏差小:
+        ///   totalOpen  = active + pinnedIdle + availableCapacity
+        ///   idleInPool = availableCapacity
+        /// 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle。
         /// </summary>
         public string GetPoolStats()
         {
+            var active = _activeCount;
+            var pinnedIdle = _pinned.Count - _pinnedActive;
+            var availableCapacity = _maxPoolSize - _totalBorrowed;
+            var totalOpen = active + pinnedIdle + availableCapacity;
+            var idleInPool = availableCapacity;
             var stats = new
             {
-                active = _activeCount,
-                pinnedIdle = _pinned.Count - _pinnedActive,
-                availableCapacity = _maxPoolSize - _totalBorrowed,
-                max = _maxPoolSize
+                active,
+                pinnedIdle,
+                availableCapacity,
+                max = _maxPoolSize,
+                totalOpen,
+                idleInPool
             };
             return JsonSerializer.Serialize(stats);
         }
