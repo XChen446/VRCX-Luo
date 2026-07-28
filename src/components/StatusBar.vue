@@ -31,13 +31,19 @@
                                     v-for="[id, session] in allSessions"
                                     :key="id"
                                     class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-accent text-xs"
-                                    :class="{ 'bg-accent': currentViewMode === `account:${id}` || (id === primaryId && currentViewMode === 'primary') }"
+                                    :class="{
+                                        'bg-accent':
+                                            currentViewMode === `account:${id}` ||
+                                            (id === primaryId && currentViewMode === 'primary')
+                                    }"
                                     @click="selectViewMode(id)">
                                     <span
                                         class="inline-block size-2 rounded-full shrink-0"
                                         :style="{ background: getAccountColor(id) }" />
                                     {{ session.label || session.userInfo?.displayName || id }}
-                                    <span v-if="id === primaryId" class="text-muted-foreground ml-auto text-[10px]">★</span>
+                                    <span v-if="id === primaryId" class="text-muted-foreground ml-auto text-[10px]"
+                                        >★</span
+                                    >
                                 </div>
                             </PopoverContent>
                         </Popover>
@@ -167,9 +173,9 @@
                                 <span class="text-foreground text-[11px]">{{ t('status_bar.auto_follow') }}</span>
                                 <span
                                     v-if="autoFollowStore.isActive && autoFollowStore.targetFriendName"
-                                    class="text-[10px] text-foreground max-w-[120px] truncate">{{
-                                    autoFollowStore.targetFriendName
-                                }}</span>
+                                    class="text-[10px] text-foreground max-w-[120px] truncate"
+                                    >{{ autoFollowStore.targetFriendName }}</span
+                                >
                             </div>
                         </TooltipWrapper>
 
@@ -363,10 +369,7 @@
                             </div>
                         </TooltipWrapper>
 
-                        <TooltipWrapper
-                            v-if="visibility.profileInfoSync"
-                            :content="infoFetchTooltip"
-                            side="top">
+                        <TooltipWrapper v-if="visibility.profileInfoSync" :content="infoFetchTooltip" side="top">
                             <div
                                 class="flex items-center gap-1 px-2 h-[22px] whitespace-nowrap border-r border-border cursor-pointer hover:bg-accent"
                                 :style="statusBarItemStyle('profileInfoSync')"
@@ -377,8 +380,18 @@
                                     class="size-3 shrink-0 animate-spin"
                                     viewBox="0 0 16 16"
                                     fill="none">
-                                    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" class="text-muted-foreground/30" />
-                                    <path d="M14 8a6 6 0 0 0-6-6" stroke="#eab308" stroke-width="2" stroke-linecap="round" />
+                                    <circle
+                                        cx="8"
+                                        cy="8"
+                                        r="6"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        class="text-muted-foreground/30" />
+                                    <path
+                                        d="M14 8a6 6 0 0 0-6-6"
+                                        stroke="#eab308"
+                                        stroke-width="2"
+                                        stroke-linecap="round" />
                                 </svg>
                                 <!-- Done: green check -->
                                 <svg
@@ -387,16 +400,17 @@
                                     viewBox="0 0 16 16"
                                     fill="none">
                                     <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" />
-                                    <path d="M5 8.5l2 2 4-4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                    <path
+                                        d="M5 8.5l2 2 4-4.5"
+                                        stroke="currentColor"
+                                        stroke-width="1.5"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round" />
                                 </svg>
                                 <!-- Idle: grey circle -->
-                                <span
-                                    v-else
-                                    class="inline-block size-2 rounded-full shrink-0 bg-status-offline-alt" />
+                                <span v-else class="inline-block size-2 rounded-full shrink-0 bg-status-offline-alt" />
                                 <span class="text-[10px] text-foreground">{{ t('status_bar.info_sync') }}</span>
-                                <span
-                                    v-if="infoFetchState.status === 'running'"
-                                    class="text-[10px] text-foreground">
+                                <span v-if="infoFetchState.status === 'running'" class="text-[10px] text-foreground">
                                     {{ infoFetchState.done }}/{{ infoFetchState.total }}
                                 </span>
                             </div>
@@ -787,7 +801,9 @@
                 index,
                 label: statusBarLabels.value[key] ?? key
             }))
-            .filter((item) => (item.key !== 'vrchat' && item.key !== 'steamvr' && item.key !== 'zoom') || !isMacOS.value)
+            .filter(
+                (item) => (item.key !== 'vrchat' && item.key !== 'steamvr' && item.key !== 'zoom') || !isMacOS.value
+            )
     );
 
     /**
@@ -931,10 +947,11 @@
     const dbCanvasRef = ref(null);
     const dbActiveHistory = ref(new Array(GRAPH_POINTS).fill(0));
     const dbPinnedIdleHistory = ref(new Array(GRAPH_POINTS).fill(0));
-    const dbAvailableHistory = ref(new Array(GRAPH_POINTS).fill(0));
+    const dbIdleInPoolHistory = ref(new Array(GRAPH_POINTS).fill(0));
     const dbActiveCount = ref(0);
     const dbPinnedIdleCount = ref(0);
     const dbAvailableCount = ref(0);
+    const dbIdleInPoolCount = ref(0);
     const dbMaxPool = ref(0);
     // Y-axis dynamic scale levels
     const DB_SCALE_LEVELS = [5, 20, 50, 80, 100];
@@ -948,10 +965,15 @@
             const pinnedIdle = stats.pinnedIdle || 0;
             const availableCapacity = stats.availableCapacity || 0;
             const max = stats.max || 0;
+            // 扩展字段(C# 提供,PG 真值 / MySQL/SQLite 估算);缺失时回退基础字段自算
+            // idleInPool = totalOpen - active - pinnedIdle;无 totalOpen 时退化为 availableCapacity
+            const totalOpen = stats.totalOpen != null ? stats.totalOpen : active + pinnedIdle + availableCapacity;
+            const idleInPool = stats.idleInPool != null ? stats.idleInPool : totalOpen - active - pinnedIdle;
 
             dbActiveCount.value = active;
             dbPinnedIdleCount.value = pinnedIdle;
             dbAvailableCount.value = availableCapacity;
+            dbIdleInPoolCount.value = idleInPool;
             dbMaxPool.value = max;
 
             const arrA = dbActiveHistory.value;
@@ -964,13 +986,13 @@
             arrP.push(pinnedIdle);
             dbPinnedIdleHistory.value = arrP;
 
-            const arrAv = dbAvailableHistory.value;
-            arrAv.shift();
-            arrAv.push(availableCapacity);
-            dbAvailableHistory.value = arrAv;
+            const arrIp = dbIdleInPoolHistory.value;
+            arrIp.shift();
+            arrIp.push(idleInPool);
+            dbIdleInPoolHistory.value = arrIp;
 
             // Dynamic scale: upgrade immediately, downgrade when all points below next-lower threshold
-            const peak = Math.max(active, pinnedIdle, availableCapacity);
+            const peak = Math.max(active, pinnedIdle, idleInPool);
             const currentLevel = DB_SCALE_LEVELS[dbScaleLevel.value];
             if (peak > currentLevel && dbScaleLevel.value < DB_SCALE_LEVELS.length - 1) {
                 // Find the lowest level that fits the peak
@@ -982,10 +1004,12 @@
                 }
             } else if (dbScaleLevel.value > 0) {
                 const nextLowerThreshold = DB_SCALE_LEVELS[dbScaleLevel.value - 1];
-                // 降级只看 active + pinnedIdle(压力信号),不看 availableCapacity(容量信号)
-                // availableCapacity 空闲时恒=100,纳入降级判定会永久卡最高档
-                const allBelow = arrA.every((v) => v <= nextLowerThreshold)
-                    && arrP.every((v) => v <= nextLowerThreshold);
+                // 降级看 active + pinnedIdle + idleInPool(真实波动信号),
+                // 不看 availableCapacity(空闲时恒=max,纳入会永久卡最高档)
+                const allBelow =
+                    arrA.every((v) => v <= nextLowerThreshold) &&
+                    arrP.every((v) => v <= nextLowerThreshold) &&
+                    arrIp.every((v) => v <= nextLowerThreshold);
                 if (allBelow) {
                     dbScaleLevel.value--;
                 }
@@ -1035,17 +1059,26 @@
             ctx.stroke();
         };
 
-        // available (green), pinned-idle (yellow/amber), active (red)
-        drawLine(dbAvailableHistory.value, '#22c55e', 0.7);
+        // idle-in-pool (green), pinned-idle (yellow/amber), active (red)
+        // 绿线画池中空闲物理连接数(PG 反射真值 / MySQL/SQLite 估算),
+        // 而非 availableCapacity(可用容量 = 池空 + 未用配额)。后者空闲时
+        // 恒=max 对波线无信息量,作为 tooltip 补充信息展示即可。
+        drawLine(dbIdleInPoolHistory.value, '#22c55e', 0.7);
         drawLine(dbPinnedIdleHistory.value, '#eab308', 0.7);
         drawLine(dbActiveHistory.value, '#ef4444', 0.8);
         ctx.globalAlpha = 1;
     }
 
     const dbTooltip = computed(() => {
-        return t('status_bar.db_tooltip_active', { count: dbActiveCount.value })
-            + '\n' + t('status_bar.db_tooltip_pinned_idle', { count: dbPinnedIdleCount.value })
-            + '\n' + t('status_bar.db_tooltip_available', { count: dbAvailableCount.value });
+        return (
+            t('status_bar.db_tooltip_active', { count: dbActiveCount.value }) +
+            '\n' +
+            t('status_bar.db_tooltip_pinned_idle', { count: dbPinnedIdleCount.value }) +
+            '\n' +
+            t('status_bar.db_tooltip_idle_in_pool', { count: dbIdleInPoolCount.value }) +
+            '\n' +
+            t('status_bar.db_tooltip_available', { count: dbAvailableCount.value })
+        );
     });
 
     async function handleDbClick() {
@@ -1238,11 +1271,9 @@
         window.addEventListener('wheel', handleZoomWheel, { passive: true });
         window.addEventListener('focus', initZoom);
         zoomRefreshTimer = setInterval(initZoom, 1000);
-        cleanupZoomLevelListener = window.electron?.onZoomLevelChanged?.(
-            (_event, level) => {
-                updateZoomLevel(level);
-            }
-        );
+        cleanupZoomLevelListener = window.electron?.onZoomLevelChanged?.((_event, level) => {
+            updateZoomLevel(level);
+        });
     }
 
     /**
