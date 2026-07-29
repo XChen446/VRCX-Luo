@@ -90,6 +90,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const pgsqlDatabase = ref('vrcx');
     /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
     const pgsqlConnectionStatus = ref('idle');
+    /** @type {import('vue').Ref<string>} */
+    const pgsqlConnectionError = ref('');
     /** @type {import('vue').Ref<'idle'|'pushing'|'done'|'failed'>} */
     const pgsqlPushStatus = ref('idle');
     // MySQL/MariaDB connection refs — mirror the PgSQL set so the Advanced tab
@@ -103,6 +105,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const mysqlDatabase = ref('vrcx');
     /** @type {import('vue').Ref<'idle'|'testing'|'connected'|'failed'>} */
     const mysqlConnectionStatus = ref('idle');
+    /** @type {import('vue').Ref<string>} */
+    const mysqlConnectionError = ref('');
     // SQLite database file path. Persisted to VRCX_Database.name (which IS the
     // path field for sqlite mode — there is no separate sqlitePath key). An
     // empty value means "use the default AppData location" (handled by the C#
@@ -1300,73 +1304,63 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      */
     async function testPgsqlConnection() {
         pgsqlConnectionStatus.value = 'testing';
+        pgsqlConnectionError.value = '';
         try {
-            // `adapter` is a live ESM binding, so it reflects whichever
-            // adapter `initAdapter(mode)` constructed at startup. Reading
-            // `VRCXStorage` here would be wrong — the user may have
-            // switched the persisted mode without restarting.
-            if (adapter?.engineType !== 'postgresql') {
-                pgsqlConnectionStatus.value = 'failed';
-                return {
-                    connected: false,
-                    error:
-                        'VRCX is not running in postgresql mode this session. ' +
-                        'Save the engine selection and restart VRCX, then test the connection again.'
-                };
-            }
-            const health = await PostgreSQL.GetHealth?.();
-            const parsed = health ? JSON.parse(health) : { connected: false };
-            pgsqlConnectionStatus.value = parsed.connected
-                ? 'connected'
-                : 'failed';
-            return parsed;
+            const connStr =
+                `Host=${pgsqlHost.value};` +
+                `Port=${pgsqlPort.value};` +
+                `Username=${pgsqlUsername.value};` +
+                `Password=${pgsqlPassword.value};` +
+                `Database=${pgsqlDatabase.value}`;
+            const json = await PostgreSQL.ExecuteJsonOnConnection(
+                connStr,
+                'SELECT 1',
+                null
+            );
+            const rows = JSON.parse(json);
+            const ok = Array.isArray(rows) && rows.length > 0;
+            pgsqlConnectionStatus.value = ok ? 'connected' : 'failed';
+            return { connected: ok };
         } catch (err) {
             pgsqlConnectionStatus.value = 'failed';
             const msg = err.message || String(err);
+            pgsqlConnectionError.value = msg;
             console.error('[testPgsqlConnection]', msg);
             return { connected: false, error: msg };
         }
     }
 
     /**
-     * Probe the MySQL/MariaDB backend health. Symmetric to `testPgsqlConnection`:
-     * both ultimately execute `SELECT 1` against the pooled data source via
-     * the C# `Ping()` method, returning a real liveness result rather than
-     * just an initialisation-state check. Only meaningful when the app
-     * booted in `mysql`/`mariadb` mode (so `MySQL.Instance` is initialised);
-     * in `sqlite` mode we can only report that a switch + restart is required.
-     * Worst-case latency bounded by `ConnectionTimeout` (15s) when the
-     * server is unreachable.
+     * Probe the MySQL/MariaDB backend by building a connection string from
+     * the UI fields and executing `SELECT 1` on a fresh connection via
+     * `MySQL.ExecuteJsonOnConnection`. This works regardless of the running
+     * engine mode — no restart needed, no dependency on the pooled instance.
      *
      * @returns {Promise<{connected: boolean, error?: string}>}
      */
     async function testMysqlConnection() {
         mysqlConnectionStatus.value = 'testing';
+        mysqlConnectionError.value = '';
         try {
-            // Gate on the runtime adapter, not `VRCXStorage.mode`. See
-            // `testPgsqlConnection` for the full rationale: the user may
-            // have persisted `mysql`/`mariadb` without restarting, in
-            // which case `MySQL.Instance` was never `Init()`'d this boot
-            // and `MySQL.Ping` would attempt to connect with an empty
-            // connection string, returning false for the wrong reason.
-            // `MySQLAdapter.engineType` is `'mysql'` for both `mysql` and
-            // `mariadb` modes (mariadb is a mysql alias), so a single
-            // check covers both.
-            if (adapter?.engineType !== 'mysql') {
-                mysqlConnectionStatus.value = 'failed';
-                return {
-                    connected: false,
-                    error:
-                        'VRCX is not running in mysql/mariadb mode this session. ' +
-                        'Save the engine selection and restart VRCX, then test the connection again.'
-                };
-            }
-            const connected = await MySQL.Ping?.();
-            mysqlConnectionStatus.value = connected ? 'connected' : 'failed';
-            return { connected: !!connected };
+            const connStr =
+                `Server=${mysqlHost.value};` +
+                `Port=${mysqlPort.value};` +
+                `User ID=${mysqlUsername.value};` +
+                `Password=${mysqlPassword.value};` +
+                `Database=${mysqlDatabase.value}`;
+            const json = await MySQL.ExecuteJsonOnConnection(
+                connStr,
+                'SELECT 1',
+                null
+            );
+            const rows = JSON.parse(json);
+            const ok = Array.isArray(rows) && rows.length > 0;
+            mysqlConnectionStatus.value = ok ? 'connected' : 'failed';
+            return { connected: ok };
         } catch (err) {
             mysqlConnectionStatus.value = 'failed';
             const msg = err.message || String(err);
+            mysqlConnectionError.value = msg;
             console.error('[testMysqlConnection]', msg);
             return { connected: false, error: msg };
         }
@@ -2044,6 +2038,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         pgsqlPassword,
         pgsqlDatabase,
         pgsqlConnectionStatus,
+        pgsqlConnectionError,
         pgsqlPushStatus,
         mysqlHost,
         mysqlPort,
@@ -2051,6 +2046,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         mysqlPassword,
         mysqlDatabase,
         mysqlConnectionStatus,
+        mysqlConnectionError,
         mysqlPushStatus,
         pullStatus,
         sqlitePath,

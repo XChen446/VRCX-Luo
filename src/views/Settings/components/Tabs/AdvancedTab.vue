@@ -338,12 +338,37 @@
                     <Input v-model="pgsqlDatabase" class="w-40" />
                 </SettingsItem>
                 <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.test_connection')">
-                    <div class="flex items-center gap-2">
-                        <Button size="sm" variant="outline" @click="onTestPgsqlConnection">
+                    <div class="flex items-center gap-2 w-full">
+                        <Button
+                            size="sm"
+                            :variant="
+                                pgsqlConnectionStatus === 'connected'
+                                    ? 'default'
+                                    : pgsqlConnectionStatus === 'failed'
+                                      ? 'destructive'
+                                      : 'outline'
+                            "
+                            :class="
+                                pgsqlConnectionStatus === 'connected'
+                                    ? 'bg-green-600 hover:bg-green-600 text-white'
+                                    : pgsqlConnectionStatus === 'failed'
+                                      ? 'bg-red-600 hover:bg-red-600 text-white'
+                                      : ''
+                            "
+                            :disabled="pgsqlConnectionStatus === 'testing'"
+                            @click="onTestPgsqlConnection">
+                            <Loader2 v-if="pgsqlConnectionStatus === 'testing'" class="h-4 w-4 mr-1 animate-spin" />
                             {{ t('view.settings.advanced.advanced.database_engine.test_connection_button') }}
                         </Button>
-                        <span v-if="pgsqlConnectionStatus === 'connected'" class="text-green-500">✓</span>
-                        <span v-if="pgsqlConnectionStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="pgsqlConnectionStatus === 'connected'" class="text-green-500 text-sm truncate">
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_ok') }}
+                        </span>
+                        <span
+                            v-if="pgsqlConnectionStatus === 'failed' && pgsqlConnectionError"
+                            class="text-red-500 text-sm truncate max-w-md"
+                            :title="pgsqlConnectionError">
+                            {{ pgsqlConnectionError }}
+                        </span>
                     </div>
                 </SettingsItem>
                 <SettingsItem
@@ -403,12 +428,37 @@
                     <Input v-model="mysqlDatabase" class="w-40" />
                 </SettingsItem>
                 <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.test_connection')">
-                    <div class="flex items-center gap-2">
-                        <Button size="sm" variant="outline" @click="onTestMysqlConnection">
+                    <div class="flex items-center gap-2 w-full">
+                        <Button
+                            size="sm"
+                            :variant="
+                                mysqlConnectionStatus === 'connected'
+                                    ? 'default'
+                                    : mysqlConnectionStatus === 'failed'
+                                      ? 'destructive'
+                                      : 'outline'
+                            "
+                            :class="
+                                mysqlConnectionStatus === 'connected'
+                                    ? 'bg-green-600 hover:bg-green-600 text-white'
+                                    : mysqlConnectionStatus === 'failed'
+                                      ? 'bg-red-600 hover:bg-red-600 text-white'
+                                      : ''
+                            "
+                            :disabled="mysqlConnectionStatus === 'testing'"
+                            @click="onTestMysqlConnection">
+                            <Loader2 v-if="mysqlConnectionStatus === 'testing'" class="h-4 w-4 mr-1 animate-spin" />
                             {{ t('view.settings.advanced.advanced.database_engine.test_connection_button') }}
                         </Button>
-                        <span v-if="mysqlConnectionStatus === 'connected'" class="text-green-500">✓</span>
-                        <span v-if="mysqlConnectionStatus === 'failed'" class="text-red-500">✗</span>
+                        <span v-if="mysqlConnectionStatus === 'connected'" class="text-green-500 text-sm truncate">
+                            {{ t('view.settings.advanced.advanced.database_engine.test_connection_ok') }}
+                        </span>
+                        <span
+                            v-if="mysqlConnectionStatus === 'failed' && mysqlConnectionError"
+                            class="text-red-500 text-sm truncate max-w-md"
+                            :title="mysqlConnectionError">
+                            {{ mysqlConnectionError }}
+                        </span>
                     </div>
                 </SettingsItem>
                 <SettingsItem
