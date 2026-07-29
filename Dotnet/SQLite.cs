@@ -637,7 +637,7 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>JSON array of row arrays, e.g. [["val1", 42], ["val2", 99]].</returns>
-        public string ExecuteJson(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
             using var connection = new SQLiteConnection(connectionString);
             connection.Open();
@@ -677,7 +677,7 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>Number of rows affected.</returns>
-        public int ExecuteNonQuery(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
             using var connection = new SQLiteConnection(connectionString);
             connection.Open();
@@ -690,7 +690,6 @@ namespace VRCX
                     command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
                 }
             }
-
             return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(fresh)");
         }
 

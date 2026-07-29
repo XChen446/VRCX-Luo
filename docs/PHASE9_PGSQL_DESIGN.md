@@ -797,7 +797,7 @@ CREATE TABLE IF NOT EXISTS public.gamelog_location (
 **设计要点**:
 
 1. **双 adapter 实例**:
-   - 源 adapter:`new SQLiteAdapter({ connection: 'sqlite:///old.db' })`(或用 C# `SQLite.ExecuteJson(connectionString, ...)` 直读)
+   - 源 adapter:`new SQLiteAdapter({ connection: 'sqlite:///old.db' })`(或用 C# `SQLite.ExecuteJsonOnConnection(connectionString, ...)` 直读)
    - 目标 adapter:`new PgSQLAdapter()`(已 Init)
    - 跨引擎读 SQLite 写 PgSQL
 

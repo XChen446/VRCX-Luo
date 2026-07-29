@@ -171,7 +171,7 @@ namespace VRCX
         /// Execute a query on a fresh ad-hoc connection and return the result set as JSON.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public string ExecuteJson(string connectionString, string sql, object[]? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null)
         {
             using var dataSource = NpgsqlDataSource.Create(connectionString);
             using var connection = dataSource.CreateConnection();
@@ -255,7 +255,7 @@ namespace VRCX
         /// Execute a non-query on a fresh ad-hoc connection and return rows affected.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public int ExecuteNonQuery(string connectionString, string sql, object[]? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null)
         {
             using var dataSource = NpgsqlDataSource.Create(connectionString);
             using var connection = dataSource.CreateConnection();

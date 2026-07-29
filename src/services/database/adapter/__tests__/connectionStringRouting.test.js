@@ -9,8 +9,8 @@
  *   - mock 全局 SQLite 对象为 vi.fn()记录调用参数
  *   - 构造真实 SQLiteAdapter({connection: 'sqlite:///tmp/test.db'})
  *   - 验证 _doBegin 调 SQLite.BeginTransaction(connectionString)
- *   - 验证事务外 executeNonQuery 调 SQLite.ExecuteNonQuery(connectionString, sql, args)
- *   - 验证 withTransaction 体内 executeNonQuery 调 SQLite.ExecuteNonQuery(sql, args, connId)
+ *   - 验证事务外 executeNonQuery 调 SQLite.ExecuteNonQueryOnConnection(connectionString, sql, args)
+ *   - 验证 withTransaction 体内 executeNonQuery 调 SQLite.ExecuteNonQuery(sql, args, connId) (走原名,因 connId 路径不走 OnConnection 重载)
  *   - 验证无 connectionString 的 SQLiteAdapter 调 SQLite.BeginTransaction() (无参)
  */
 
@@ -24,6 +24,8 @@ const mockFns = {
     Execute: vi.fn(() => Promise.resolve([])),
     ExecuteJson: vi.fn(() => Promise.resolve('[]')),
     ExecuteNonQuery: vi.fn(() => Promise.resolve(0)),
+    ExecuteJsonOnConnection: vi.fn(() => Promise.resolve('[]')),
+    ExecuteNonQueryOnConnection: vi.fn(() => Promise.resolve(0)),
     BeginTransaction: vi.fn(() => Promise.resolve(1)),
     CommitTransaction: vi.fn(),
     RollbackTransaction: vi.fn(),
@@ -65,8 +67,8 @@ describe('SQLiteAdapter connectionString 模式 connId 路由', () => {
 
     test('事务外 executeNonQuery:走 fresh-conn 路径(传 connectionString 不带 connId)', async () => {
         await adapter.executeNonQuery('INSERT INTO t (id) VALUES (1)');
-        expect(mockFns.ExecuteNonQuery).toHaveBeenCalledTimes(1);
-        const callArgs = mockFns.ExecuteNonQuery.mock.calls[0];
+        expect(mockFns.ExecuteNonQueryOnConnection).toHaveBeenCalledTimes(1);
+        const callArgs = mockFns.ExecuteNonQueryOnConnection.mock.calls[0];
         // 第 1 个参数是 connectionString,第 2 个是 sql,第 3 个是 args
         expect(callArgs[0]).toContain('tmp');
         expect(callArgs[1]).toBe('INSERT INTO t (id) VALUES (1)');

@@ -166,7 +166,7 @@ class MySQLAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await MySQL.ExecuteJson(
+                const json = await MySQL.ExecuteJsonOnConnection(
                     this.connectionString,
                     sql,
                     args
@@ -212,7 +212,7 @@ class MySQLAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                return await MySQL.ExecuteNonQuery(
+                return await MySQL.ExecuteNonQueryOnConnection(
                     this.connectionString,
                     sql,
                     args

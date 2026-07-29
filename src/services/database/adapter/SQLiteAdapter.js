@@ -182,7 +182,7 @@ class SQLiteAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                const json = await SQLite.ExecuteJson(
+                const json = await SQLite.ExecuteJsonOnConnection(
                     this.connectionString,
                     sql,
                     args
@@ -235,7 +235,7 @@ class SQLiteAdapter extends EngineAdapter {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
                 }
-                return await SQLite.ExecuteNonQuery(
+                return await SQLite.ExecuteNonQueryOnConnection(
                     this.connectionString,
                     sql,
                     args

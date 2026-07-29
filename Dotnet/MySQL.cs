@@ -408,7 +408,7 @@ namespace VRCX
         /// independent, intended for querying an EXTERNAL database (e.g.
         /// during migration).
         /// </summary>
-        public string ExecuteJson(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
             using var dataSource = new MySqlDataSource(connectionString);
             using var connection = dataSource.OpenConnection();
@@ -439,7 +439,7 @@ namespace VRCX
         /// This does NOT touch the pooled connection — it is completely
         /// independent.
         /// </summary>
-        public int ExecuteNonQuery(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
             using var dataSource = new MySqlDataSource(connectionString);
             using var connection = dataSource.OpenConnection();
