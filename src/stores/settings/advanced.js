@@ -1322,7 +1322,9 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             return parsed;
         } catch (err) {
             pgsqlConnectionStatus.value = 'failed';
-            return { connected: false, error: err.message || String(err) };
+            const msg = err.message || String(err);
+            console.error('[testPgsqlConnection]', msg);
+            return { connected: false, error: msg };
         }
     }
 
@@ -1364,7 +1366,9 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             return { connected: !!connected };
         } catch (err) {
             mysqlConnectionStatus.value = 'failed';
-            return { connected: false, error: err.message || String(err) };
+            const msg = err.message || String(err);
+            console.error('[testMysqlConnection]', msg);
+            return { connected: false, error: msg };
         }
     }
 
@@ -1602,6 +1606,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             sqliteConnectionStatus.value = 'failed';
             const msg = err.message || String(err);
             sqliteConnectionError.value = msg;
+            console.error('[testSqliteConnection]', msg);
             return { connected: false, error: msg };
         }
     }
