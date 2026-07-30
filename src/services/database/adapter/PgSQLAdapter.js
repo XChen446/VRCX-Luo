@@ -157,8 +157,9 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async execute(callback, sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
+        const connId = this._txStack.at(-1);
         if (this.connectionString) {
-            const json = await PostgreSQL.ExecuteJsonOnConnection(this.connectionString, pgSql, pgArgs);
+            const json = await PostgreSQL.ExecuteJsonOnConnection(this.connectionString, pgSql, pgArgs, connId);
             if (!json) return;
             const items = JSON.parse(json);
             if (Array.isArray(items)) {
@@ -166,7 +167,6 @@ class PgSQLAdapter extends EngineAdapter {
             }
             return;
         }
-        const connId = this._txStack.at(-1);
         const json = await PostgreSQL.ExecuteJson(pgSql, pgArgs, connId);
         if (!json) return;
         const items = JSON.parse(json);
@@ -185,10 +185,10 @@ class PgSQLAdapter extends EngineAdapter {
      */
     async executeNonQuery(sql, args) {
         const { sql: pgSql, args: pgArgs } = this._bind(sql, args);
-        if (this.connectionString) {
-            return await PostgreSQL.ExecuteNonQueryOnConnection(this.connectionString, pgSql, pgArgs);
-        }
         const connId = this._txStack.at(-1);
+        if (this.connectionString) {
+            return await PostgreSQL.ExecuteNonQueryOnConnection(this.connectionString, pgSql, pgArgs, connId);
+        }
         return await PostgreSQL.ExecuteNonQuery(pgSql, pgArgs, connId);
     }
 
@@ -934,7 +934,7 @@ class PgSQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doBegin() {
-        if (this.connectionString) return 0;
+        if (this.connectionString) return PostgreSQL.BeginTransactionOnConnection(this.connectionString);
         return PostgreSQL.BeginTransaction();
     }
 
@@ -946,7 +946,6 @@ class PgSQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doCommit(connId) {
-        if (this.connectionString) return;
         PostgreSQL.CommitTransaction(connId);
     }
 
@@ -958,7 +957,6 @@ class PgSQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doRollback(connId) {
-        if (this.connectionString) return;
         PostgreSQL.RollbackTransaction(connId);
     }
 
@@ -969,7 +967,6 @@ class PgSQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doKeepAlive(connId) {
-        if (this.connectionString) return true;
         return PostgreSQL.KeepAliveTransaction(connId);
     }
 
