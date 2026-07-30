@@ -630,7 +630,18 @@ function buildMirroredColumns(tableMeta) {
         const cons = [];
         if (c.notNull) cons.push('NOT NULL');
         if (c.defaultValue != null && c.defaultValue !== '') {
-            cons.push(`DEFAULT ${c.defaultValue}`);
+            const dv = c.defaultValue;
+            if (typeof dv === 'object') {
+                cons.push(
+                    `DEFAULT '${JSON.stringify(dv).replace(/'/g, "''")}'`
+                );
+            } else if (typeof dv === 'number' || typeof dv === 'boolean') {
+                cons.push(`DEFAULT ${dv}`);
+            } else {
+                cons.push(
+                    `DEFAULT '${String(dv).replace(/'/g, "''")}'`
+                );
+            }
         }
         if (pkCols.length === 1 && c.isPK) cons.push('PRIMARY KEY');
         /** @type {{name: string, type: string, constraints?: string}} */

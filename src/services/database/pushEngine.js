@@ -655,7 +655,18 @@ function buildMirroredColumns(tableMeta) {
         const cons = [];
         if (c.notNull) cons.push('NOT NULL');
         if (c.defaultValue != null && c.defaultValue !== '') {
-            cons.push(`DEFAULT ${c.defaultValue}`);
+            const dv = c.defaultValue;
+            if (typeof dv === 'object') {
+                cons.push(
+                    `DEFAULT '${JSON.stringify(dv).replace(/'/g, "''")}'`
+                );
+            } else if (typeof dv === 'number' || typeof dv === 'boolean') {
+                cons.push(`DEFAULT ${dv}`);
+            } else {
+                cons.push(
+                    `DEFAULT '${String(dv).replace(/'/g, "''")}'`
+                );
+            }
         }
         // Inline PRIMARY KEY only for single-column PKs; composite PKs are
         // emitted as a table-level clause below.
