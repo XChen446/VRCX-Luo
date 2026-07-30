@@ -655,13 +655,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doRollback(connId) {
-        try {
-            MySQL.RollbackTransaction(connId);
-        } catch (e) {
-            if (!String(e?.message || '').includes('已超时')) {
-                throw e;
-            }
-        }
+        MySQL.RollbackTransaction(connId);
     }
 
     /**

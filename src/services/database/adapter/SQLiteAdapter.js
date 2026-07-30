@@ -1138,14 +1138,7 @@ class SQLiteAdapter extends EngineAdapter {
      * @protected
      */
     async _doRollback(connId) {
-        try {
-            SQLite.RollbackTransaction(connId);
-        } catch (e) {
-            // C# 侧已超时回滚的 connId 静默 no-op;其他错误重新抛出
-            if (!String(e?.message || '').includes('已超时')) {
-                throw e;
-            }
-        }
+        SQLite.RollbackTransaction(connId);
     }
 
     /**
