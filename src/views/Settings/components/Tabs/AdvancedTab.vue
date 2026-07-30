@@ -1066,10 +1066,13 @@
         try {
             const result = await storeAction();
             if (result.errors.length > 0) {
-                console.warn('Migration completed with errors:', result.errors);
+                console.warn('Migration completed with errors:');
+                for (const err of result.errors) {
+                    console.warn(`  ${err}`);
+                }
                 new Noty({
                     type: 'warning',
-                    text: `Migration completed with ${result.errors.length} error(s)`
+                    text: `Migration done: ${result.globalTables} global tables, ${result.userTables} user tables, ${result.rowsCopied} rows copied, ${result.errors.length} error(s). Check console (F12) for details.`
                 }).show();
             } else {
                 new Noty({
@@ -1107,10 +1110,13 @@
             // no notification, no log entry.
             if (!result) return;
             if (result.errors.length > 0) {
-                console.warn('Backup completed with errors:', result.errors);
+                console.warn('Backup completed with errors:');
+                for (const err of result.errors) {
+                    console.warn(`  ${err}`);
+                }
                 new Noty({
                     type: 'warning',
-                    text: `Backup completed with ${result.errors.length} error(s)`
+                    text: `Backup done: ${result.globalTables} global tables, ${result.userTables} user tables, ${result.rowsCopied} rows copied, ${result.errors.length} error(s). Check console (F12) for details.`
                 }).show();
             } else {
                 new Noty({
