@@ -45,6 +45,17 @@ namespace VRCX
         private const int RetryMaxDelayMs = 2000;
         private static readonly Random _retryRandom = new();
 
+        // ── Ad-hoc connection cache ────────────────────────────────────────
+        // ExecuteJsonOnConnection / ExecuteNonQueryOnConnection 用于外部 SQLite
+        // 文件操作 (push 源 / pull 目标)。当前每次调用 new SQLiteConnection 再
+        // Dispose,导致迁移期间同一文件被开关数千次。此缓存按 connectionString
+        // 复用已打开连接,消除重复 Open/Close 开销。连接进程级存活,不回收。
+        // System.Data.SQLite 的连接池(Pooling=True)是在同进程同连接串内复用
+        // 物理连接;此缓存跳过 `new → Open → Close → Dispose` 的分配开销,
+        // 让同一连接串的所有 Execute*OnConnection 调用共享一条物理连接。
+        // CEF 消息泵串行化 JS 调用,无需额外加锁。
+        private static readonly ConcurrentDictionary<string, SQLiteConnection> ConnectionCache = new();
+
         private sealed class TxHolder
         {
             public SQLiteConnection Conn = null!;
@@ -639,8 +650,12 @@ namespace VRCX
         /// <returns>JSON array of row arrays, e.g. [["val1", 42], ["val2", 99]].</returns>
         public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var connection = new SQLiteConnection(connectionString);
-            connection.Open();
+            var connection = ConnectionCache.GetOrAdd(connectionString, cs =>
+            {
+                var conn = new SQLiteConnection(cs);
+                conn.Open();
+                return conn;
+            });
 
             using var command = new SQLiteCommand(sql, connection);
             if (args != null)
@@ -679,8 +694,12 @@ namespace VRCX
         /// <returns>Number of rows affected.</returns>
         public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var connection = new SQLiteConnection(connectionString);
-            connection.Open();
+            var connection = ConnectionCache.GetOrAdd(connectionString, cs =>
+            {
+                var conn = new SQLiteConnection(cs);
+                conn.Open();
+                return conn;
+            });
 
             using var command = new SQLiteCommand(sql, connection);
             if (args != null)
