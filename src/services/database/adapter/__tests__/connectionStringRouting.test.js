@@ -1,16 +1,16 @@
 /**
  * SQLiteAdapter connectionString 模式 connId 路由测试。
  *
- * 验证 HIGH-1 修复:connectionString 模式下 withTransaction 体内的写操作
- * 必须走 pinned 路径(传 connId 不带 connectionString),而非 fresh-conn 路径
- * (传 connectionString 不带 connId)。
+ * 验证 connectionString 模式下 withTransaction 体内的写操作
+ * 经过 ExecuteNonQueryOnConnection(带 connId)路由到 pinned 路径,
+ * 而非 fresh-conn 路径(传 connectionString 不带 connId)。
  *
  * 测试策略:
  *   - mock 全局 SQLite 对象为 vi.fn()记录调用参数
  *   - 构造真实 SQLiteAdapter({connection: 'sqlite:///tmp/test.db'})
  *   - 验证 _doBegin 调 SQLite.BeginTransaction(connectionString)
  *   - 验证事务外 executeNonQuery 调 SQLite.ExecuteNonQueryOnConnection(connectionString, sql, args)
- *   - 验证 withTransaction 体内 executeNonQuery 调 SQLite.ExecuteNonQuery(sql, args, connId) (走原名,因 connId 路径不走 OnConnection 重载)
+ *   - 验证 withTransaction 体内 executeNonQuery 调 SQLite.ExecuteNonQueryOnConnection(connectionString, sql, args, connId) (带 connId 路由到 pinned 路径)
  *   - 验证无 connectionString 的 SQLiteAdapter 调 SQLite.BeginTransaction() (无参)
  */
 
@@ -74,19 +74,20 @@ describe('SQLiteAdapter connectionString 模式 connId 路由', () => {
         expect(callArgs[1]).toBe('INSERT INTO t (id) VALUES (1)');
     });
 
-    test('withTransaction 体内 executeNonQuery:走 pinned 路径(传 connId 不带 connectionString)', async () => {
+    test('withTransaction 体内 executeNonQuery:走 pinned 路径(connectionString+connId)', async () => {
         await adapter.withTransaction(async () => {
             await adapter.executeNonQuery('INSERT INTO t (id) VALUES (1)');
         });
-        expect(mockFns.ExecuteNonQuery).toHaveBeenCalled();
-        // 验证所有 executeNonQuery 调用都带了 connId(第 3 参数),且第 1 参数是 sql 而非 connectionString
-        for (const callArgs of mockFns.ExecuteNonQuery.mock.calls) {
-            // pinned 路径:ExecuteNonQuery(sql, args, connId)
-            // sql 是字符串,不含 'sqlite://'
+        expect(mockFns.ExecuteNonQueryOnConnection).toHaveBeenCalled();
+        // 验证所有 executeNonQuery 调用都经过 ExecuteNonQueryOnConnection 且带了 connId(第 4 参数)
+        for (const callArgs of mockFns.ExecuteNonQueryOnConnection.mock.calls) {
+            // 第 1 参数是 resolved connectionString(不含 sqlite://)
             expect(typeof callArgs[0]).toBe('string');
             expect(callArgs[0]).not.toContain('sqlite://');
-            // connId 是 number
-            expect(typeof callArgs[2]).toBe('number');
+            // 第 2 参数是 sql
+            expect(typeof callArgs[1]).toBe('string');
+            // 第 4 参数是 connId(number)
+            expect(typeof callArgs[3]).toBe('number');
         }
     });
 

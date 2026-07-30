@@ -648,8 +648,14 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>JSON array of row arrays, e.g. [["val1", 42], ["val2", 99]].</returns>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                var rows = ExecutePinned(connId.Value, sql, args);
+                return JsonSerializer.Serialize(rows);
+            }
+
             var connection = ConnectionCache.GetOrAdd(connectionString, cs =>
             {
                 var conn = new SQLiteConnection(cs);
@@ -692,8 +698,13 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>Number of rows affected.</returns>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
+            }
+
             var connection = ConnectionCache.GetOrAdd(connectionString, cs =>
             {
                 var conn = new SQLiteConnection(cs);

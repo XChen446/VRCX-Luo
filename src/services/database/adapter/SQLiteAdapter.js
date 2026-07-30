@@ -165,19 +165,6 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
-            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
-            // 可能是活动库或 connectionString 目标库),保证事务原子性。
-            if (connId !== undefined) {
-                if (LINUX && args) {
-                    args = new Map(Object.entries(args));
-                }
-                const json = await SQLite.ExecuteJson(sql, args, connId);
-                const items = JSON.parse(json);
-                items.forEach((item) => {
-                    callback(item);
-                });
-                return;
-            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -185,8 +172,20 @@ class SQLiteAdapter extends EngineAdapter {
                 const json = await SQLite.ExecuteJsonOnConnection(
                     this.connectionString,
                     sql,
-                    args
+                    args,
+                    connId
                 );
+                const items = JSON.parse(json);
+                items.forEach((item) => {
+                    callback(item);
+                });
+                return;
+            }
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                const json = await SQLite.ExecuteJson(sql, args, connId);
                 const items = JSON.parse(json);
                 items.forEach((item) => {
                     callback(item);
@@ -223,14 +222,6 @@ class SQLiteAdapter extends EngineAdapter {
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
-            // connId 优先:事务中走 pinned 路径(h.Conn 由 BeginTransaction 决定,
-            // 可能是活动库或 connectionString 目标库),保证事务原子性。
-            if (connId !== undefined) {
-                if (LINUX && args) {
-                    args = new Map(Object.entries(args));
-                }
-                return await SQLite.ExecuteNonQuery(sql, args, connId);
-            }
             if (this.connectionString) {
                 if (LINUX && args) {
                     args = new Map(Object.entries(args));
@@ -238,8 +229,15 @@ class SQLiteAdapter extends EngineAdapter {
                 return await SQLite.ExecuteNonQueryOnConnection(
                     this.connectionString,
                     sql,
-                    args
+                    args,
+                    connId
                 );
+            }
+            if (connId !== undefined) {
+                if (LINUX && args) {
+                    args = new Map(Object.entries(args));
+                }
+                return await SQLite.ExecuteNonQuery(sql, args, connId);
             }
             if (LINUX && args) {
                 args = new Map(Object.entries(args));
