@@ -409,8 +409,12 @@ namespace VRCX
         /// independent, intended for querying an EXTERNAL database (e.g.
         /// during migration).
         /// </summary>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return JsonSerializer.Serialize(ExecutePinned(connId.Value, sql, args));
+            }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
 
@@ -440,8 +444,12 @@ namespace VRCX
         /// This does NOT touch the pooled connection — it is completely
         /// independent.
         /// </summary>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
+            }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
 
@@ -632,6 +640,35 @@ namespace VRCX
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Borrow a connection from the ad-hoc DataSource cache, BEGIN a
+        /// transaction on it, and return a connId. The TxHolder is stored in
+        /// <see cref="_pinned"/> alongside singleton-pool transactions so
+        /// <see cref="CommitTransaction"/>/<see cref="RollbackTransaction"/>
+        /// work for both paths. The DataSource is resolved from
+        /// <see cref="DataSourceCache"/> instead of the singleton
+        /// <c>_dataSource</c>.
+        /// </summary>
+        /// <param name="connectionString">Connection string keying into
+        /// <see cref="DataSourceCache"/>.</param>
+        public long BeginTransactionOnConnection(string connectionString)
+        {
+            var dataSource = DataSourceCache.GetOrAdd(connectionString,
+                cs => new MySqlDataSource(cs));
+            var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
+            var conn = dataSource.OpenConnection();
+            var holder = new TxHolder { Conn = conn };
+            using (var beginCmd = conn.CreateCommand())
+            {
+                beginCmd.CommandText = "BEGIN";
+                beginCmd.ExecuteNonQuery();
+            }
+            holder.Timer = new Timer(_ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
         }
 
         /// <summary>
