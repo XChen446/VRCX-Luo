@@ -172,18 +172,19 @@ namespace VRCX
         /// Execute a query on a fresh ad-hoc connection and return the result set as JSON.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null, object? connId = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, object? args = null, object? connId = null)
         {
             var nId = NormalizeConnId(connId);
+            var nArgs = NormalizeArgs(args);
             if (nId.HasValue)
             {
-                var result = ExecutePinned(nId.Value, sql, args);
+                var result = ExecutePinned(nId.Value, sql, nArgs);
                 return JsonSerializer.Serialize(result);
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
-            var rows = ExecuteCore(connection, sql, args);
+            var rows = ExecuteCore(connection, sql, nArgs);
             return JsonSerializer.Serialize(rows);
         }
 
@@ -262,17 +263,18 @@ namespace VRCX
         /// Execute a non-query on a fresh ad-hoc connection and return rows affected.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null, object? connId = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object? args = null, object? connId = null)
         {
             var nId = NormalizeConnId(connId);
+            var nArgs = NormalizeArgs(args);
             if (nId.HasValue)
             {
-                return ExecuteNonQueryPinned(nId.Value, sql, args);
+                return ExecuteNonQueryPinned(nId.Value, sql, nArgs);
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
-            using var command = CreateCommand(connection, sql, args);
+            using var command = CreateCommand(connection, sql, nArgs);
             return command.ExecuteNonQuery();
         }
 
@@ -862,6 +864,27 @@ namespace VRCX
                 _ => throw new ArgumentException(
                     $"connId 参数必须为数值类型或 null，当前类型: {connId.GetType().Name}")
             };
+        }
+
+        /// <summary>
+        /// Normalize the ad-hoc args parameter. CefSharp marshals JS arrays
+        /// as <c>List&lt;object&gt;</c>, which reflection cannot convert to
+        /// <c>object[]</c> — so the <c>*OnConnection</c> methods accept
+        /// <c>object?</c> and call this helper to produce an
+        /// <c>object[]</c> suitable for <c>ExecutePinned</c>/<c>CreateCommand</c>.
+        /// </summary>
+        private static object[]? NormalizeArgs(object? args)
+        {
+            if (args == null || args is DBNull || args is Missing) return null;
+            if (args is object[] arr) return arr;
+            if (args is System.Collections.IList list)
+            {
+                var result = new object[list.Count];
+                for (var i = 0; i < list.Count; i++)
+                    result[i] = list[i];
+                return result;
+            }
+            return null;
         }
     }
 }
