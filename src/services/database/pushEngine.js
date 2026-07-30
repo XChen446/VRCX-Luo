@@ -149,39 +149,50 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * Push data from a SQLite database to a remote-engine target
  * (PostgreSQL or MySQL/MariaDB).
  *
- * The destination is the singleton `adapter` from `./adapter/index.js`, which
- * is a `PgSQLAdapter` when the app booted with `VRCX_Database.mode ===
- * 'postgresql'` (C# `PostgreSQL` pool initialised) or a `MySQLAdapter` when
- * mode is `'mysql'`/`'mariadb'` (C# `MySQL` initialised). Callers must ensure
- * the engine has been switched + the app restarted before invoking this
- * function; otherwise the destination writes will go to the live SQLite
- * adapter and corrupt it. We guard against this by refusing to run when the
- * singleton's `engineType` is `'sqlite'` (or the abstract `'unknown'`).
+ * The destination is, by default, the singleton `adapter` from
+ * `./adapter/index.js`, which is a `PgSQLAdapter` when the app booted with
+ * `VRCX_Database.mode === 'postgresql'` (C# `PostgreSQL` pool initialised)
+ * or a `MySQLAdapter` when mode is `'mysql'`/`'mariadb'` (C# `MySQL`
+ * initialised). In this mode callers must ensure the engine has been switched
+ * + the app restarted before invoking this function; otherwise the
+ * destination writes would go to the live SQLite adapter and corrupt it.
+ * We guard against this by refusing to run when the singleton's `engineType`
+ * is `'sqlite'` (or the abstract `'unknown'`).
+ *
+ * When `options.dstAdapter` is provided, ALL writes are routed to that
+ * adapter instance instead of the singleton. This enables ad-hoc migration:
+ * a fresh adapter is constructed from form fields on the caller side (see
+ * `advanced.js`) and passed through, bypassing the boot-time C# pool
+ * entirely. The singleton engine-type and liveness guards are skipped in
+ * this mode — the caller is responsible for providing a properly-
+ * initialised destination adapter.
  *
  * The body is engine-agnostic: it only touches abstract `EngineAdapter`
  * methods every remote subclass implements, so PG and MySQL share one code
  * path. `isConnected` (a PgSQLAdapter extension) is probed best-effort when
  * present; subclasses without it are assumed connected after a successful Init.
  *
- * There is intentionally NO `dstConfig` parameter: the destination is always
- * the live singleton, whose connection was fixed at boot by the C# layer.
- * Accepting a candidate target config would let a caller pass values that
- * disagree with the running pool, creating the illusion that the push
- * honours them while it actually writes to the boot-time connection (defect 3).
- * The caller-side guard `canPushToRemote` blocks that case before invoking
- * this function.
+ * There is intentionally NO `dstConfig` parameter: the destination is either
+ * the live singleton (legacy mode) or a caller-supplied adapter instance
+ * (`dstAdapter`). Accepting a candidate config string would let a caller
+ * pass values that disagree with the running pool, creating the illusion
+ * that the push honours them while it actually writes to the boot-time
+ * connection (defect 3). The caller-side guard `canPushToRemote` blocks
+ * that case before invoking this function.
  *
  * @param {string} srcConnStr - SQLite connection string like 'sqlite:///C:/path/to/old.db'.
- * @param {object} [options] - Optional { batchSize=500, onProgress? }.
+ * @param {object} [options] - Optional { batchSize=500, onProgress?, dstAdapter? }.
  * @param {number} [options.batchSize=500] - rows per bulkInsert call (PG param limit 65535; 500 rows × ~50 cols is safe; MySQL prepared-statement limit is similar).
  * @param {(p: PushProgress) => void} [options.onProgress] - progress callback for UI.
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} [options.dstAdapter] - ad-hoc destination adapter. When present, ALL writes go to this instance instead of the singleton `adapter`, and the engine-type + liveness guards are skipped. The caller is responsible for initialisation and teardown.
  * @returns {Promise<PushResult>}
  */
 export async function pushFromSqlite(
     srcConnStr,
     options = {}
 ) {
-    const { batchSize = 500, onProgress } = options;
+    const { batchSize = 500, onProgress, dstAdapter } = options;
+    const dst = dstAdapter ?? adapter;
     const errors = [];
     let rowsCopied = 0;
     let globalTables = 0;
@@ -193,6 +204,12 @@ export async function pushFromSqlite(
     // hasn't switched engine + restarted yet — refuse to run rather than
     // silently corrupt the live SQLite database.
     //
+    // When `dstAdapter` is provided (ad-hoc mode), the engine and
+    // liveness checks are skipped — the caller is responsible for
+    // providing a properly-initialised adapter. Ad-hoc adapters are
+    // constructed on the caller side (see `advanced.js`), bypassing the
+    // boot-time C# pool, so no singleton guard is needed.
+    //
     // Original M1 fix (QA M1 + Security M1) used `dropUserSchema` as a
     // PgSQLAdapter-only discriminator, but that made the push
     // Pg-only and excluded MySQLAdapter (which deliberately has no
@@ -201,40 +218,45 @@ export async function pushFromSqlite(
     // both remote engines uniformly we now gate on `adapter.engineType` —
     // an abstract getter every subclass overrides — and accept any value
     // that isn't `'sqlite'` (or the abstract default `'unknown'`).
-    const engine =
-        /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
-            adapter
-        ).engineType;
-    if (!engine || engine === 'sqlite' || engine === 'unknown') {
-        throw new Error(
-            'pushFromSqlite: destination adapter is the default SQLite engine. ' +
-                'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
-                'restart the app before running the push.'
-        );
-    }
-    // `isConnected` is a real liveness probe (`SELECT 1`) on both
-    // PgSQLAdapter and MySQLAdapter — resolves true when the backend is
-    // reachable, false (or absent on SQLite) when not. We probe it
-    // best-effort when present so a disconnected remote backend fails
-    // fast with a clear message before starting the long copy.
-    const adapterAny =
-        /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
-    if (
-        typeof adapterAny.isConnected === 'function' &&
-        !await adapterAny.isConnected()
-    ) {
-        throw new Error(
-            `pushFromSqlite: ${engine} backend is not connected. ` +
-                'Check VRCX_Database.host/port/credentials and restart the app.'
-        );
+    if (!dstAdapter) {
+        const engine =
+            /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
+                adapter
+            ).engineType;
+        if (!engine || engine === 'sqlite' || engine === 'unknown') {
+            throw new Error(
+                'pushFromSqlite: destination adapter is the default SQLite engine. ' +
+                    'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
+                    'restart the app before running the push.'
+            );
+        }
+        // `isConnected` is a real liveness probe (`SELECT 1`) on both
+        // PgSQLAdapter and MySQLAdapter — resolves true when the backend is
+        // reachable, false (or absent on SQLite) when not. We probe it
+        // best-effort when present so a disconnected remote backend fails
+        // fast with a clear message before starting the long copy.
+        const adapterAny =
+            /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
+        if (
+            typeof adapterAny.isConnected === 'function' &&
+            !await adapterAny.isConnected()
+        ) {
+            throw new Error(
+                `pushFromSqlite: ${engine} backend is not connected. ` +
+                    'Check VRCX_Database.host/port/credentials and restart the app.'
+            );
+        }
     }
 
     // `dstConfig` was removed from the signature (defect 3 fix). The
-    // destination is exclusively the live singleton `adapter`; any candidate
-    // target config the caller might supply could never override the
-    // already-Init'd C# pool, so accepting it would risk silently routing the
-    // push to the wrong host. The UI guard `canPushToRemote` ensures the
-    // running pool matches the user's intended target before we get here.
+    // `dstAdapter` option replaces it with a different contract: instead
+    // of a config object that could never override the C# pool, callers
+    // may now pass a fully-constructed adapter instance. When `dstAdapter`
+    // is provided, the singleton engine-type + liveness guards are skipped
+    // and all writes go to the ad-hoc adapter. When absent (legacy/singleton
+    // mode), the behaviour is unchanged — the boot-time singleton `adapter`
+    // is used, protected by the engine-type guard above and the UI-side
+    // `canPushToRemote` guard in `stores/settings/advanced.js`.
 
     // ── 1. Build source SQLite adapter (read-only) ───────────────────
     const srcAdapter = await createAdapter({ connection: srcConnStr });
@@ -249,14 +271,14 @@ export async function pushFromSqlite(
     const srcSchemaMap = new Map(srcSchema.map((t) => [t.tableName, t]));
 
     // ── 2. Ensure destination global schema exists ───────────────────
-    await adapter.initGlobalSchema();
+    await dst.initGlobalSchema();
 
     // ── 3. Push global tables (16, public schema) ─────────────────
     // 整组包一个事务:16 张全局表要么全成功要么全回滚,1 次 fsync。
     const globalTotal = GLOBAL_TABLES.length;
     let globalIdx = 0;
     try {
-        await adapter.withTransaction(async () => {
+        await dst.withTransaction(async () => {
             for (const tableName of GLOBAL_TABLES) {
                 globalIdx += 1;
                 if (typeof onProgress === 'function') {
@@ -270,7 +292,7 @@ export async function pushFromSqlite(
                 }
                 const copied = await copyTable(
                     srcAdapter,
-                    adapter,
+                    dst,
                     tableName,
                     tableName,
                     batchSize,
@@ -328,12 +350,12 @@ export async function pushFromSqlite(
     let userIdx = 0;
     for (const [prefix, names] of userTablesByPrefix) {
         try {
-            await adapter.withTransaction(async () => {
-                await adapter.initUserSchema(prefix);
+            await dst.withTransaction(async () => {
+                await dst.initUserSchema(prefix);
                 for (const name of names) {
                     userIdx += 1;
                     const srcTable = `${prefix}_${name}`;
-                    const dstTable = adapter.userTable(prefix, name);
+                    const dstTable = dst.userTable(prefix, name);
                     if (typeof onProgress === 'function') {
                         onProgress({
                             phase: 'user',
@@ -345,7 +367,7 @@ export async function pushFromSqlite(
                     }
                     const copied = await copyTable(
                         srcAdapter,
-                        adapter,
+                        dst,
                         srcTable,
                         dstTable,
                         batchSize,
@@ -391,7 +413,7 @@ export async function pushFromSqlite(
     const mirrorTotal = unknownTableNames.length;
     let mirrorIdx = 0;
     try {
-        await adapter.withTransaction(async () => {
+        await dst.withTransaction(async () => {
             for (const srcTable of unknownTableNames) {
                 mirrorIdx += 1;
                 const dstTable = srcTable;
@@ -408,11 +430,11 @@ export async function pushFromSqlite(
                     srcSchemaMap.get(srcTable)
                 );
                 if (colDefs.length > 0) {
-                    await adapter.createTable(dstTable, colDefs);
+                    await dst.createTable(dstTable, colDefs);
                 }
                 const copied = await copyTable(
                     srcAdapter,
-                    adapter,
+                    dst,
                     srcTable,
                     dstTable,
                     batchSize,

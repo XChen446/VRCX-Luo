@@ -1665,32 +1665,23 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
      *   may proceed; otherwise `message` explains why (English, consistent with
      *   the error strings returned by `testPgsqlConnection`).
      */
+    /**
+     * Pre-flight guard for database migration push buttons.
+     *
+     * Two modes, determined by whether the runtime adapter matches the target:
+     * - Singleton mode (runtime engine === target): push writes to the boot-time
+     *   singleton pool → compare form fields against bootDbConfig snapshot.
+     * - Ad-hoc mode (runtime engine !== target): push will construct a fresh
+     *   adapter from form params → validate required fields are non-empty.
+     *
+     * @param {'postgresql'|'mysql'|'mariadb'} targetEngine
+     * @returns {{ ok: boolean, message: string }}
+     */
     function canPushToRemote(targetEngine) {
         const target = targetEngine === 'mariadb' ? 'mysql' : targetEngine;
-        const runtimeEngine = adapter?.engineType;
-        if (runtimeEngine !== target) {
-            return {
-                ok: false,
-                message:
-                    `VRCX is not running in ${target} mode this session ` +
-                    `(runtime engine: ${runtimeEngine || 'unknown'}). ` +
-                    'Save the engine selection and restart VRCX, then run the migration again.'
-            };
-        }
-
-        // Resolve the boot-time connection params for this engine from the
-        // snapshot, applying the same defaults as `loadDatabaseEngineConfig`
-        // so a missing persisted key compares equal to its UI ref default.
         const defaultPort = target === 'mysql' ? 3306 : 5432;
-        const bootHost = bootDbConfig.host || 'localhost';
-        const bootPort = Number(bootDbConfig.port) || defaultPort;
-        const bootUser =
-            bootDbConfig.username || (target === 'mysql' ? 'root' : 'vrcx');
-        const bootPass = bootDbConfig.password || '';
-        const bootDb = bootDbConfig.name || '';
+        const runtimeEngine = adapter?.engineType;
 
-        // Current UI refs for the target engine — what the user sees as the
-        // migration destination in the form.
         const uiHost = target === 'mysql' ? mysqlHost.value : pgsqlHost.value;
         const uiPort = target === 'mysql' ? mysqlPort.value : pgsqlPort.value;
         const uiUser =
@@ -1700,73 +1691,120 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         const uiDb =
             target === 'mysql' ? mysqlDatabase.value : pgsqlDatabase.value;
 
-        const fields = [
-            ['host', bootHost, uiHost],
-            ['port', String(bootPort), String(Number(uiPort) || defaultPort)],
-            ['username', bootUser, uiUser],
-            ['password', bootPass, uiPass],
-            ['database', bootDb, uiDb]
-        ];
-        const mismatch = fields.find(([, b, u]) => b !== u);
-        if (mismatch) {
+        if (runtimeEngine === target) {
+            // Singleton mode: boot-time snapshot comparison (unchanged)
+            const bootHost = bootDbConfig.host || 'localhost';
+            const bootPort = Number(bootDbConfig.port) || defaultPort;
+            const bootUser =
+                bootDbConfig.username || (target === 'mysql' ? 'root' : 'vrcx');
+            const bootPass = bootDbConfig.password || '';
+            const bootDb = bootDbConfig.name || '';
+
+            const fields = [
+                ['host', bootHost, uiHost],
+                ['port', String(bootPort), String(Number(uiPort) || defaultPort)],
+                ['username', bootUser, uiUser],
+                ['password', bootPass, uiPass],
+                ['database', bootDb, uiDb]
+            ];
+            const mismatch = fields.find(([, b, u]) => b !== u);
+            if (mismatch) {
+                return {
+                    ok: false,
+                    message:
+                        `The ${target} connection parameters in the form differ ` +
+                        `from the ones VRCX booted with (field "${mismatch[0]}"). ` +
+                        'Restart VRCX so the running backend picks up the new ' +
+                        'values, then run the migration again.'
+                };
+            }
+            return { ok: true, message: '' };
+        }
+
+        // Ad-hoc mode: validate form fields are non-empty
+        const missing = [];
+        if (!uiHost) missing.push('host');
+        if (!uiPort || Number(uiPort) <= 0) missing.push('port');
+        if (!uiUser) missing.push('username');
+        if (!uiDb) missing.push('database');
+        if (missing.length > 0) {
             return {
                 ok: false,
                 message:
-                    `The ${target} connection parameters in the form differ ` +
-                    `from the ones VRCX booted with (field "${mismatch[0]}"). ` +
-                    'Restart VRCX so the running backend picks up the new ' +
-                    'values, then run the migration again. Otherwise the ' +
-                    'migration would silently target the previous connection.'
+                    `Fill in the ${target} connection fields before migrating ` +
+                    `(missing: ${missing.join(', ')}).`
             };
         }
         return { ok: true, message: '' };
     }
 
     /**
-     * Run the SQLite → PostgreSQL push. The destination is the live
-     * singleton `adapter` (a `PgSQLAdapter` after the user switched engine +
-     * restarted). Progress is mirrored into `vrcxStore.databaseUpgradeState`
-     * so the existing `DatabaseUpgradeDialog` (which keys off
-     * `fromVersion === -1`) surfaces a "push in progress" state.
+     * Build a PostgreSQL connection string from the current form fields.
+     * Uses the same Host=...;Port=...;Username=...;Password=...;Database=...
+     * format as the C# PostgreSQL.Init() method.
+     * @returns {string}
+     */
+    function _buildPgsqlConnectionString() {
+        return (
+            `Host=${pgsqlHost.value};Port=${pgsqlPort.value};` +
+            `Username=${pgsqlUsername.value};Password=${pgsqlPassword.value};` +
+            `Database=${pgsqlDatabase.value}`
+        );
+    }
+
+    /**
+     * Build a MySQL/MariaDB connection string from the current form fields.
+     * Uses the Server=...;Port=...;User ID=...;Password=...;Database=...
+     * format recognised by MySqlConnector.
+     * @returns {string}
+     */
+    function _buildMysqlConnectionString() {
+        return (
+            `Server=${mysqlHost.value};Port=${mysqlPort.value};` +
+            `User ID=${mysqlUsername.value};Password=${mysqlPassword.value};` +
+            `Database=${mysqlDatabase.value}`
+        );
+    }
+
+    /**
+     * Run the SQLite → PostgreSQL push. When the runtime adapter is already
+     * PostgreSQL (user booted with it), the singleton pool is used. Otherwise
+     * an ad-hoc PgSQLAdapter is constructed from the form fields — no restart
+     * required.
      *
-     * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
+     * @param {string} [srcConnStr]
      * @returns {Promise<import('../../services/database/pushEngine.js').PushResult>}
      */
     async function pushFromSqliteToPgsql(srcConnStr) {
-        // Pre-flight guard (defect 3): refuse to run unless the live adapter
-        // actually booted in postgresql mode AND the form's connection params
-        // match the boot-time snapshot. Without this, a user who edited
-        // host/port/database without restarting would see the push
-        // "succeed" while it silently wrote to the previous connection.
         const guard = canPushToRemote('postgresql');
         if (!guard.ok) {
             pgsqlPushStatus.value = 'failed';
             throw new Error(guard.message);
         }
+        const usingAdHoc = adapter?.engineType !== 'postgresql';
+        /** @type {import('../../services/database/adapter/EngineAdapter.js').EngineAdapter|null} */
+        let dstAdapter = null;
+        if (usingAdHoc) {
+            const connStr = _buildPgsqlConnectionString();
+            const { PgSQLAdapter } = await import(
+                '../../services/database/adapter/PgSQLAdapter.js'
+            );
+            dstAdapter = new PgSQLAdapter({ connection: connStr });
+        }
         pgsqlPushStatus.value = 'pushing';
-        // Surface the push via the existing DatabaseUpgradeDialog. We
-        // mutate the reactive object's properties (rather than replacing the
-        // ref value) to stay within the ESLint store-boundary rule.
         vrcxStore.databaseUpgradeState.visible = true;
-        vrcxStore.databaseUpgradeState.fromVersion = -1; // marks "push in progress"
+        vrcxStore.databaseUpgradeState.fromVersion = -1;
         vrcxStore.databaseUpgradeState.toVersion = 0;
         try {
             const source = srcConnStr
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
-            // No `dstConfig` is passed: the destination is always the live
-            // singleton adapter (guarded above to match the form). See
-            // `pushFromSqlite` + defect 3 for why a candidate target
-            // config is no longer accepted.
             const result = await pushFromSqlite(source, {
                 onProgress: (p) => {
-                    // Update the dialog's state so the UI can show the
-                    // current table + running row count. We stash these
-                    // on the same reactive object via extra fields the
-                    // dialog doesn't strictly need but won't break on.
                     vrcxStore.databaseUpgradeState.currentTable = p.table;
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
-                }
+                },
+                dstAdapter
             });
             pgsqlPushStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
@@ -1779,24 +1817,29 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Run the SQLite → MySQL/MariaDB push. Symmetric to `pushFromSqliteToPgsql`;
-     * the underlying `pushFromSqlite` is engine-agnostic and only
-     * requires the live singleton `adapter` to be a `MySQLAdapter` (which it
-     * is after the user switched engine + restarted so the C# `MySQL.Instance`
-     * pool is initialised). The same `DatabaseUpgradeDialog` surfaces
-     * progress.
+     * Run the SQLite → MySQL/MariaDB push. When the runtime adapter is already
+     * MySQL/MariaDB (user booted with it), the singleton pool is used. Otherwise
+     * an ad-hoc MySQLAdapter is constructed from the form fields — no restart
+     * required.
      *
-     * @param {string} [srcConnStr] - SQLite connection string. Defaults to the current SQLite db path.
+     * @param {string} [srcConnStr]
      * @returns {Promise<import('../../services/database/pushEngine.js').PushResult>}
      */
     async function pushFromSqliteToMysql(srcConnStr) {
-        // Pre-flight guard (defect 3): symmetric to `pushFromSqliteToPgsql`. Refuse
-        // unless the live adapter booted in mysql/mariadb mode AND the form's
-        // connection params match the boot-time snapshot.
         const guard = canPushToRemote('mysql');
         if (!guard.ok) {
             mysqlPushStatus.value = 'failed';
             throw new Error(guard.message);
+        }
+        const usingAdHoc = adapter?.engineType !== 'mysql';
+        /** @type {import('../../services/database/adapter/EngineAdapter.js').EngineAdapter|null} */
+        let dstAdapter = null;
+        if (usingAdHoc) {
+            const connStr = _buildMysqlConnectionString();
+            const { MySQLAdapter } = await import(
+                '../../services/database/adapter/MySQLAdapter.js'
+            );
+            dstAdapter = new MySQLAdapter({ connection: connStr });
         }
         mysqlPushStatus.value = 'pushing';
         vrcxStore.databaseUpgradeState.visible = true;
@@ -1806,13 +1849,12 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
             const source = srcConnStr
                 ? srcConnStr
                 : `sqlite:///${await resolveCurrentSqliteDbPath()}`;
-            // No `dstConfig` — destination is the live singleton (guarded
-            // above). See `pushFromSqlite` + defect 3.
             const result = await pushFromSqlite(source, {
                 onProgress: (p) => {
                     vrcxStore.databaseUpgradeState.currentTable = p.table;
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
-                }
+                },
+                dstAdapter
             });
             mysqlPushStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
