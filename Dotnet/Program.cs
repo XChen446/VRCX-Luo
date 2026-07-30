@@ -298,6 +298,9 @@ namespace VRCX
                 logger.Warn("VRCX_Database.mode not set and .bak has no usable mode, initializing fresh SQLite instance");
                 SQLite.Instance.Init();
             }
+            // cookies 持久化绑定到当前激活引擎:WebApi 经 IAuthStore 抽象
+            // 读写各自的 cookies 表,不直接调用引擎单例,杜绝跨引擎读写。
+            WebApi.Instance.SetAuthStoreByMode(databaseMode);
             AppApiInstance = new AppApiCef();
 
             ProcessMonitor.Instance.Init();

@@ -103,7 +103,8 @@ graph TD
 WebApi.Instance          ← 唯一实例
   ├─ _httpClient         ← 唯一 HttpClient
   ├─ CookieContainer     ← 唯一 Cookie 容器（存 VRC auth token）
-  └─ SaveCookies()       ← 保存到 SQLite `cookies` 表 key='default'
+  ├─ _authStore          ← IAuthStore 引用（当前激活引擎注入,见 §2.4）
+  └─ SaveCookies()       ← 经 _authStore 保存到当前引擎的 `cookies` 表 key='default'
 ```
 
 JS 端通过 `WebApi.Execute(options)` 调用，走的就是这个唯一的 `_httpClient`。
@@ -165,7 +166,15 @@ async executeAs(accountId, options) {
 
 ### 2.4 Cookie 持久化
 
-次号的 Cookie 保存在 SQLite `cookies` 表，key 用 `secondary:{accountId}`：
+主号 Cookie 保存在**当前激活引擎**的 `cookies` 表（key=`default`），由 C# `WebApi` 通过 `IAuthStore` 抽象按 `VRCX_Database.mode` 注入对应后端实现:
+
+- SQLite: `cookies` (key TEXT PK, value TEXT),`INSERT OR REPLACE`
+- MySQL/MariaDB: `cookies` (`key` VARCHAR(255) PK, value LONGTEXT),`REPLACE INTO`
+- PostgreSQL: `public.cookies` (key TEXT PK, value TEXT),`INSERT ... ON CONFLICT DO UPDATE`
+
+这避免了切到 MySQL/PostgreSQL 后仍向 SQLite 写 cookies 的跨引擎读写。
+
+次号 Cookie 保存在同一 `cookies` 表，key 用 `secondary:{accountId}`：
 
 ```
 cookies 表:

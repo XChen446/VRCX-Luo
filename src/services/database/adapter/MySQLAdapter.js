@@ -1061,6 +1061,13 @@ class MySQLAdapter extends EngineAdapter {
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id VARCHAR(255) NOT NULL, tag VARCHAR(255) NOT NULL, color VARCHAR(255), PRIMARY KEY (avatar_id, tag))`
         );
+        // cookies 表纳入 GLOBAL_TABLES 走 global 主动迁移路径,与 IAuthStore
+        // C# 侧 EnsureCookiesTable DDL 同步。MySQL 不允许 TEXT 作 PK,故
+        // `key` 用 VARCHAR(255);value 用 LONGTEXT 容纳序列化 CookieCollection,
+        // 与 SQLite/PG 语义对齐(value 列无界定大)。
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cookies (\`key\` VARCHAR(255) PRIMARY KEY, \`value\` LONGTEXT)`
+        );
     }
 
     // ── Metadata ─────────────────────────────────────────────────────

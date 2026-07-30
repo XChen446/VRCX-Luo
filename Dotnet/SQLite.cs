@@ -11,7 +11,7 @@ using System.Reflection;
 
 namespace VRCX
 {
-    public class SQLite
+    public class SQLite : IAuthStore
     {
         public static SQLite Instance;
         private string _connectionString;
@@ -762,6 +762,34 @@ namespace VRCX
                 jitter = (int)(capped * 0.25 * (_retryRandom.NextDouble() - 0.5));
             }
             return capped + jitter;
+        }
+
+        // ── IAuthStore implementation ──────────────────────────────────────
+        // SQLite 方言:命名参数 (@key/@value)、INSERT OR REPLACE upsert、
+        // 反引号引用 `key`/`value`(与原 WebApi 内联 SQL 风格保持一致)。
+
+        /// <inheritdoc />
+        public void EnsureCookiesTable()
+        {
+            ExecuteNonQuery(
+                "CREATE TABLE IF NOT EXISTS `cookies` (`key` TEXT PRIMARY KEY, `value` TEXT)");
+        }
+
+        /// <inheritdoc />
+        public string? LoadCookie(string key)
+        {
+            var values = Execute(
+                "SELECT `value` FROM `cookies` WHERE `key` = @key",
+                new Dictionary<string, object> { { "@key", key } });
+            return values.Length > 0 ? (string)values[0][0] : null;
+        }
+
+        /// <inheritdoc />
+        public void SaveCookie(string key, string value)
+        {
+            ExecuteNonQuery(
+                "INSERT OR REPLACE INTO `cookies` (`key`, `value`) VALUES (@key, @value)",
+                new Dictionary<string, object> { { "@key", key }, { "@value", value } });
         }
 
         // ── Transaction pinning implementation ───────────────────────────────

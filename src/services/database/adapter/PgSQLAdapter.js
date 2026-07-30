@@ -1435,6 +1435,14 @@ class PgSQLAdapter extends EngineAdapter {
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS public.avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`
         );
+        // cookies 表纳入 GLOBAL_TABLES 走 global 主动迁移路径,与 IAuthStore
+        // C# 侧 EnsureCookiesTable DDL 同步。PG 没有 LONGTEXT 类型(任意 TEXT
+        // 本就无界,等价于 MySQL 的 LONGTEXT),所以 value 用 TEXT。表落在 public
+        // schema,与其它 16 张全局表一致(_tablePkMap 用 bare name 作 key,
+        // bulkInsert 走 global 路径时按 search_path 解析到 public.cookies)。
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS public.cookies (key TEXT PRIMARY KEY, value TEXT)`
+        );
         // Step 2 — create the 5 global indexes (names preserved from
         // SQLiteAdapter; they remain unique within the public schema).
         await this.executeNonQuery(
@@ -1472,6 +1480,7 @@ class PgSQLAdapter extends EngineAdapter {
         this._tablePkMap.set('world_memos', ['world_id']);
         this._tablePkMap.set('avatar_memos', ['avatar_id']);
         this._tablePkMap.set('avatar_tags', ['avatar_id', 'tag']);
+        this._tablePkMap.set('cookies', ['key']);
     }
 
     // ── Metadata (listTables / getTableColumns / listTablesTypes) ─────

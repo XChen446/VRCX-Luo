@@ -51,9 +51,14 @@ namespace DBMerger
         {
             unMergedTables = dbConn.QueryScalars<string>($"SELECT name FROM {oldDBName}.sqlite_schema WHERE type='table';");
 
-            // Holds sensitive information. Burn it with fire so no sensitive
-            // data gets leaked
-            unMergedTables.Remove("cookies");
+            // cookies 表由 MergeCookies() 在下方经 MergeTable 按 `key` 列匹配
+            // 合并到 new db,保留 old db 的登录态(VRChat auth token)。原 upstream
+            // 在此删除 cookies 的"sensitive 烧掉"策略与 push/pull engine 跨引擎
+            // 搬迁 cookies 不一致(后者会搬),修正为统一"cookies 跟随迁移"语义。
+            // 注意:Merger 工具仅运行在 SQLite→SQLite 程序升级合并场景(SQLiteConnection
+            // 直连两本地文件);MySQL/PostgreSQL 模式下的跨引擎 cookies 迁移由
+            // pushEngine/pullEngine 经 GLOBAL_TABLES 走 global 主动路径处理,
+            // Merger 自身按 mode 适配不需要也不应在远程引擎下执行。
 
             // Get any tables in the old db that arent in the new db
             logger.Info("Creating tables not present on new database that are present on old database...");
@@ -89,6 +94,9 @@ namespace DBMerger
                 dbConn.Execute($"INSERT INTO {newDBName}.{table} SELECT * FROM {oldDBName}.{table};");
             }
 
+            logger.Info("Merging cookies into new database...");
+            MergeCookies();
+
             logger.Info("Merging memos into new database...");
             MergeMemos();
 
@@ -119,6 +127,29 @@ namespace DBMerger
             {
                 logger.Warn("Found unmerged table: " + table);
             }
+        }
+
+        private void MergeCookies()
+        {
+            // cookies 表是单 key/value(KV)表:列 `key` (PK) + `value` (base64
+            // 序列化 CookieCollection)。MergeTable 按 `key` 列(索引 0)匹配
+            // old/new db 中同一 key 是否已存在;若 new db 中无则插入,有则优先
+            // 取 old db 的 value(保留老启动写入的登录态,与 pushEngine 跨引擎
+            // 迁移用 'replace' 语义一致)。
+            MergeTable(
+                table => table == "cookies",
+                [0],
+                (old, existing) =>
+                {
+                    if (existing == null)
+                    {
+                        logger.Trace("Inserting new cookie entry");
+                        return old;
+                    }
+                    logger.Trace("Replacing cookie entry with old db value");
+                    return old;
+                }
+            );
         }
 
         private void MergeMemos()

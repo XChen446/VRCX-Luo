@@ -22,7 +22,7 @@ namespace VRCX
     /// Phase 9.2: field-based config, connection pooling, health checks.
     /// Phase 9.14: JS bridge registration + bootstrap wiring.
     /// </summary>
-    public class PostgreSQL
+    public class PostgreSQL : IAuthStore
     {
         public static PostgreSQL Instance;
 
@@ -766,6 +766,36 @@ namespace VRCX
             {
                 _connectionLock.ExitWriteLock();
             }
+        }
+
+        // ── IAuthStore implementation ──────────────────────────────────────
+        // PostgreSQL 方言:位置参数 ($1/$2),INSERT ... ON CONFLICT DO
+        // UPDATE upsert,cookies 表落在 public schema(与 PgSQLAdapter 全局
+        // 表的 public.<tbl> 命名约定一致)。key/value 用 TEXT。
+
+        /// <inheritdoc />
+        public void EnsureCookiesTable()
+        {
+            ExecuteNonQuery(
+                "CREATE TABLE IF NOT EXISTS public.cookies (key TEXT PRIMARY KEY, value TEXT)");
+        }
+
+        /// <inheritdoc />
+        public string? LoadCookie(string key)
+        {
+            var values = Execute(
+                "SELECT value FROM public.cookies WHERE key = $1",
+                new object[] { key });
+            return values.Length > 0 ? (string)values[0][0] : null;
+        }
+
+        /// <inheritdoc />
+        public void SaveCookie(string key, string value)
+        {
+            ExecuteNonQuery(
+                "INSERT INTO public.cookies (key, value) VALUES ($1, $2) " +
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                new object[] { key, value });
         }
     }
 }

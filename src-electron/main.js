@@ -172,6 +172,10 @@ function createOverlayWindowShm() {
         );
         interopApi.getDotNetObject('SQLite').Init();
     }
+    // cookies 持久化绑定到当前激活引擎:WebApi 经 IAuthStore 抽象读写各自的
+    // cookies 表,不直接调用引擎单例,杜绝跨引擎读写。必须紧跟 engine.Init()
+    // 之后、WebApi.Init() 之前调用。
+    interopApi.getDotNetObject('WebApi').SetAuthStoreByMode(mode);
 })().catch(e => {
     const msg = '[bootstrap] Fatal error: ' + (e && e.stack ? e.stack : e);
     console.error(msg);

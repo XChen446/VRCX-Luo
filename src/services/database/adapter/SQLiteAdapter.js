@@ -1094,6 +1094,14 @@ class SQLiteAdapter extends EngineAdapter {
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS avatar_tags (avatar_id TEXT NOT NULL, tag TEXT NOT NULL, color TEXT, PRIMARY KEY (avatar_id, tag))`
         );
+        // cookies 表纳入 GLOBAL_TABLES 走 global 主动迁移路径(与 IAuthStore
+        // C# 侧 EnsureCookiesTable 同步),让切引擎 push/pull 时 VRChat auth
+        // token 不丢失、用户无需重新登录。SQLite 无 LONGTEXT 类型,但接受
+        // 任意列类型名,按 TEXT 亲和处理,value 列无界定大,语义与 MySQL
+        // LONGTEXT / PG TEXT 等价(三方 DDL 在适配器层语义统一为 LONGTEXT)。
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS cookies (\`key\` TEXT PRIMARY KEY, \`value\` LONGTEXT)`
+        );
     }
 
     // ── Transaction ──────────────────────────────────────────────────

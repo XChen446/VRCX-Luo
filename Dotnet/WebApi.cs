@@ -42,6 +42,33 @@ namespace VRCX
         // Secondary account clients: Map<accountId, (client, cookies)>
         private readonly Dictionary<string, (HttpClient client, CookieContainer cookies)> _secondaryClients = new();
 
+        // Auth-store backend for primary cookie persistence. Bound by
+        // SetAuthStoreByMode() to whichever database engine was initialised
+        // by the bootstrap (Program.Run on Cef, src-electron/main.js on
+        // Electron); WebApi never inits/calls a backend singleton itself,
+        // avoiding any cross-engine "init another backend" dualism. Cookies
+        // reads/writes are delegated to the IAuthStore impl on the active
+        // engine, so the cookies table always lives where the rest of the
+        // data lives (SQLite file / MySQL schema / PG public schema).
+        private IAuthStore _authStore;
+
+        /// <summary>
+        /// Bind the persistent auth-store backend by database mode. Must be
+        /// called AFTER the matching engine's Init() has run; selects the
+        /// corresponding <see cref="IAuthStore"/> implementation and stores
+        /// it for subsequent cookie reads/writes. Unknown / missing mode
+        /// falls back to SQLite (mirrors the bootstrap fallback policy).
+        /// </summary>
+        public void SetAuthStoreByMode(string mode)
+        {
+            _authStore = mode switch
+            {
+                "mysql" or "mariadb" => MySQL.Instance,
+                "postgresql" => PostgreSQL.Instance,
+                _ => SQLite.Instance
+            };
+        }
+
         static WebApi()
         {
             Instance = new WebApi();
@@ -152,18 +179,13 @@ namespace VRCX
 
         private void LoadCookies()
         {
-            SQLite.Instance.ExecuteNonQuery(
-                "CREATE TABLE IF NOT EXISTS `cookies` (`key` TEXT PRIMARY KEY, `value` TEXT)");
-            var values = SQLite.Instance.Execute("SELECT `value` FROM `cookies` WHERE `key` = @key",
-                new Dictionary<string, object>
-                {
-                    { "@key", "default" }
-                }
-            );
+            _authStore?.EnsureCookiesTable();
+            var value = _authStore?.LoadCookie("default");
+            if (string.IsNullOrEmpty(value))
+                return;
             try
             {
-                var item = values[0];
-                using var stream = new MemoryStream(Convert.FromBase64String((string)item[0]));
+                using var stream = new MemoryStream(Convert.FromBase64String(value));
                 CookieContainer = new CookieContainer();
                 CookieContainer.Add(System.Text.Json.JsonSerializer.Deserialize<CookieCollection>(stream));
                 InitializeHttpClient();
@@ -223,14 +245,7 @@ namespace VRCX
                 var cookies = GetAllCookies();
                 using var memoryStream = new MemoryStream();
                 System.Text.Json.JsonSerializer.Serialize(memoryStream, cookies);
-                SQLite.Instance.ExecuteNonQuery(
-                    "INSERT OR REPLACE INTO `cookies` (`key`, `value`) VALUES (@key, @value)",
-                    new Dictionary<string, object>()
-                    {
-                        { "@key", "default" },
-                        { "@value", Convert.ToBase64String(memoryStream.ToArray()) }
-                    }
-                );
+                _authStore?.SaveCookie("default", Convert.ToBase64String(memoryStream.ToArray()));
 
                 _cookieDirty = false;
             }

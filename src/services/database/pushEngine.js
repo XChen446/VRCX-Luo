@@ -79,7 +79,8 @@ const GLOBAL_TABLES = [
     'memos',
     'world_memos',
     'avatar_memos',
-    'avatar_tags'
+    'avatar_tags',
+    'cookies'
 ];
 
 /**

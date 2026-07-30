@@ -57,6 +57,10 @@
          under the project directory (EnableDefaultCompileItems=true). Adding explicit
          <Compile Include="Stubs\*.cs" /> would cause NETSDK1022 duplicate item errors. -->
     <Compile Include="..\SQLite.cs" Link="SQLite.cs" />
+    <!-- IAuthStore interface is referenced by SQLite.cs (class now implements it).
+         Linked into VRCX.Tests.dll so the test compile resolves the type without
+         pulling in MySQL.cs / PostgreSQL.cs / WebApi.cs (pure interface, no deps). -->
+    <Compile Include="..\IAuthStore.cs" Link="IAuthStore.cs" />
   </ItemGroup>
 
 </Project>

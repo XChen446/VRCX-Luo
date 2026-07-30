@@ -31,7 +31,7 @@ namespace VRCX
     /// A sliding idle timer (TX_IDLE_MS) auto-rolls-back if JS forgets to
     /// commit. See docs/TRANSACTION_DESIGN.md.
     /// </summary>
-    public class MySQL
+    public class MySQL : IAuthStore
     {
         public static MySQL Instance;
 
@@ -481,6 +481,35 @@ namespace VRCX
             if (!_initialized || _dataSource == null)
                 throw new InvalidOperationException(
                     "MySQL backend not initialised. Call Init() first.");
+        }
+
+        // ── IAuthStore implementation ──────────────────────────────────────
+        // MySQL 方言:命名参数 (@key/@value)、REPLACE INTO upsert、反引号引用
+        // `key`(MySQL 保留字)。key 列用 VARCHAR(255) 容纳 acctId 前缀,
+        // value 用 LONGTEXT 容纳序列化 CookieCollection。
+
+        /// <inheritdoc />
+        public void EnsureCookiesTable()
+        {
+            ExecuteNonQuery(
+                "CREATE TABLE IF NOT EXISTS `cookies` (`key` VARCHAR(255) PRIMARY KEY, `value` LONGTEXT)");
+        }
+
+        /// <inheritdoc />
+        public string? LoadCookie(string key)
+        {
+            var values = Execute(
+                "SELECT `value` FROM `cookies` WHERE `key` = @key",
+                new Dictionary<string, object> { { "@key", key } });
+            return values.Length > 0 ? (string)values[0][0] : null;
+        }
+
+        /// <inheritdoc />
+        public void SaveCookie(string key, string value)
+        {
+            ExecuteNonQuery(
+                "REPLACE INTO `cookies` (`key`, `value`) VALUES (@key, @value)",
+                new Dictionary<string, object> { { "@key", key }, { "@value", value } });
         }
 
         private static MySqlCommand CreateTxCommand(TxHolder h, string sql, IDictionary<string, object>? args)
