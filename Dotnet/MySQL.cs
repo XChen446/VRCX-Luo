@@ -51,6 +51,7 @@ namespace VRCX
         // 重置 Timer;无值时走池自动派发。
         private readonly object _txLock = new();
         private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
+        private static readonly ConcurrentDictionary<string, MySqlDataSource> DataSourceCache = new();
         private long _nextConnId;
         private const int TX_IDLE_MS = 60000;
 
@@ -410,7 +411,7 @@ namespace VRCX
         /// </summary>
         public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var dataSource = new MySqlDataSource(connectionString);
+            var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
 
             using var command = new MySqlCommand(sql, connection);
@@ -441,7 +442,7 @@ namespace VRCX
         /// </summary>
         public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null)
         {
-            using var dataSource = new MySqlDataSource(connectionString);
+            var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
 
             using var command = new MySqlCommand(sql, connection);

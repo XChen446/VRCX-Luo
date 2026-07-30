@@ -64,6 +64,7 @@ namespace VRCX
         // network drop) triggers auto-rollback + return-to-pool.
         private readonly object _txLock = new();
         private readonly ConcurrentDictionary<long, TxHolder> _pinned = new();
+        private static readonly ConcurrentDictionary<string, NpgsqlDataSource> DataSourceCache = new();
         private long _nextConnId;
         private const int TX_IDLE_MS = 60000;
 
@@ -173,7 +174,7 @@ namespace VRCX
         /// </summary>
         public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null)
         {
-            using var dataSource = NpgsqlDataSource.Create(connectionString);
+            var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
             var result = ExecuteCore(connection, sql, args);
@@ -257,7 +258,7 @@ namespace VRCX
         /// </summary>
         public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null)
         {
-            using var dataSource = NpgsqlDataSource.Create(connectionString);
+            var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
             using var command = CreateCommand(connection, sql, args);
