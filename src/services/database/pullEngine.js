@@ -136,18 +136,25 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  */
 
 /**
- * Pull data from the live remote-engine singleton adapter into a NEW
- * SQLite database file.
+ * Pull data from a remote-engine source into a NEW SQLite database file.
  *
- * The source is the singleton `adapter` from `./adapter/index.js`, which
- * is a `PgSQLAdapter` when the app booted with `VRCX_Database.mode ===
+ * The source is, by default, the singleton `adapter` from `./adapter/index.js`,
+ * which is a `PgSQLAdapter` when the app booted with `VRCX_Database.mode ===
  * 'postgresql'` (C# `PostgreSQL` pool initialised) or a `MySQLAdapter`
- * when mode is `'mysql'`/`'mariadb'` (C# `MySQL` initialised). Callers
- * must ensure the engine has been switched + the app restarted before
+ * when mode is `'mysql'`/`'mariadb'` (C# `MySQL` initialised). In this mode
+ * callers must ensure the engine has been switched + the app restarted before
  * invoking this function; otherwise the source reads will go to the live
  * SQLite adapter and the "pull" would be SQLite → SQLite (useless).
  * We guard against this by refusing to run when the singleton's
  * `engineType` is `'sqlite'` (or the abstract `'unknown'`).
+ *
+ * When `options.srcAdapter` is provided, ALL reads are routed to that
+ * adapter instance instead of the singleton. This enables ad-hoc pull
+ * without restart: a fresh adapter is constructed from form fields on the
+ * caller side (see `advanced.js`) and passed through, bypassing the
+ * boot-time C# pool entirely. The singleton engine-type and liveness
+ * guards are skipped in this mode — the caller is responsible for
+ * providing a properly-initialised source adapter.
  *
  * The destination is a throwaway `SQLiteAdapter` constructed from
  * `dstConnStr` (a `sqlite:///path` URI pointing at the user-chosen
@@ -161,13 +168,15 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
  * without it (SQLite) are assumed connected after a successful Init.
  *
  * @param {string} dstConnStr - SQLite connection string like 'sqlite:///C:/path/to/backup.sqlite3'.
- * @param {object} [options] - Optional { batchSize=500, onProgress? }.
+ * @param {object} [options] - Optional { batchSize=500, onProgress?, srcAdapter? }.
  * @param {number} [options.batchSize=500] - rows per bulkInsert call.
  * @param {(p: PullProgress) => void} [options.onProgress] - progress callback for UI.
+ * @param {import('./adapter/EngineAdapter.js').EngineAdapter} [options.srcAdapter] - ad-hoc source adapter. When present, ALL reads go to this instance instead of the singleton `adapter`, and the engine-type + liveness guards are skipped. The caller is responsible for initialisation and teardown.
  * @returns {Promise<PullResult>}
  */
 export async function pullToSqlite(dstConnStr, options = {}) {
-    const { batchSize = 500, onProgress } = options;
+    const { batchSize = 500, onProgress, srcAdapter } = options;
+    const src = srcAdapter ?? adapter;
     const errors = [];
     let rowsCopied = 0;
     let globalTables = 0;
@@ -178,27 +187,37 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     // The source must NOT be a SQLiteAdapter. If it is, the user hasn't
     // switched engine + restarted yet — refuse to run rather than produce
     // a useless SQLite → SQLite copy that masquerades as a remote backup.
-    const engine =
-        /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
-            adapter
-        ).engineType;
-    if (!engine || engine === 'sqlite' || engine === 'unknown') {
-        throw new Error(
-            'pullToSqlite: source adapter is the default SQLite engine. ' +
-                'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
-                'restart the app before running the backup.'
-        );
+    //
+    // When `srcAdapter` is provided (ad-hoc mode), the engine-type and
+    // liveness checks are skipped — the caller is responsible for
+    // providing a properly-initialised adapter. Ad-hoc adapters are
+    // constructed on the caller side (see `advanced.js`), bypassing the
+    // boot-time C# pool, so no singleton guard is needed.
+    if (!srcAdapter) {
+        const engine =
+            /** @type {{ engineType?: string, isConnected?: () => Promise<boolean> }} */ (
+                adapter
+            ).engineType;
+        if (!engine || engine === 'sqlite' || engine === 'unknown') {
+            throw new Error(
+                'pullToSqlite: source adapter is the default SQLite engine. ' +
+                    'Switch VRCX_Database.mode to "postgresql", "mysql" or "mariadb" and ' +
+                    'restart the app before running the backup.'
+            );
+        }
+        const adapterAny = /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
+        if (
+            typeof adapterAny.isConnected === 'function' &&
+            !await adapterAny.isConnected()
+        ) {
+            throw new Error(
+                `pullToSqlite: ${engine} backend is not connected. ` +
+                    'Check VRCX_Database.host/port/credentials and restart the app.'
+            );
+        }
     }
-    const adapterAny = /** @type {{ isConnected?: () => Promise<boolean> }} */ (adapter);
-    if (
-        typeof adapterAny.isConnected === 'function' &&
-        !await adapterAny.isConnected()
-    ) {
-        throw new Error(
-            `pullToSqlite: ${engine} backend is not connected. ` +
-                'Check VRCX_Database.host/port/credentials and restart the app.'
-        );
-    }
+
+    const engine = src.engineType;
 
     // ── 1. Build destination SQLite adapter (read-write) ─────────────
     // The destination is a NEW file the user picked via a Save-As dialog.
@@ -239,7 +258,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
 
     const pgGlobalExt =
         /** @type {{ listGlobalTablesTypes?: () => Promise<Array<{tableName: string, columns: Array}>> } | null} */ (
-            adapter
+            src
         );
     if (
         engine === 'postgresql' &&
@@ -250,7 +269,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         for (const entry of pgGlobal) {
             globalSchema.push(entry);
         }
-        const pgUser = await adapter.listTablesTypes();
+        const pgUser = await src.listTablesTypes();
         for (const entry of pgUser) {
             const { prefix, name } = splitPgUserTable(entry.tableName);
             if (!userTasksByPrefix.has(prefix)) {
@@ -266,7 +285,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         // MySQL (and the SQLite fallback, which we refuse above but keep
         // for robustness): enumerate all tables flatly, then split via
         // the whitelists. This mirrors `pushEngine.js` §4.
-        const allTables = await adapter.listTablesTypes();
+        const allTables = await src.listTablesTypes();
         /** @type {Map<string, string[]>} prefix -> list of user-table base names */
         const userTablesByPrefix = new Map();
         for (const entry of allTables) {
@@ -326,7 +345,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                     });
                 }
                 const copied = await copyTable(
-                    adapter,
+                    src,
                     dstAdapter,
                     tableName,
                     dstTable,
@@ -362,7 +381,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                         });
                     }
                     const copied = await copyTable(
-                        adapter,
+                        src,
                         dstAdapter,
                         task.srcTable,
                         task.dstTable,
@@ -414,7 +433,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                     await dstAdapter.createTable(dstTable, colDefs);
                 }
                 const copied = await copyTable(
-                    adapter,
+                    src,
                     dstAdapter,
                     srcTable,
                     dstTable,

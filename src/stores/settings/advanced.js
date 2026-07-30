@@ -1898,41 +1898,58 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     }
 
     /**
-     * Pre-flight guard for remote → SQLite pull. Returns whether it is
-     * safe to run `pullToSqlite` right now. The pull source is
-     * the live singleton `adapter`, whose connection was fixed at boot by
-     * the C# layer; we only require that the runtime engine is a remote
-     * engine (postgresql or mysql), NOT sqlite. Unlike the push guard
-     * `canPushToRemote`, we do NOT compare the form's connection params
-     * against the boot-time snapshot because the pull only READS from
-     * the source — a param mismatch would mean reading from the wrong
-     * host, but since the user already booted + connected successfully,
-     * the boot-time connection IS the one they want to pull. The form
-     * edits are irrelevant to a read-only pull.
+     * Pre-flight guard for remote → SQLite pull. Two modes:
+     * - Singleton mode (runtime engine is remote): always ok.
+     * - Ad-hoc mode (runtime engine is sqlite): validate that at least one
+     *   remote engine's form fields are non-empty so we can construct an
+     *   ad-hoc source adapter.
      *
      * @returns {{ ok: boolean, message: string }}
      */
     function canPullFromRemote() {
         const runtimeEngine = adapter?.engineType;
-        if (runtimeEngine !== 'postgresql' && runtimeEngine !== 'mysql') {
+        if (runtimeEngine === 'postgresql' || runtimeEngine === 'mysql') {
+            return { ok: true, message: '' };
+        }
+        // Ad-hoc mode: check that at least one remote engine form is filled
+        const pgFilled =
+            pgsqlHost.value &&
+            pgsqlPort.value &&
+            pgsqlUsername.value &&
+            pgsqlDatabase.value;
+        const mysqlFilled =
+            mysqlHost.value &&
+            mysqlPort.value &&
+            mysqlUsername.value &&
+            mysqlDatabase.value;
+        if (!pgFilled && !mysqlFilled) {
             return {
                 ok: false,
                 message:
-                    `VRCX is not running in a remote database mode this session ` +
-                    `(runtime engine: ${runtimeEngine || 'unknown'}). ` +
-                    'Switch to PostgreSQL or MySQL, restart VRCX, then run the pull again.'
+                    'Fill in PostgreSQL or MySQL connection fields before ' +
+                    'running the pull. Switch the engine selection and fill ' +
+                    'in the form, then try again.'
             };
         }
         return { ok: true, message: '' };
     }
 
     /**
-     * Open the native Save-As dialog and pull the live remote database
-     * to the user-chosen NEW `.sqlite3` file. The dialog defaults to the
-     * VRCX AppData directory (`%appdata%/VRCX` on Windows) so the pull
-     * lands next to the original `VRCX.sqlite3` for easy management, and
-     * forces the `.sqlite3` extension. The pull is non-destructive: it
-     * only reads from the remote source and writes to the new file.
+     * Open the native Save-As dialog and pull a remote database (PostgreSQL
+     * or MySQL/MariaDB) to the user-chosen NEW `.sqlite3` file. Two modes:
+     *
+     * 1. Singleton mode — the runtime adapter is already a remote engine
+     *    (user booted with it). The live singleton pool is used as the
+     *    source; no restart required.
+     * 2. Ad-hoc mode — the runtime adapter is SQLite. A fresh source
+     *    adapter is constructed from the form fields (whichever engine's
+     *    form is filled in) and used as the source; no restart required.
+     *
+     * The dialog defaults to the VRCX AppData directory (`%appdata%/VRCX`
+     * on Windows) so the pull lands next to the original `VRCX.sqlite3`
+     * for easy management, and forces the `.sqlite3` extension. The pull
+     * is non-destructive: it only reads from the remote source and writes
+     * to the new file.
      *
      * Progress is mirrored into `vrcxStore.databaseUpgradeState` so the
      * existing `DatabaseUpgradeDialog` (which keys off `fromVersion === -1`)
@@ -1948,6 +1965,37 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         if (!guard.ok) {
             pullStatus.value = 'failed';
             throw new Error(guard.message);
+        }
+        // Ad-hoc source adapter construction: when the runtime engine is
+        // NOT remote (i.e. the user is running on SQLite), build a fresh
+        // source adapter from the form fields so the pull can run without
+        // restart. Ad-hoc mode is symmetric to the push-side `dstAdapter`
+        // pattern in `pushFromSqliteToPgsql` / `pushFromSqliteToMysql`.
+        const usingAdHoc =
+            adapter?.engineType !== 'postgresql' &&
+            adapter?.engineType !== 'mysql';
+        /** @type {import('../../services/database/adapter/EngineAdapter.js').EngineAdapter|null} */
+        let srcAdapter = null;
+        if (usingAdHoc) {
+            // Determine which engine to pull from: check which form is filled.
+            const pgFilled =
+                pgsqlHost.value &&
+                pgsqlPort.value &&
+                pgsqlUsername.value &&
+                pgsqlDatabase.value;
+            if (pgFilled) {
+                const connStr = _buildPgsqlConnectionString();
+                const { PgSQLAdapter } = await import(
+                    '../../services/database/adapter/PgSQLAdapter.js'
+                );
+                srcAdapter = new PgSQLAdapter({ connection: connStr });
+            } else {
+                const connStr = _buildMysqlConnectionString();
+                const { MySQLAdapter } = await import(
+                    '../../services/database/adapter/MySQLAdapter.js'
+                );
+                srcAdapter = new MySQLAdapter({ connection: connStr });
+            }
         }
         // ── 1. Open the Save-As dialog ──
         // Default to `<AppDataDirectory>/VRCX.sqlite3` so the suggested
@@ -2015,7 +2063,8 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 onProgress: (p) => {
                     vrcxStore.databaseUpgradeState.currentTable = p.table;
                     vrcxStore.databaseUpgradeState.rowsCopied = p.rowsCopied;
-                }
+                },
+                srcAdapter
             });
             pullStatus.value = 'done';
             vrcxStore.databaseUpgradeState.visible = false;
