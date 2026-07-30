@@ -648,11 +648,12 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>JSON array of row arrays, e.g. [["val1", 42], ["val2", 99]].</returns>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                var rows = ExecutePinned(connId.Value, sql, args);
+                var rows = ExecutePinned(nId.Value, sql, args);
                 return JsonSerializer.Serialize(rows);
             }
 
@@ -698,11 +699,12 @@ namespace VRCX
         /// <param name="sql">SQL to execute.</param>
         /// <param name="args">Optional named parameters (<c>@key → value</c>).</param>
         /// <returns>Number of rows affected.</returns>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(nId.Value, sql, args);
             }
 
             var connection = ConnectionCache.GetOrAdd(connectionString, cs =>

@@ -172,11 +172,12 @@ namespace VRCX
         /// Execute a query on a fresh ad-hoc connection and return the result set as JSON.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null, long? connId = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                var result = ExecutePinned(connId.Value, sql, args);
+                var result = ExecutePinned(nId.Value, sql, args);
                 return JsonSerializer.Serialize(result);
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
@@ -261,11 +262,12 @@ namespace VRCX
         /// Execute a non-query on a fresh ad-hoc connection and return rows affected.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null, long? connId = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(nId.Value, sql, args);
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
@@ -832,6 +834,34 @@ namespace VRCX
                 "INSERT INTO public.cookies (key, value) VALUES ($1, $2) " +
                 "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
                 new object[] { key, value });
+        }
+
+        /// <summary>
+        /// Normalise a JS-provided connId value (<c>object?</c>) to a typed
+        /// <c>long?</c> so downstream <c>ExecutePinned</c> / <c>ExecuteNonQueryPinned</c>
+        /// can consume it.
+        ///
+        /// CefSharp marshalling boxes small integers as <c>Int32</c>; the
+        /// CLR cannot unbox an <c>int</c> directly to <c>long?</c> via
+        /// reflection, hence the <c>object?</c> → <c>long?</c> bridge.
+        ///
+        /// Handles: null, DBNull, Missing, int, long, 整值 double.
+        /// </summary>
+        internal static long? NormalizeConnId(object? connId)
+        {
+            return connId switch
+            {
+                null => null,
+                DBNull => null,
+                Missing => null,
+                int i => i,
+                long l => l,
+                double d when !double.IsNaN(d) && !double.IsInfinity(d)
+                             && d >= long.MinValue && d <= long.MaxValue
+                             && d == Math.Truncate(d) => (long)d,
+                _ => throw new ArgumentException(
+                    $"connId 参数必须为数值类型或 null，当前类型: {connId.GetType().Name}")
+            };
         }
     }
 }

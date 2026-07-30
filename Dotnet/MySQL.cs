@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Reflection;
 using System.Threading;
 using MySqlConnector;
 
@@ -409,11 +410,12 @@ namespace VRCX
         /// independent, intended for querying an EXTERNAL database (e.g.
         /// during migration).
         /// </summary>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return JsonSerializer.Serialize(ExecutePinned(connId.Value, sql, args));
+                return JsonSerializer.Serialize(ExecutePinned(nId.Value, sql, args));
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
@@ -444,11 +446,12 @@ namespace VRCX
         /// This does NOT touch the pooled connection — it is completely
         /// independent.
         /// </summary>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(nId.Value, sql, args);
             }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => new MySqlDataSource(cs));
             using var connection = dataSource.OpenConnection();
@@ -835,6 +838,34 @@ namespace VRCX
         public void ClearIdleConnections()
         {
             MySqlConnection.ClearAllPools();
+        }
+
+        /// <summary>
+        /// Normalise a JS-provided connId value (<c>object?</c>) to a typed
+        /// <c>long?</c> so downstream <c>ExecutePinned</c> / <c>ExecuteNonQueryPinned</c>
+        /// can consume it.
+        ///
+        /// CefSharp marshalling boxes small integers as <c>Int32</c>; the
+        /// CLR cannot unbox an <c>int</c> directly to <c>long?</c> via
+        /// reflection, hence the <c>object?</c> → <c>long?</c> bridge.
+        ///
+        /// Handles: null, DBNull, Missing, int, long, 整值 double.
+        /// </summary>
+        internal static long? NormalizeConnId(object? connId)
+        {
+            return connId switch
+            {
+                null => null,
+                DBNull => null,
+                Missing => null,
+                int i => i,
+                long l => l,
+                double d when !double.IsNaN(d) && !double.IsInfinity(d)
+                             && d >= long.MinValue && d <= long.MaxValue
+                             && d == Math.Truncate(d) => (long)d,
+                _ => throw new ArgumentException(
+                    $"connId 参数必须为数值类型或 null，当前类型: {connId.GetType().Name}")
+            };
         }
     }
 }
