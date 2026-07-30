@@ -169,7 +169,8 @@ class MySQLAdapter extends EngineAdapter {
                 const json = await MySQL.ExecuteJsonOnConnection(
                     this.connectionString,
                     sql,
-                    args
+                    args,
+                    connId
                 );
                 const items = JSON.parse(json);
                 items.forEach((item) => {
@@ -215,7 +216,8 @@ class MySQLAdapter extends EngineAdapter {
                 return await MySQL.ExecuteNonQueryOnConnection(
                     this.connectionString,
                     sql,
-                    args
+                    args,
+                    connId
                 );
             }
             if (LINUX && args) {
@@ -634,7 +636,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doBegin() {
-        if (this.connectionString) return 0;
+        if (this.connectionString) return MySQL.BeginTransactionOnConnection(this.connectionString);
         return MySQL.BeginTransaction();
     }
 
@@ -644,7 +646,6 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doCommit(connId) {
-        if (this.connectionString) return;
         MySQL.CommitTransaction(connId);
     }
 
@@ -654,7 +655,6 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doRollback(connId) {
-        if (this.connectionString) return;
         try {
             MySQL.RollbackTransaction(connId);
         } catch (e) {
@@ -671,7 +671,6 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doKeepAlive(connId) {
-        if (this.connectionString) return true;
         return MySQL.KeepAliveTransaction(connId);
     }
 
