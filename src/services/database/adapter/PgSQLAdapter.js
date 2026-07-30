@@ -1456,6 +1456,9 @@ class PgSQLAdapter extends EngineAdapter {
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS public.cookies (key TEXT PRIMARY KEY, value TEXT)`
         );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS public.configs (key TEXT PRIMARY KEY, value TEXT)`
+        );
         // Step 2 — create the 5 global indexes (names preserved from
         // SQLiteAdapter; they remain unique within the public schema).
         await this.executeNonQuery(

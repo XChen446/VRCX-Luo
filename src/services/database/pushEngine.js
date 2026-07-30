@@ -80,7 +80,8 @@ const GLOBAL_TABLES = [
     'world_memos',
     'avatar_memos',
     'avatar_tags',
-    'cookies'
+    'cookies',
+    'configs'
 ];
 
 /**
@@ -390,20 +391,9 @@ export async function pushFromSqlite(
     // metadata (column-level PK + engine type mapping only; UNIQUE/indexes
     // are NOT re-created) then copied through the same paged `copyTable`.
     //
-    // `configs` is copied under its original name (NOT renamed): the live
-    // `configs` table is created empty by `configRepository.init()` on new-
-    // engine boot, then `runMigrations` writes the correct `schema_version`
-    // checkpoint into it BEFORE this user-triggered push runs. Because
-    // `copyTable` uses `bulkInsert(..., 'ignore')` (ON CONFLICT DO NOTHING /
-    // INSERT IGNORE), the pre-existing `config:schema_version` key in the
-    // destination is preserved and the stale value from the source is
-    // silently skipped — so no boot-state pollution. Other `config:*` keys
-    // the new engine hasn't written yet do get copied in, which is the
-    // intended data-preservation behaviour.
-    //
     // Each mirrored table is warn-logged so operators can see which tables
-    // fell outside the known schema (upstream additions, legacy tables,
-    // configs) and were preserved by the safety net rather than dropped.
+    // fell outside the known schema (upstream additions, legacy tables) and
+    // were preserved by the safety net rather than dropped.
     if (unknownTableNames.length > 0) {
         console.warn(
             `[迁移] 发现 ${unknownTableNames.length} 张非白名单表，将镜像保底复制: ` +

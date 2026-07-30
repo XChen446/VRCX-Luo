@@ -213,9 +213,9 @@ describe('pushEngine — 基本 push', () => {
 
         const result = await pushFromSqlite('sqlite:///fake/src.db');
 
-        // globalTables 循环遍历全部 17 张 GLOBAL_TABLES 名(不存在的表
+        // globalTables 循环遍历全部 18 张 GLOBAL_TABLES 名(不存在的表
         // copyTable 返回 0 但仍 +1),所以这里是 17。
-        expect(result.globalTables).toBe(17);
+        expect(result.globalTables).toBe(18);
         // 只发现 abc_* 下的 notes 一个 user 表 → 1(但 initUserSchema 建 22 张,
         // abc_notes 外的 21 张表 copyTable 也会 +1,所以 userTables=22)。
         expect(result.userTables).toBe(22);
@@ -288,7 +288,7 @@ describe('pushEngine — 分组事务原子性', () => {
 
         // global 组成功保留。
         expect(await dstCount('cache_avatar')).toBe(2);
-        expect(result.globalTables).toBe(17);
+        expect(result.globalTables).toBe(18);
         // user 组失败回滚:abc_notes 目标为空,errors 收集 user-group。
         // (userTables 计数器只反映事务回滚前已成功的表数,非实际写入数,
         //   故不断言具体值。)
@@ -337,7 +337,7 @@ describe('pushEngine — mirror 表(数据完整性保底)', () => {
         expect(await dstCount('legacy_extra')).toBe(3);
     });
 
-    test('configs 表走 mirror 组,保留原表名复制', async () => {
+    test('configs 表走 global 组,保留原表名复制', async () => {
         await srcAdapter.createTable('configs', [
             { name: 'key', type: 'TEXT', constraints: 'PRIMARY KEY' },
             { name: 'value', type: 'TEXT' }
@@ -350,7 +350,7 @@ describe('pushEngine — mirror 表(数据完整性保底)', () => {
 
         const result = await pushFromSqlite('sqlite:///fake/src.db');
 
-        expect(result.unknownTables).toBe(1);
+        expect(result.unknownTables).toBe(0);
         expect(await dstCount('configs')).toBe(2);
     });
 });
@@ -363,7 +363,7 @@ describe('pushEngine — 空源', () => {
     test('src 无表,push 返回 rowsCopied=0,errors=[]', async () => {
         const result = await pushFromSqlite('sqlite:///fake/src.db');
 
-        expect(result.globalTables).toBe(17);
+        expect(result.globalTables).toBe(18);
         expect(result.userTables).toBe(0);
         expect(result.unknownTables).toBe(0);
         expect(result.rowsCopied).toBe(0);

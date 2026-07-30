@@ -1100,6 +1100,9 @@ class SQLiteAdapter extends EngineAdapter {
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS cookies (\`key\` TEXT PRIMARY KEY, \`value\` LONGTEXT)`
         );
+        await this.executeNonQuery(
+            `CREATE TABLE IF NOT EXISTS configs (key TEXT PRIMARY KEY, value LONGTEXT)`
+        );
     }
 
     // ── Transaction ──────────────────────────────────────────────────
