@@ -172,13 +172,18 @@ namespace VRCX
         /// Execute a query on a fresh ad-hoc connection and return the result set as JSON.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null)
+        public string ExecuteJsonOnConnection(string connectionString, string sql, object[]? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                var result = ExecutePinned(connId.Value, sql, args);
+                return JsonSerializer.Serialize(result);
+            }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
-            var result = ExecuteCore(connection, sql, args);
-            return JsonSerializer.Serialize(result);
+            var rows = ExecuteCore(connection, sql, args);
+            return JsonSerializer.Serialize(rows);
         }
 
         // ── Query execution ──────────────────────────────────────────────────
@@ -256,8 +261,12 @@ namespace VRCX
         /// Execute a non-query on a fresh ad-hoc connection and return rows affected.
         /// Used for external-database operations (e.g. data migration).
         /// </summary>
-        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null)
+        public int ExecuteNonQueryOnConnection(string connectionString, string sql, object[]? args = null, long? connId = null)
         {
+            if (connId.HasValue)
+            {
+                return ExecuteNonQueryPinned(connId.Value, sql, args);
+            }
             var dataSource = DataSourceCache.GetOrAdd(connectionString, cs => NpgsqlDataSource.Create(cs));
             using var connection = dataSource.CreateConnection();
             connection.Open();
@@ -612,6 +621,32 @@ namespace VRCX
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Borrow a connection from the ad-hoc DataSource cache, BEGIN a
+        /// transaction on it, and return a connId. The TxHolder is stored in
+        /// <see cref="_pinned"/> alongside singleton-pool transactions so
+        /// <see cref="CommitTransaction"/>/<see cref="RollbackTransaction"/>
+        /// work for both paths. The DataSource is resolved from
+        /// <see cref="DataSourceCache"/> instead of the singleton
+        /// <c>_dataSource</c>.
+        /// </summary>
+        /// <param name="connectionString">Connection string keying into
+        /// <see cref="DataSourceCache"/>.</param>
+        public long BeginTransactionOnConnection(string connectionString)
+        {
+            var dataSource = DataSourceCache.GetOrAdd(connectionString,
+                cs => NpgsqlDataSource.Create(cs));
+            var connId = Interlocked.Increment(ref _nextConnId);
+            Interlocked.Increment(ref _totalBorrowed);
+            var conn = dataSource.OpenConnection();
+            var tx = conn.BeginTransaction();
+            var holder = new TxHolder { Conn = conn, Tx = tx };
+            holder.Timer = new Timer(
+                _ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
+            _pinned[connId] = holder;
+            return connId;
         }
 
         /// <summary>
