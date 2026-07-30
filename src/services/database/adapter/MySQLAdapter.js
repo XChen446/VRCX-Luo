@@ -634,6 +634,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doBegin() {
+        if (this.connectionString) return 0;
         return MySQL.BeginTransaction();
     }
 
@@ -643,6 +644,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doCommit(connId) {
+        if (this.connectionString) return;
         MySQL.CommitTransaction(connId);
     }
 
@@ -652,6 +654,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doRollback(connId) {
+        if (this.connectionString) return;
         try {
             MySQL.RollbackTransaction(connId);
         } catch (e) {
@@ -668,6 +671,7 @@ class MySQLAdapter extends EngineAdapter {
      * @protected
      */
     async _doKeepAlive(connId) {
+        if (this.connectionString) return true;
         return MySQL.KeepAliveTransaction(connId);
     }
 
