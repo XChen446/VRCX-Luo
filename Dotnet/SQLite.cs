@@ -1001,7 +1001,7 @@ namespace VRCX
         /// Does NOT call EnsureInitialized — the target DB is independent of the
         /// singleton app DB and need not be open.
         /// </summary>
-        public long BeginTransaction(string connectionString)
+        public long BeginTransactionOnConnection(string connectionString)
         {
             var connId = Interlocked.Increment(ref _nextConnId);
             Interlocked.Increment(ref _totalBorrowed);

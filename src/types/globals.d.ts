@@ -140,18 +140,16 @@ declare global {
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
         ExecuteJsonOnConnection: (connectionString: string, sql: string, args?: any) => Promise<string>;
         ExecuteNonQueryOnConnection: (connectionString: string, sql: string, args?: any) => Promise<number>;
-        BeginTransaction: {
-            (): number;
-            /**
-             * Begin a transaction on an external database file (specified by
-             * connectionString) and return a connId. Used by pullEngine's dstAdapter
-             * (constructed with a connectionString) so that withTransaction bodies
-             * route writes to the target file atomically. The connId enters the same
-             * _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
-             * (the target connection), independent of the singleton _connectionString.
-             */
-            (connectionString: string): number;
-        };
+        BeginTransaction: () => number;
+        /**
+         * Begin a transaction on an external database file (specified by
+         * connectionString) and return a connId. Used by pullEngine's dstAdapter
+         * (constructed with a connectionString) so that withTransaction bodies
+         * route writes to the target file atomically. The connId enters the same
+         * _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
+         * (the target connection), independent of the singleton _connectionString.
+         */
+        BeginTransactionOnConnection: (connectionString: string) => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
         /**
@@ -220,6 +218,15 @@ declare global {
         ExecuteJsonOnConnection: (connectionString: string, sql: string, args?: any[] | null) => Promise<string>;
         ExecuteNonQueryOnConnection: (connectionString: string, sql: string, args?: any[] | null) => Promise<number>;
         BeginTransaction: () => number;
+        /**
+         * Begin a transaction on an external database file (specified by
+         * connectionString) and return a connId. Used by pullEngine's dstAdapter
+         * (constructed with a connectionString) so that withTransaction bodies
+         * route writes to the target file atomically. The connId enters the same
+         * _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
+         * (the target connection), independent of the singleton _connectionString.
+         */
+        BeginTransactionOnConnection: (connectionString: string) => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
         /**
@@ -551,6 +558,15 @@ declare global {
         ExecuteJsonOnConnection: (connectionString: string, sql: string, args?: any) => Promise<string>;
         ExecuteNonQueryOnConnection: (connectionString: string, sql: string, args?: any) => Promise<number>;
         BeginTransaction: () => number;
+        /**
+         * Begin a transaction on an external database file (specified by
+         * connectionString) and return a connId. Used by pullEngine's dstAdapter
+         * (constructed with a connectionString) so that withTransaction bodies
+         * route writes to the target file atomically. The connId enters the same
+         * _pinned Map; ExecutePinned/Commit/Rollback route by connId to h.Conn
+         * (the target connection), independent of the singleton _connectionString.
+         */
+        BeginTransactionOnConnection: (connectionString: string) => number;
         CommitTransaction: (connId: number) => void;
         RollbackTransaction: (connId: number) => void;
         /**

@@ -1121,7 +1121,7 @@ class SQLiteAdapter extends EngineAdapter {
         // connectionString 模式(pullEngine dstAdapter):在目标文件上开 pinned 事务,
         // 使 withTransaction 体内的写操作走 pinned 连接,保证原子性。
         if (this.connectionString) {
-            return SQLite.BeginTransaction(this.connectionString);
+            return SQLite.BeginTransactionOnConnection(this.connectionString);
         }
         return SQLite.BeginTransaction();
     }
