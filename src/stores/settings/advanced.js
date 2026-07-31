@@ -1386,29 +1386,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
     const SQLITE_ALLOWED_EXTENSIONS = ['.db', '.db3', '.sqlite3'];
 
     /**
-     * Native browse dialog for the SQLite database path. The user may pick
-     * either a folder or a file:
-     *   - Folder → the canonical path gets `\VRCX.sqlite3` appended, then
-     *     resolved through `AppApi.ResolveDatabaseName` (realpath +
-     *     validation) so the returned value is the final absolute file path.
-     *   - File → the selected file's extension is validated against the
-     *     allowed set (`.db`/`.db3`/`.sqlite3`) before being accepted; an
-     *     invalid extension is rejected with a toast and the ref is left
-     *     unchanged.
-     *
-     * On cancel the ref is left untouched.
-     *
-     * @returns {Promise<void>}
+     * Shared SQLite file picker. Opens the native file dialog and returns the
+     * chosen absolute path, or '' when cancelled / extension invalid / the
+     * dialog mutex is held. Pure selector — never writes any store ref.
+     * @returns {Promise<string>} chosen path or ''
      */
-    async function browseSqlitePath() {
-        if (state.folderSelectorDialogVisible) return;
+    async function pickSqliteFile() {
+        if (state.folderSelectorDialogVisible) return '';
         state.folderSelectorDialogVisible = true;
         let picked = '';
         try {
-            // First offer a folder selection (the common case — the app
-            // creates `VRCX.sqlite3` inside it). We reuse the file dialog
-            // with a SQLite filter so the user can also pick an existing
-            // database file in the same dialog.
             const filter =
                 'SQLite database (*.db;*.db3;*.sqlite3)|*.db;*.db3;*.sqlite3|All files (*.*)|*.*';
             if (WINDOWS) {
@@ -1430,13 +1417,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         } finally {
             state.folderSelectorDialogVisible = false;
         }
-        if (!picked) return;
-
-        // Distinguish folder vs file by checking the OS path type. On both
-        // Windows (Cef `OpenFileSelectorDialog`) and Electron the dialog
-        // above is a file picker, so `picked` is always a file path here.
-        // For the folder→append case the UI also exposes a dedicated folder
-        // browse handler (`browseSqliteFolder`).
+        if (!picked) return '';
         const ext = picked.toLowerCase().match(/(\.[^.\\/]+)$/)?.[1] || '';
         if (!SQLITE_ALLOWED_EXTENSIONS.includes(ext)) {
             toast.error(
@@ -1448,8 +1429,29 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                     }
                 )
             );
-            return;
+            return '';
         }
+        return picked;
+    }
+
+    /**
+     * Native browse dialog for the SQLite database path. The user may pick
+     * either a folder or a file:
+     *   - Folder → the canonical path gets `\VRCX.sqlite3` appended, then
+     *     resolved through `AppApi.ResolveDatabaseName` (realpath +
+     *     validation) so the returned value is the final absolute file path.
+     *   - File → the selected file's extension is validated against the
+     *     allowed set (`.db`/`.db3`/`.sqlite3`) before being accepted; an
+     *     invalid extension is rejected with a toast and the ref is left
+     *     unchanged.
+     *
+     * On cancel the ref is left untouched.
+     *
+     * @returns {Promise<void>}
+     */
+    async function browseSqlitePath() {
+        const picked = await pickSqliteFile();
+        if (!picked) return;
         sqlitePath.value = picked;
         // Reset the probe state — the path changed, the old result is stale.
         sqliteConnectionStatus.value = 'idle';
@@ -1509,6 +1511,16 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         sqlitePath.value = candidate;
         sqliteConnectionStatus.value = 'idle';
         sqliteConnectionError.value = '';
+    }
+
+    /**
+     * File picker for the push migration dialog's source SQLite file. Returns
+     * the chosen absolute path or '' (cancelled / invalid extension / dialog
+     * already open). Never writes any store ref — the caller owns the result.
+     * @returns {Promise<string>}
+     */
+    async function pickPushSourcePath() {
+        return pickSqliteFile();
     }
 
     /**
@@ -2140,6 +2152,7 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         testSqliteConnection,
         browseSqlitePath,
         browseSqliteFolder,
+        pickPushSourcePath,
         pushFromSqliteToPgsql,
         pushFromSqliteToMysql,
         canPushToRemote,

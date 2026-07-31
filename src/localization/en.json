@@ -1416,7 +1416,9 @@
                         "restart_hint": "Switching engine or changing connection parameters requires an app restart. Switch to the target engine (PostgreSQL or MySQL) and restart before running the migration.",
                         "backup": "Backup to SQLite",
                         "backup_button": "Backup to SQLite",
-                        "backup_hint": "Export all data from the current remote database into a new .sqlite3 file. Read-only on the remote DB — does not affect live data. Defaults to the VRCX config directory."
+                        "backup_hint": "Export all data from the current remote database into a new .sqlite3 file. Read-only on the remote DB — does not affect live data. Defaults to the VRCX config directory.",
+                        "push_source_label": "Source SQLite File",
+                        "push_source_placeholder": "(default AppData location)"
                     },
                     "database_cleanup": {
                         "header": "Database Cleanup",

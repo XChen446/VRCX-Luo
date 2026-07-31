@@ -380,10 +380,7 @@
                             variant="outline"
                             :disabled="pgsqlPushStatus === 'pushing' || !pgPushGuard.ok"
                             :title="pgPushGuard.message"
-                            @click="
-                                pushTargetEngine = 'postgresql';
-                                isPushDialogVisible = true;
-                            ">
+                            @click="openPushDialog('postgresql')">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="pgsqlPushStatus === 'pushing'" class="text-yellow-500">…</span>
@@ -470,10 +467,7 @@
                             variant="outline"
                             :disabled="mysqlPushStatus === 'pushing' || !mysqlPushGuard.ok"
                             :title="mysqlPushGuard.message"
-                            @click="
-                                pushTargetEngine = 'mysql';
-                                isPushDialogVisible = true;
-                            ">
+                            @click="openPushDialog('mysql')">
                             {{ t('view.settings.advanced.advanced.database_engine.migrate_button') }}
                         </Button>
                         <span v-if="mysqlPushStatus === 'pushing'" class="text-yellow-500">…</span>
@@ -530,6 +524,19 @@
                         }}</span>
                     </AlertDescription>
                 </Alert>
+
+                <SettingsItem :label="t('view.settings.advanced.advanced.database_engine.push_source_label')">
+                    <div class="flex items-center gap-2 w-full">
+                        <Input
+                            v-model="pushSourcePath"
+                            class="flex-1 min-w-0"
+                            :placeholder="t('view.settings.advanced.advanced.database_engine.push_source_placeholder')" />
+                        <Button size="sm" variant="outline" @click="onBrowsePushSource">
+                            <FileUp class="h-4 w-4 mr-1" />
+                            {{ t('view.settings.advanced.advanced.database_engine.browse_file_button') }}
+                        </Button>
+                    </div>
+                </SettingsItem>
 
                 <DialogFooter>
                     <Button variant="outline" size="sm" @click="isPushDialogVisible = false">
@@ -829,9 +836,11 @@
         browseSqliteFolder,
         pushFromSqliteToPgsql,
         pushFromSqliteToMysql,
+        pickPushSourcePath,
         canPushToRemote,
         pullToSqlite,
-        canPullFromRemote
+        canPullFromRemote,
+        resolveCurrentSqliteDbPath
     } = advancedSettingsStore;
 
     const configTreeData = ref({});
@@ -848,6 +857,35 @@
      * @type {import('vue').Ref<'postgresql' | 'mysql'>}
      */
     const pushTargetEngine = ref('postgresql');
+
+    /**
+     * SQLite source file for the push migration dialog. Empty = use the
+     * store fallback (derived default location) when submitting.
+     */
+    const pushSourcePath = ref('');
+    /** In-flight prefill promise; awaited by handlePush to avoid racing. @type {Promise<void>|null} */
+    let pushSourcePrefill = null;
+
+    /**
+     * Open the push confirmation dialog for the given target engine and
+     * prefill the source SQLite path (best-effort; failure never blocks).
+     * @param {'postgresql'|'mysql'} engine
+     */
+    function openPushDialog(engine) {
+        pushTargetEngine.value = engine;
+        isPushDialogVisible.value = true;
+        pushSourcePrefill = prefillPushSource().catch(() => {});
+    }
+
+    /** Best-effort prefill: current sqlitePath (adhoc window) or derived default. */
+    async function prefillPushSource() {
+        try {
+            pushSourcePath.value =
+                sqlitePath.value || (await resolveCurrentSqliteDbPath());
+        } catch {
+            // Keep the current input value.
+        }
+    }
 
     // Pre-flight guard for the push buttons (defect 3 fix). The push
     // destination is the live singleton adapter, whose connection was fixed
@@ -1024,6 +1062,16 @@
     }
 
     /**
+     * Open the native file picker for the push dialog's source SQLite file.
+     * The picked path is kept in the local `pushSourcePath` ref; nothing in
+     * the store is touched.
+     */
+    async function onBrowsePushSource() {
+        const picked = await pickPushSourcePath();
+        if (picked) pushSourcePath.value = picked;
+    }
+
+    /**
      * Probe the SQLite database file by new-ing a throwaway adapter in
      * read-write mode. Persists the current path first so a subsequent
      * restart uses the probed path, then runs the probe. If the file does
@@ -1048,7 +1096,9 @@
      * `isPushDialogVisible` pattern used for avatar feed purging so the
      * user must confirm before a destructive operation.
      */
-    function handlePush() {
+    async function handlePush() {
+        if (pushSourcePrefill) await pushSourcePrefill;
+        pushSourcePrefill = null;
         isPushDialogVisible.value = false;
         onPush();
     }
@@ -1063,8 +1113,9 @@
      */
     async function onPush() {
         const storeAction = pushTargetEngine.value === 'mysql' ? pushFromSqliteToMysql : pushFromSqliteToPgsql;
+        const srcConnStr = pushSourcePath.value ? `sqlite:///${pushSourcePath.value}` : undefined;
         try {
-            const result = await storeAction();
+            const result = await storeAction(srcConnStr);
             if (result.errors.length > 0) {
                 console.warn('Migration completed with errors:');
                 for (const err of result.errors) {
