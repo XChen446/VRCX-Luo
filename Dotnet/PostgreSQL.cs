@@ -162,9 +162,11 @@ namespace VRCX
         /// Execute a query on the pooled connection and return the result set as JSON.
         /// </summary>
         /// <param name="connId">optional transaction pin id forwarded to <see cref="Execute"/>.</param>
-        public string ExecuteJson(string sql, object[]? args = null, long? connId = null)
+        public string ExecuteJson(string sql, object? args = null, object? connId = null)
         {
-            var result = Execute(sql, args, connId);
+            var nArgs = NormalizeArgs(args);
+            var nConnId = NormalizeConnId(connId);
+            var result = Execute(sql, nArgs, nConnId);
             return JsonSerializer.Serialize(result);
         }
 
@@ -194,15 +196,23 @@ namespace VRCX
         /// Execute a query on a fresh pooled connection and return rows as
         /// positional arrays. Parameters are positional (<c>$1</c>, <c>$2</c>,
         /// ...) and are bound from <paramref name="args"/> in order.
+        ///
+        /// Note: <paramref name="args"/>/<paramref name="connId"/> are
+        /// <c>object?</c> (not <c>object[]</c>/<c>long?</c>) because CefSharp
+        /// marshals JS arrays as <c>List&lt;object&gt;</c> and numbers as
+        /// <c>Int32</c>; normalize via <see cref="NormalizeArgs"/> /
+        /// <see cref="NormalizeConnId"/> before use.
         /// </summary>
         /// <param name="connId">optional transaction pin id; when present
         /// the query runs on the pinned connection inside its transaction
         /// and resets the sliding idle timer.</param>
-        public object[][] Execute(string sql, object[]? args = null, long? connId = null)
+        public object[][] Execute(string sql, object? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nArgs = NormalizeArgs(args);
+            var nConnId = NormalizeConnId(connId);
+            if (nConnId.HasValue)
             {
-                return ExecutePinned(connId.Value, sql, args);
+                return ExecutePinned(nConnId.Value, sql, nArgs);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -212,7 +222,7 @@ namespace VRCX
                 Interlocked.Increment(ref _activeCount);
                 try
                 {
-                    return ExecuteCore(connection, sql, args);
+                    return ExecuteCore(connection, sql, nArgs);
                 }
                 finally
                 {
@@ -231,11 +241,13 @@ namespace VRCX
         /// <param name="connId">optional transaction pin id; when present
         /// the statement runs on the pinned connection inside its
         /// transaction and resets the sliding idle timer.</param>
-        public int ExecuteNonQuery(string sql, object[]? args = null, long? connId = null)
+        public int ExecuteNonQuery(string sql, object? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nArgs = NormalizeArgs(args);
+            var nConnId = NormalizeConnId(connId);
+            if (nConnId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(nConnId.Value, sql, nArgs);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -245,7 +257,7 @@ namespace VRCX
                 Interlocked.Increment(ref _activeCount);
                 try
                 {
-                    using var command = CreateCommand(connection, sql, args);
+                    using var command = CreateCommand(connection, sql, nArgs);
                     return command.ExecuteNonQuery();
                 }
                 finally
