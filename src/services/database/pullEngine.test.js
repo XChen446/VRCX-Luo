@@ -11,7 +11,8 @@
  *
  * 关键:pull 走 MySQL 分支(listTablesTypes 枚举全部表按白名单分桶)。
  * 源/目标表结构必须一致。用 srcAdapter.initGlobalSchema()/initUserSchema()
- * 在源侧建真实 schema(pull 会在目标侧调 dstAdapter.initGlobalSchema()),
+ * 在源侧建真实 schema(pull 会在目标侧调 dstAdapter.initGlobalSchema()
+ * + initUserSchema(prefix) 自动建表),
  * 然后往源表塞真实列名数据。
  */
 
@@ -55,11 +56,6 @@ beforeEach(() => {
     holders.src = srcAdapter;
     holders.dst = dstAdapter;
 });
-
-/** 在目标侧预建 user schema(pull 不自动建 user 表,需预创建)。 */
-async function ensureDstUserSchema(prefix) {
-    await dstAdapter.initUserSchema(prefix);
-}
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -202,7 +198,6 @@ async function dstCount(table) {
 describe('pullEngine — 基本 pull', () => {
     test('src 有 1 张 global 表 + 1 张 user 表,pull 后 dst 有相同数据', async () => {
         await seedSrc();
-        await ensureDstUserSchema('abc');
 
         const result = await pullToSqlite('sqlite:///fake/dst.db');
 
@@ -221,7 +216,6 @@ describe('pullEngine — 基本 pull', () => {
 
     test('数据内容被正确复制到目标(列内容)', async () => {
         await seedSrc();
-        await ensureDstUserSchema('abc');
         await pullToSqlite('sqlite:///fake/dst.db');
         const rows = await dstAdapter.select('cache_avatar', ['id', 'name']);
         expect(rows[0]).toEqual(['avt_1', 'Avatar1']);
@@ -235,7 +229,6 @@ describe('pullEngine — 基本 pull', () => {
 describe('pullEngine — 分组事务原子性', () => {
     test('global 组中途抛错 → 该组全回滚,user 组保留', async () => {
         await seedGlobalAndUser(2, 2); // cache_avatar 2 + gamelog_location 1 + abc_notes 2
-        await ensureDstUserSchema('abc');
 
         const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
         vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(
@@ -260,7 +253,6 @@ describe('pullEngine — 分组事务原子性', () => {
 
     test('user 组中途抛错 → 该 prefix 组回滚,global 组保留', async () => {
         await seedGlobalAndUser(2, 2);
-        await ensureDstUserSchema('abc');
 
         const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
         vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(
@@ -276,15 +268,17 @@ describe('pullEngine — 分组事务原子性', () => {
 
         expect(await dstCount('cache_avatar')).toBe(2);
         expect(await dstCount('abc_notes')).toBe(0);
+        // DDL 与数据同事务:回滚后目标端连表都不存在(不留空表)。
+        expect(await dstAdapter.listTables('%abc_notes')).toHaveLength(0);
         expect(result.globalTables).toBe(18);
         expect(result.errors).toHaveLength(1);
-        expect(result.errors[0]).toContain('user-group');
+        // 错误消息带 prefix(与 pushEngine 格式对称)。
+        expect(result.errors[0]).toContain('user-group:abc');
     });
 
     test('mirror 组中途抛错 → mirror 组回滚,global/user 组保留', async () => {
         await seedGlobalAndUser(1, 1);
         await seedMirrorTable('legacy_table', 2);
-        await ensureDstUserSchema('abc');
 
         const origBulkInsert = dstAdapter.bulkInsert.bind(dstAdapter);
         vi.spyOn(dstAdapter, 'bulkInsert').mockImplementation(

@@ -367,9 +367,10 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         0
     );
     let userIdx = 0;
-    for (const [, tasks] of userTasksByPrefix) {
+    for (const [prefix, tasks] of userTasksByPrefix) {
         try {
             await dstAdapter.withTransaction(async () => {
+                await dstAdapter.initUserSchema(prefix);
                 for (const task of tasks) {
                     userIdx += 1;
                     if (typeof onProgress === 'function') {
@@ -394,7 +395,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
                 }
             });
         } catch (err) {
-            errors.push(`user-group: ${err.message || String(err)}`);
+            errors.push(`user-group:${prefix}: ${err.message || String(err)}`);
         }
     }
 
