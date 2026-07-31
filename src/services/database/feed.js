@@ -384,7 +384,10 @@ const feed = {
                 type: entry.type,
                 location: entry.location,
                 world_name: entry.worldName,
-                time: entry.time,
+                // Online 事件无时长，调用方传空串；PG BIGINT 列拒绝 text
+                // 空串（42804），SQLite/MySQL 因动态类型/宽松转换容忍。
+                // 统一归一化为 NULL —— 三引擎均接受，语义也更准确。
+                time: entry.time === '' ? null : entry.time,
                 group_name: entry.groupName
             },
             'ignore'
