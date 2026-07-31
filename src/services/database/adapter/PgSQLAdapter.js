@@ -844,7 +844,7 @@ class PgSQLAdapter extends EngineAdapter {
      * `_mapColumnType`.
      *
      * @param {string} tableName - table name to create
-     * @param {object[]} columns - [{ name, type, constraints? }] or raw string for simple defs
+     * @param {Array<object | string>} columns - [{ name, type, constraints? }] or raw string for simple defs
      * @returns {Promise<number>} rows affected (0 for DDL)
      * @override
      */
@@ -853,8 +853,11 @@ class PgSQLAdapter extends EngineAdapter {
             if (typeof col === 'string') {
                 return this._mapColumnType(col);
             }
-            const constraints = col.constraints ? ` ${col.constraints}` : '';
-            const raw = `${col.name} ${col.type}${constraints}`;
+            const colDef = /** @type {{name: string, type?: string, constraints?: string}} */ (
+                col
+            );
+            const constraints = colDef.constraints ? ` ${colDef.constraints}` : '';
+            const raw = `${colDef.name} ${colDef.type}${constraints}`;
             return this._mapColumnType(raw);
         });
         // Register PRIMARY KEY metadata so `insert(..., 'replace')` can
@@ -865,13 +868,22 @@ class PgSQLAdapter extends EngineAdapter {
         // NOTHING` and existing rows never update.
         const pkCols = [];
         columns.forEach((col) => {
-            const isRaw = typeof col === 'string';
-            const def = isRaw
-                ? col
-                : `${col.name} ${col.type || ''}${col.constraints ? ` ${col.constraints}` : ''}`;
+            if (typeof col === 'string') {
+                if (/\bPRIMARY\s+KEY\b/i.test(col)) {
+                    const rawName = col
+                        .trim()
+                        .split(/\s+/)[0]
+                        .replace(/^"|"$/g, '');
+                    if (rawName) pkCols.push(rawName);
+                }
+                return;
+            }
+            const colDef = /** @type {{name: string, type?: string, constraints?: string}} */ (
+                col
+            );
+            const def = `${colDef.name} ${colDef.type || ''}${colDef.constraints ? ` ${colDef.constraints}` : ''}`;
             if (/\bPRIMARY\s+KEY\b/i.test(def)) {
-                const rawName = isRaw ? col.trim().split(/\s+/)[0] : col.name;
-                const name = rawName ? rawName.replace(/^"|"$/g, '') : '';
+                const name = colDef.name.replace(/^"|"$/g, '');
                 if (name) pkCols.push(name);
             }
         });
