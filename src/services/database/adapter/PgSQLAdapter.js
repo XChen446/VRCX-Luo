@@ -242,9 +242,10 @@ class PgSQLAdapter extends EngineAdapter {
         }
         const allPkInData = pkCols.every((c) => dataKeys.includes(c));
         if (!allPkInData) {
-            console.warn(
-                `[PgSQLAdapter] insert replace degraded to DO NOTHING: table=${table}, PK cols not in data`
-            );
+            // 设计内降级:自增/生成主键(如 activity_sessions_v2.session_id)
+            // 的 'replace' 调用,行数据不含 PK,冲突永远不会触发 ——
+            // DO NOTHING 与 SQLite INSERT OR REPLACE 语义等价(同样插入新行)。
+            // 属预期行为,不产生告警噪音。
             return ' ON CONFLICT DO NOTHING';
         }
         const nonPkCols = dataKeys.filter((c) => !pkCols.includes(c));
@@ -856,6 +857,27 @@ class PgSQLAdapter extends EngineAdapter {
             const raw = `${col.name} ${col.type}${constraints}`;
             return this._mapColumnType(raw);
         });
+        // Register PRIMARY KEY metadata so `insert(..., 'replace')` can
+        // build `ON CONFLICT (...) DO UPDATE` via `_buildOnConflictReplace`.
+        // Structured column defs (e.g. configRepository's dynamic `configs`
+        // table) and raw-string defs both carry the constraint; without this
+        // registration the replace silently degrades to `ON CONFLICT DO
+        // NOTHING` and existing rows never update.
+        const pkCols = [];
+        columns.forEach((col) => {
+            const isRaw = typeof col === 'string';
+            const def = isRaw
+                ? col
+                : `${col.name} ${col.type || ''}${col.constraints ? ` ${col.constraints}` : ''}`;
+            if (/\bPRIMARY\s+KEY\b/i.test(def)) {
+                const rawName = isRaw ? col.trim().split(/\s+/)[0] : col.name;
+                const name = rawName ? rawName.replace(/^"|"$/g, '') : '';
+                if (name) pkCols.push(name);
+            }
+        });
+        if (pkCols.length > 0) {
+            this._tablePkMap.set(tableName, pkCols);
+        }
         return this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs.join(', ')})`
         );
