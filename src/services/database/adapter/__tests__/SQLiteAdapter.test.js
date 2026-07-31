@@ -677,6 +677,42 @@ describe('Query — selectOne / select / selectWhere / selectJoin / selectWhereI
         ]);
     });
 
+    test('selectUnion() aligns BIGINT-cast NULL pads with real integer columns', async () => {
+        // Mirrors the feed / gameLog UNION shape: the `time` position is a
+        // real integer column in some branches and `CAST(NULL AS BIGINT)`
+        // in the NULL-padded branches (PG requires matching union types;
+        // SQLite/MySQL accept both — the cast must execute cleanly here too).
+        await adapter.createTable('gps', [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' },
+            { name: 'time', type: 'INTEGER' }
+        ]);
+        await adapter.createTable('status', [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'created_at', type: 'TEXT' }
+        ]);
+        await adapter.bulkInsert('gps', [
+            { id: 1, created_at: '2026-01-01T00:00:00Z', time: 3600000 }
+        ]);
+        await adapter.bulkInsert('status', [
+            { id: 2, created_at: '2026-01-01T00:00:00Z' }
+        ]);
+        const rows = await adapter.selectUnion(
+            [
+                { table: 'gps', columns: 'id, created_at, time' },
+                {
+                    table: 'status',
+                    columns: 'id, created_at, CAST(NULL AS BIGINT) AS time'
+                }
+            ],
+            { order: 'id' }
+        );
+        expect(rows).toEqual([
+            [1, '2026-01-01T00:00:00Z', 3600000],
+            [2, '2026-01-01T00:00:00Z', null]
+        ]);
+    });
+
     test('selectGroupBy() aggregates with GROUP BY', async () => {
         await adapter.createTable('t', [
             { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
