@@ -53,3 +53,49 @@ describe('feed strict GROUP BY compliance', () => {
         });
     });
 });
+
+// ── UNION ALL column type consistency ───────────────────────────────
+//
+// PostgreSQL rejects `UNION ALL` branches whose corresponding columns
+// differ in type (42804). The `time` position is an integer column in
+// feed_gps / feed_online_offline, so the NULL-padded branches must cast
+// to BIGINT — not TEXT (the generic null helper used elsewhere).
+
+describe('feed UNION ALL column type consistency', () => {
+    let unionMock;
+
+    beforeEach(() => {
+        unionMock = vi.spyOn(adapter, 'selectUnion').mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        unionMock.mockRestore();
+    });
+
+    test('time null-pads use BIGINT cast matching the real integer columns', async () => {
+        await feed.lookupFeedDatabase([], [], 25);
+        const sources = unionMock.mock.calls[0][0];
+        // All 5 feed sources: GPS, Status, Bio, Avatar, Online/Offline.
+        expect(sources).toHaveLength(5);
+        // Position 8 is `time` in the 22-column shared schema.
+        const timeExpr = (cols) => cols[8];
+        expect(timeExpr(sources[0].columns)).toBe('time'); // GPS real column
+        expect(timeExpr(sources[1].columns)).toBe(
+            'CAST(NULL AS BIGINT) AS time' // Status
+        );
+        expect(timeExpr(sources[2].columns)).toBe(
+            'CAST(NULL AS BIGINT) AS time' // Bio
+        );
+        expect(timeExpr(sources[3].columns)).toBe(
+            'CAST(NULL AS BIGINT) AS time' // Avatar
+        );
+        expect(timeExpr(sources[4].columns)).toBe('time'); // Online/Offline
+    });
+
+    test('text null-pads for text columns still use TEXT cast', async () => {
+        await feed.lookupFeedDatabase([], [], 25);
+        const sources = unionMock.mock.calls[0][0];
+        // Position 5 is `location` — a TEXT column in every engine.
+        expect(sources[1].columns[5]).toBe('CAST(NULL AS TEXT) AS location');
+    });
+});

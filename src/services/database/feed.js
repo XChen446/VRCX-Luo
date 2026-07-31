@@ -32,6 +32,11 @@ const FEED_COLUMNS = [
 ];
 const FEED_COL_STR = FEED_COLUMNS.join(', ');
 const N = (name) => `CAST(NULL AS TEXT) AS ${name}`; // inline null helper — CAST gives TEXT affinity so System.Data.SQLite doesn't NPE on null decltype
+// `time` 在 feed_gps / feed_online_offline 中是有符号整数列（各引擎均为
+// INTEGER/BIGINT），其余分支必须用同类型 NULL 填充，否则 PG 的
+// UNION ALL 会报 42804（bigint 与 text 无法匹配）。SQLite/MySQL
+// 容忍类型不一致，但保持全引擎一致的 BIGINT 空值 CAST 更安全。
+const NB = (name) => `CAST(NULL AS BIGINT) AS ${name}`;
 
 /**
  * Build a structured source descriptor for adapter.selectUnion.
@@ -69,7 +74,7 @@ const STATUS_COLS = [
     N('location'),
     N('world_name'),
     N('previous_location'),
-    N('time'),
+    NB('time'),
     N('group_name'),
     'status',
     'status_description',
@@ -88,7 +93,7 @@ const BIO_COLS = [
     N('location'),
     N('world_name'),
     N('previous_location'),
-    N('time'),
+    NB('time'),
     N('group_name'),
     N('status'),
     N('status_description'),
@@ -109,7 +114,7 @@ const AVATAR_COLS = [
     N('location'),
     N('world_name'),
     N('previous_location'),
-    N('time'),
+    NB('time'),
     N('group_name'),
     N('status'),
     N('status_description'),
