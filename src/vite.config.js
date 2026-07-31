@@ -66,7 +66,17 @@ function getAssetLanguage(assetId) {
 function getManualChunk(moduleId) {
     const basename = moduleId.split('/').pop();
     const language = getAssetLanguage(basename);
-    if (!language) return;
+    if (!language) {
+        // Declare adapter modules for dynamic import resolution in
+        // production builds. PgSQLAdapter / MySQLAdapter are loaded
+        // on-demand by advanced.js (push/pull ad-hoc migration) and
+        // adapter/index.js (createAdapter / initAdapter). Without
+        // explicit chunk declaration, rolldown may not include them
+        // as separate chunks, causing 404 at runtime.
+        if (basename === 'PgSQLAdapter.js') return 'PgSQLAdapter';
+        if (basename === 'MySQLAdapter.js') return 'MySQLAdapter';
+        return;
+    }
 
     return `i18n/${language}`;
 }

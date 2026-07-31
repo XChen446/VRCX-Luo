@@ -2,17 +2,26 @@ import { SQLiteAdapter } from './SQLiteAdapter.js';
 
 // ── Engine singleton & lazy-load policy ──────────────────────────────
 //
-// `PgSQLAdapter.js` (1604 lines) and `MySQLAdapter.js` (1128 lines on
-// the MySQL branch) are intentionally NOT statically imported here.
-// A static import forces every test file that touches the database
-// layer to transform those modules, inflating transform time ~11x
-// and import time ~3.3x, which pushes unrelated tests past their
-// default 5s/10s timeouts (see Phase 9 Stage 5 D15 for the PgSQL
-// measurement; the same applies to MySQL). Instead we lazy-load them
-// via dynamic `import()` only when `initAdapter(mode)` is called with
+// `PgSQLAdapter.js` (1760 lines) and `MySQLAdapter.js` (1229 lines)
+// are intentionally NOT statically imported here. A static import
+// forces every test file that touches the database layer to transform
+// those modules, inflating transform time ~11x and import time ~3.3x,
+// which pushes unrelated tests past their default 5s/10s timeouts (see
+// Phase 9 Stage 5 D15 for the PgSQL measurement; the same applies to
+// MySQL). Instead we lazy-load them via literal-path loader functions
+// (`_engineSpec.load`) only when `initAdapter(mode)` is called with
 // `'postgresql'` or `'mysql'`/`'mariadb'`, *or* `createAdapter()` is
 // called with a matching URI scheme. In the default `sqlite` mode
 // (production + vitest stub), neither module body is ever evaluated.
+//
+// Why loader functions instead of `import(spec.path)` with a variable
+// path? Rolldown (the production bundler) statically analyses dynamic
+// `import()` specifiers; a string-variable specifier cannot be
+// resolved, so it is rewritten into a runtime network-fetch fallback
+// that 404s in the packaged CefSharp/Electron app (the bug this
+// refactor fixes). Each `load` function carries its specifier as a
+// *literal* `import('./XxxAdapter.js')`, which Rolldown resolves and
+// emits as a separate on-demand chunk.
 //
 // Why not top-level `await import()` for the singleton? Rolldown's CJS
 // output rejects top-level await in modules that are transitively
@@ -50,11 +59,12 @@ import { SQLiteAdapter } from './SQLiteAdapter.js';
 // ensures importers observe the post-init value.
 //
 // The singleton is typed as the abstract base `EngineAdapter` rather
-// than a `SQLiteAdapter | PgSQLAdapter | MySQLAdapter` union: the
-// latter would require `import('./MySQLAdapter.js')` type expressions
-// that trigger TS2307 in the Phase 9 workspace (where MySQLAdapter.js
-// is absent). Using the base class preserves type safety for all
-// callers, which go through the base interface exclusively.
+// than a `SQLiteAdapter | PgSQLAdapter | MySQLAdapter` union: callers
+// only ever go through the base interface, so the union adds no type
+// information (and a union would drag both heavy adapter modules into
+// every type-check of the database layer). Using the base class keeps
+// the lazy-load policy intact — the adapter modules are never
+// statically referenced from this file.
 /** @type {import('./EngineAdapter.js').EngineAdapter} */
 let adapter = new SQLiteAdapter();
 
@@ -81,18 +91,34 @@ function _normalizeMode(mode) {
 }
 
 /**
- * Lazy-import spec for non-sqlite engines.
+ * Lazy-load spec for non-sqlite engines.
  *
  * Kept as a lookup table so `initAdapter` and `createAdapter` share the
- * same path/class-name mapping, and so adding a fourth engine later is
- * a one-line change here.
+ * same loader/class-name mapping, and so adding a fourth engine later
+ * is a one-line change here.
  *
- * @type {Record<string, { path: string, className: string }>}
+ * Each `load` is a function whose body is a dynamic `import()` of a
+ * *literal* relative path. Literal specifiers can be statically
+ * analysed by Rolldown, so each adapter is emitted as its own chunk and
+ * loaded on demand; a variable-path `import(spec.path)` cannot be
+ * resolved statically and would degrade to a runtime fetch that 404s in
+ * the packaged app. The `Promise<Record<string, unknown>>` return type
+ * keeps the module namespace opaque — the class is read back out via
+ * `className`.
+ *
+ * @typedef {new (config?: object) => import('./EngineAdapter.js').EngineAdapter} EngineAdapterCtor
+ * @type {Record<string, { load: () => Promise<Record<string, unknown>>, className: string }>}
  * @private
  */
 const _engineSpec = {
-    postgresql: { path: './PgSQLAdapter.js', className: 'PgSQLAdapter' },
-    mysql: { path: './MySQLAdapter.js', className: 'MySQLAdapter' }
+    postgresql: {
+        load: () => import('./PgSQLAdapter.js'),
+        className: 'PgSQLAdapter'
+    },
+    mysql: {
+        load: () => import('./MySQLAdapter.js'),
+        className: 'MySQLAdapter'
+    }
 };
 
 /**
@@ -102,17 +128,14 @@ const _engineSpec = {
  *   - `'sqlite'` (default) — synchronously constructed. No async cost.
  *     If the current singleton is not a `SQLiteAdapter` (e.g. after a
  *     prior non-sqlite init), a fresh `SQLiteAdapter` is constructed.
- *   - `'postgresql'` — lazy-imports `PgSQLAdapter.js` (1604 lines) via
- *     dynamic `import()` so the module is only transformed when PG is
- *     actually used (Phase 9 Stage 5 D15 fix — keeps sqlite-mode tests
- *     fast).
- *   - `'mysql'` / `'mariadb'` — lazy-imports `MySQLAdapter.js` via the
- *     same mechanism. In the Phase 9 workspace `MySQLAdapter.js` does
- *     not exist yet; the dynamic `import()` only fires when the user
- *     actually selects `mysql` mode, so sqlite + postgresql mode stay
- *     safe. Once this branch merges with the MySQL branch, the file
- *     will be present and `mysql` mode becomes available without any
- *     further change to this module.
+ *   - `'postgresql'` — lazy-loads `PgSQLAdapter.js` (1760 lines) via
+ *     its `_engineSpec` loader so the module is only transformed when
+ *     PG is actually used (Phase 9 Stage 5 D15 fix — keeps sqlite-mode
+ *     tests fast).
+ *   - `'mysql'` / `'mariadb'` — lazy-loads `MySQLAdapter.js` (1229
+ *     lines) via the same mechanism. Both adapter files exist in this
+ *     workspace, so `mysql` mode is fully available; the loaders fire
+ *     only when the user actually selects the engine.
  *
  * Concurrent calls:
  *   - Same-mode concurrent calls share the in-flight `_initPromise`.
@@ -170,15 +193,19 @@ export async function initAdapter(mode = 'sqlite') {
         }
     }
 
-    // Begin lazy import. The promise is shared with concurrent same-mode
+    // Begin lazy load. The promise is shared with concurrent same-mode
     // callers; cross-mode callers will await it above and then start
     // their own.
-    _initPromise = import(spec.path)
+    _initPromise = spec.load()
         .then((mod) => {
-            const AdapterClass = mod[spec.className];
+            // `mod` is `Record<string, unknown>` — cast the class back
+            // out so it is constructable at the type level.
+            const AdapterClass = /** @type {EngineAdapterCtor} */ (
+                mod[spec.className]
+            );
             if (!AdapterClass) {
                 throw new Error(
-                    `initAdapter: ${spec.path} did not export ${spec.className}`
+                    `initAdapter: adapter module did not export ${spec.className}`
                 );
             }
             adapter = new AdapterClass();
@@ -200,9 +227,10 @@ export async function initAdapter(mode = 'sqlite') {
  * Create a new adapter instance for a given connection URI.
  *
  * Async because the PostgreSQL / MySQL branches lazy-load their adapter
- * modules via `await import()` — see the file header note for why the
- * static imports were removed. The SQLite branch pays no async cost
- * beyond a microtask.
+ * modules via the `_engineSpec` loader functions (literal-path dynamic
+ * `import()`) — see the file header note for why the static imports
+ * were removed. The SQLite branch pays no async cost beyond a
+ * microtask.
  *
  * URI schemes:
  *   - `sqlite:///path`            → SQLiteAdapter
@@ -230,26 +258,26 @@ async function createAdapter(config) {
         }
         return new SQLiteAdapter(config);
     }
-    // Non-sqlite schemes: resolve via the `_engineSpec` table and a
-    // string-variable dynamic import (`import(spec.path)`). TypeScript
-    // cannot statically resolve a string-variable import specifier, so
-    // absent modules (MySQLAdapter.js in the Phase 9 workspace) do not
-    // trigger TS2307 at type-check time. At runtime the import only
-    // fires for the requested scheme, so sqlite + postgresql stay safe;
-    // mysql raises a runtime module-not-found error, which is the
-    // expected behaviour until the MySQL branch's MySQLAdapter.js
-    // merges into this workspace.
+    // Non-sqlite schemes: resolve via the `_engineSpec` table. Each
+    // entry's `load` is a literal-path dynamic `import()` that Rolldown
+    // can statically resolve, so every non-sqlite adapter is emitted as
+    // its own chunk and fetched on demand — never a runtime network
+    // fetch of a variable path. Both `PgSQLAdapter.js` and
+    // `MySQLAdapter.js` exist in this workspace, so the literal
+    // specifiers pass CheckJS with no TS2307.
     const spec = _engineSpec[scheme === 'mariadb' ? 'mysql' : scheme];
     if (!spec) {
         throw new Error(
             `Unsupported connection scheme: ${scheme} (expected sqlite://, postgresql://, mysql://, or mariadb://)`
         );
     }
-    const mod = await import(spec.path);
-    const AdapterClass = mod[spec.className];
+    const mod = await spec.load();
+    const AdapterClass = /** @type {EngineAdapterCtor} */ (
+        mod[spec.className]
+    );
     if (!AdapterClass) {
         throw new Error(
-            `createAdapter: ${spec.path} did not export ${spec.className}`
+            `createAdapter: adapter module did not export ${spec.className}`
         );
     }
     return new AdapterClass(config);

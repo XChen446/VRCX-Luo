@@ -11,6 +11,8 @@ import {
     adapter,
     createAdapter
 } from '../../services/database/adapter/index.js';
+import { PgSQLAdapter } from '../../services/database/adapter/PgSQLAdapter.js';
+import { MySQLAdapter } from '../../services/database/adapter/MySQLAdapter.js';
 import { bootDbConfig } from '../../plugins/interopApi.js';
 import { languageCodes } from '../../localization';
 import { useGameStore } from '../game';
@@ -1786,9 +1788,6 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         let dstAdapter = null;
         if (usingAdHoc) {
             const connStr = _buildPgsqlConnectionString();
-            const { PgSQLAdapter } = await import(
-                '../../services/database/adapter/PgSQLAdapter.js'
-            );
             dstAdapter = new PgSQLAdapter({ connection: connStr });
         }
         pgsqlPushStatus.value = 'pushing';
@@ -1836,9 +1835,6 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
         let dstAdapter = null;
         if (usingAdHoc) {
             const connStr = _buildMysqlConnectionString();
-            const { MySQLAdapter } = await import(
-                '../../services/database/adapter/MySQLAdapter.js'
-            );
             dstAdapter = new MySQLAdapter({ connection: connStr });
         }
         mysqlPushStatus.value = 'pushing';
@@ -1985,15 +1981,9 @@ export const useAdvancedSettingsStore = defineStore('AdvancedSettings', () => {
                 pgsqlDatabase.value;
             if (pgFilled) {
                 const connStr = _buildPgsqlConnectionString();
-                const { PgSQLAdapter } = await import(
-                    '../../services/database/adapter/PgSQLAdapter.js'
-                );
                 srcAdapter = new PgSQLAdapter({ connection: connStr });
             } else {
                 const connStr = _buildMysqlConnectionString();
-                const { MySQLAdapter } = await import(
-                    '../../services/database/adapter/MySQLAdapter.js'
-                );
                 srcAdapter = new MySQLAdapter({ connection: connStr });
             }
         }
