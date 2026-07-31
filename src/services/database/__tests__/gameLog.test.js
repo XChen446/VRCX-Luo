@@ -290,3 +290,44 @@ describe('gameLog strict GROUP BY compliance', () => {
         });
     });
 });
+
+// ── UNION ALL column type consistency ───────────────────────────────
+//
+// PostgreSQL rejects `UNION ALL` branches whose corresponding columns
+// differ in type (42804). The `time` position is an integer column
+// (BIGINT in PG) in gamelog_location / gamelog_join_leave, so the
+// NULL-padded branches must cast to BIGINT — not the bare `NULL AS time`
+// which PG infers as text.
+
+describe('gameLog UNION ALL column type consistency', () => {
+    let unionMock;
+
+    beforeEach(() => {
+        unionMock = vi.spyOn(adapter, 'selectUnion').mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        unionMock.mockRestore();
+    });
+
+    test('time null-pads use BIGINT cast matching the real integer columns', async () => {
+        await gameLog.lookupGameLogDatabase([], [], 25);
+        const sources = unionMock.mock.calls[0][0];
+        // All game log sources are included with an empty filter list.
+        expect(sources.length).toBeGreaterThanOrEqual(5);
+        // Position 6 is `time` in the 18-column game log schema.
+        const timeExpr = (cols) => cols.split(', ')[6];
+        for (const src of sources) {
+            if (
+                src.table === 'gamelog_location' ||
+                src.table === 'gamelog_join_leave'
+            ) {
+                expect(timeExpr(src.columns)).toBe('time');
+            } else {
+                expect(timeExpr(src.columns)).toBe(
+                    'CAST(NULL AS BIGINT) AS time'
+                );
+            }
+        }
+    });
+});

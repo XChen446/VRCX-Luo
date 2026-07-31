@@ -18,20 +18,20 @@ const C16 = {
     ].join(', '),
     PORTAL_SPAWN: [
         "id", "created_at", "'PortalSpawn' AS type", "display_name", "location",
-        "user_id", "NULL AS time", "NULL AS world_id", "world_name",
+        "user_id", "CAST(NULL AS BIGINT) AS time", "NULL AS world_id", "world_name",
         "NULL AS group_name", "instance_id", "NULL AS video_url",
         "NULL AS video_name", "NULL AS video_id", "NULL AS resource_url",
         "NULL AS resource_type"
     ].join(', '),
     VIDEO_PLAY: [
         "id", "created_at", "'VideoPlay' AS type", "display_name", "location",
-        "user_id", "NULL AS time", "NULL AS world_id", "NULL AS world_name",
+        "user_id", "CAST(NULL AS BIGINT) AS time", "NULL AS world_id", "NULL AS world_name",
         "NULL AS group_name", "NULL AS instance_id", "video_url", "video_name",
         "video_id", "NULL AS resource_url", "NULL AS resource_type"
     ].join(', '),
     RESOURCE_LOAD: [
         "id", "created_at", "resource_type AS type", "NULL AS display_name",
-        "location", "NULL AS user_id", "NULL AS time", "NULL AS world_id",
+        "location", "NULL AS user_id", "CAST(NULL AS BIGINT) AS time", "NULL AS world_id",
         "NULL AS world_name", "NULL AS group_name", "NULL AS instance_id",
         "NULL AS video_url", "NULL AS video_name", "NULL AS video_id",
         "resource_url", "resource_type"
@@ -41,7 +41,7 @@ const C16 = {
 const C18_TAIL = ', NULL AS data, NULL AS message';
 const C18_EVENT = [
     "id", "created_at", "'Event' AS type", "NULL AS display_name",
-    "NULL AS location", "NULL AS user_id", "NULL AS time",
+    "NULL AS location", "NULL AS user_id", "CAST(NULL AS BIGINT) AS time",
     "NULL AS world_id", "NULL AS world_name", "NULL AS group_name",
     "NULL AS instance_id", "NULL AS video_url", "NULL AS video_name",
     "NULL AS video_id", "NULL AS resource_url", "NULL AS resource_type",
@@ -49,7 +49,7 @@ const C18_EVENT = [
 ].join(', ');
 const C18_EXTERNAL = [
     "id", "created_at", "'External' AS type", "display_name", "location",
-    "user_id", "NULL AS time", "NULL AS world_id", "NULL AS world_name",
+    "user_id", "CAST(NULL AS BIGINT) AS time", "NULL AS world_id", "NULL AS world_name",
     "NULL AS group_name", "NULL AS instance_id", "NULL AS video_url",
     "NULL AS video_name", "NULL AS video_id", "NULL AS resource_url",
     "NULL AS resource_type", "NULL AS data", "message"
