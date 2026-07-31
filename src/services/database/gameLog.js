@@ -450,8 +450,11 @@ const gameLog = {
 
     async getRecentlyMetUsers(currentUserId, limit = 8) {
         const rows = await adapter.selectGroupBy('gamelog_join_leave', {
-            columns: ['display_name', 'user_id'],
-            aggregates: [{ expr: 'MAX(created_at)', alias: 'last_seen' }],
+            columns: ['user_id'],
+            aggregates: [
+                { expr: 'MAX(display_name)', alias: 'display_name' },
+                { expr: 'MAX(created_at)', alias: 'last_seen' }
+            ],
             groupBy: ['user_id'],
             where: "(type = 'OnPlayerJoined' OR type = 'OnPlayerLeft') AND user_id != @currentUserId AND user_id IS NOT NULL AND user_id != ''",
             params: { currentUserId },
@@ -459,16 +462,20 @@ const gameLog = {
             limit
         });
         return rows.map((row) => ({
-            displayName: row[0],
-            userId: row[1],
+            displayName: row[1],
+            userId: row[0],
             lastSeen: row[2]
         }));
     },
 
     async getRecentlyJoinedLocations(limit = 10) {
         const rows = await adapter.selectGroupBy('gamelog_location', {
-            columns: ['world_id', 'world_name', 'location'],
-            aggregates: [{ expr: 'MAX(created_at)', alias: 'last_visited' }],
+            columns: ['world_id'],
+            aggregates: [
+                { expr: 'MAX(world_name)', alias: 'world_name' },
+                { expr: 'MAX(location)', alias: 'location' },
+                { expr: 'MAX(created_at)', alias: 'last_visited' }
+            ],
             groupBy: ['world_id'],
             where: "world_id IS NOT NULL AND world_id != ''",
             order: 'MAX(id) DESC',
@@ -562,8 +569,9 @@ const gameLog = {
 
         // Standard SQL GROUP BY with dynamic IN lists
         const rows = await adapter.selectGroupBy('gamelog_join_leave', {
-            columns: ['created_at', 'user_id', 'display_name'],
+            columns: ['user_id', 'display_name'],
             aggregates: [
+                { expr: 'MAX(created_at)', alias: 'last_seen' },
                 { expr: 'SUM(time)', alias: 'timeSpent' },
                 { expr: 'COUNT(DISTINCT location)', alias: 'joinCount' },
                 { expr: 'MAX(id)', alias: 'max_id' }
@@ -575,12 +583,12 @@ const gameLog = {
         });
 
         return rows.map((dbRow) => ({
-            // Position: [created_at, user_id, display_name, timeSpent, joinCount, max_id]
-            lastSeen: dbRow[0],
-            userId: dbRow[1],
+            // Position: [user_id, display_name, last_seen, timeSpent, joinCount, max_id]
+            lastSeen: dbRow[2],
+            userId: dbRow[0],
             timeSpent: dbRow[3],
             joinCount: dbRow[4],
-            displayName: dbRow[2]
+            displayName: dbRow[1]
         }));
     },
 
@@ -1518,8 +1526,9 @@ const gameLog = {
         }
         // Standard SQL GROUP BY with portable ISO string filter
         const rows = await adapter.selectGroupBy('gamelog_location', {
-            columns: ['world_id', 'world_name'],
+            columns: ['world_id'],
             aggregates: [
+                { expr: 'MAX(world_name)', alias: 'world_name' },
                 { expr: 'COUNT(*)', alias: 'visit_count' },
                 { expr: 'SUM(time)', alias: 'total_time' }
             ],
@@ -1950,12 +1959,9 @@ const gameLog = {
     async getRelationshipTimelineData() {
         // Standard SQL: SUBSTR for date truncation (portable ISO string slicing)
         const rows = await adapter.selectGroupBy('gamelog_join_leave', {
-            columns: [
-                'user_id',
-                'display_name',
-                'SUBSTR(created_at, 1, 10) AS day'
-            ],
+            columns: ['user_id', 'SUBSTR(created_at, 1, 10) AS day'],
             aggregates: [
+                { expr: 'MAX(display_name)', alias: 'display_name' },
                 { expr: 'SUM(time)', alias: 'total_time' },
                 { expr: 'COUNT(DISTINCT location)', alias: 'joinCount' }
             ],
@@ -1966,8 +1972,8 @@ const gameLog = {
         });
         return rows.map((row) => ({
             userId: row[0],
-            displayName: row[1],
-            day: row[2],
+            day: row[1],
+            displayName: row[2],
             totalTime: row[3],
             joinCount: row[4]
         }));

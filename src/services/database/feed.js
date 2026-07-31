@@ -789,10 +789,10 @@ const feed = {
 
         const mainRows = await adapter.selectGroupBy(gpsTable, {
             columns: [
-                `${adapter.sqlExtractWorldId('location')} AS world_id`,
-                'world_name'
+                `${adapter.sqlExtractWorldId('location')} AS world_id`
             ],
             aggregates: [
+                { expr: 'MAX(world_name)', alias: 'world_name' },
                 { expr: 'COUNT(*)', alias: 'visit_count' },
                 { expr: 'COUNT(DISTINCT user_id)', alias: 'unique_friends' },
                 { expr: 'MAX(created_at)', alias: 'last_visited' }
@@ -860,8 +860,9 @@ const feed = {
         const rows = await adapter.selectGroupBy(
             adapter.userTable(dbVars.userPrefix, 'feed_gps'),
             {
-                columns: ['user_id', 'display_name'],
+                columns: ['user_id'],
                 aggregates: [
+                    { expr: 'MAX(display_name)', alias: 'display_name' },
                     { expr: 'COUNT(*)', alias: 'visit_count' },
                     { expr: 'MAX(created_at)', alias: 'last_visit' }
                 ],

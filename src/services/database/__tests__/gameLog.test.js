@@ -209,3 +209,84 @@ describe('gameLog.getMyTopWorlds', () => {
         expect(executeMock.mock.calls[0][2]).toHaveProperty('cutoff');
     });
 });
+
+// ── PG strict GROUP BY compliance ────────────────────────────────────
+//
+// PostgreSQL (unlike SQLite/MySQL) requires every non-aggregated SELECT
+// column to appear in GROUP BY. These tests pin the spec emitted by each
+// grouped query: bare non-grouped columns must be wrapped in aggregates.
+
+describe('gameLog strict GROUP BY compliance', () => {
+    let groupByMock;
+
+    beforeEach(() => {
+        groupByMock = vi
+            .spyOn(adapter, 'selectGroupBy')
+            .mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        groupByMock.mockRestore();
+    });
+
+    const specOf = () => groupByMock.mock.calls[0][1];
+
+    test('getRecentlyMetUsers: display_name aggregated, not bare', async () => {
+        await gameLog.getRecentlyMetUsers('usr_me', 8);
+        const spec = specOf();
+        expect(spec.groupBy).toEqual(['user_id']);
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(display_name)',
+            alias: 'display_name'
+        });
+        expect(spec.columns).toEqual(['user_id']);
+    });
+
+    test('getRecentlyJoinedLocations: world_name/location aggregated, not bare', async () => {
+        await gameLog.getRecentlyJoinedLocations(10);
+        const spec = specOf();
+        expect(spec.groupBy).toEqual(['world_id']);
+        expect(spec.columns).toEqual(['world_id']);
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(world_name)',
+            alias: 'world_name'
+        });
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(location)',
+            alias: 'location'
+        });
+    });
+
+    test('getAllUserStats: created_at aggregated via MAX, not bare', async () => {
+        await gameLog.getAllUserStats(['usr_a'], ['Alice']);
+        const spec = specOf();
+        expect(spec.groupBy).toEqual(['user_id', 'display_name']);
+        expect(spec.columns).toEqual(['user_id', 'display_name']);
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(created_at)',
+            alias: 'last_seen'
+        });
+    });
+
+    test('getMyTopWorlds: world_name aggregated, not bare', async () => {
+        await gameLog.getMyTopWorlds(30, 5, 'time', '');
+        const spec = specOf();
+        expect(spec.groupBy).toEqual(['world_id']);
+        expect(spec.columns).toEqual(['world_id']);
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(world_name)',
+            alias: 'world_name'
+        });
+    });
+
+    test('getRelationshipTimelineData: display_name aggregated, not bare', async () => {
+        await gameLog.getRelationshipTimelineData();
+        const spec = specOf();
+        expect(spec.groupBy).toEqual(['user_id', 'day']);
+        expect(spec.columns).toEqual(['user_id', 'SUBSTR(created_at, 1, 10) AS day']);
+        expect(spec.aggregates).toContainEqual({
+            expr: 'MAX(display_name)',
+            alias: 'display_name'
+        });
+    });
+});
