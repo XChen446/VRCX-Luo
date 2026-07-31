@@ -467,3 +467,123 @@ describe('pullEngine — guard + 行数校验', () => {
     });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// 5. PG 分支(push/pull 对称性修复 A2/A6)
+// ─────────────────────────────────────────────────────────────────────────
+// PG 分支:listGlobalTablesTypes 枚举 public schema 的全部表(白名单 + 非
+// 白名单),pull 引擎须按白名单过滤——已知 global 表进 global 组,其余进
+// §5 mirror 桶(按 schema 限定名 `public.{name}` 键控 srcSchemaMap,
+// mirror 的 dstTable 用 stripSchemaPrefix 还原裸名)。SQLite 内存库无法
+// 建 `public.X` 表,故 mock `execute` 把限定名翻译回裸名后再交给真实
+// MemorySQLiteAdapter 执行。
+
+describe('pullEngine — PG 分支(白名单过滤 + mirror 兜底)', () => {
+    /** @param {string} sql */
+    const translateSql = (sql) =>
+        sql
+            .replace(/public\.([a-z0-9_]+)/gi, '$1')
+            .replace(/account_([a-z0-9]+)\.([a-z0-9_]+)/gi, '$1_$2');
+
+    function usePgEngine() {
+        Object.defineProperty(srcAdapter, 'engineType', {
+            get: () => 'postgresql',
+            configurable: true
+        });
+    }
+
+    /**
+     * 安装 PG 源 mock:listGlobalTablesTypes / listTablesTypes 直接返回
+     * 给定条目,execute 用 translateSql 包装(先 bind 真实实现再 spy)。
+     * listGlobalTablesTypes 不在 SQLiteAdapter 原型上(仅 PgSQLAdapter
+     * 有),故用直接赋值而非 vi.spyOn。
+     * @param {{globalTables?: Array, userTables?: Array}} [mocks]
+     */
+    function mockPgSource({ globalTables = [], userTables = [] } = {}) {
+        const origExecute = srcAdapter.execute.bind(srcAdapter);
+        vi.spyOn(srcAdapter, 'execute').mockImplementation((callback, sql, args) =>
+            origExecute(callback, translateSql(sql), args)
+        );
+        srcAdapter.listGlobalTablesTypes = vi
+            .fn()
+            .mockResolvedValue(globalTables);
+        srcAdapter.listTablesTypes = vi.fn().mockResolvedValue(userTables);
+    }
+
+    test('PG 源:public 含白名单表 + 1 张非白名单表 → 非白名单进 mirror 桶(A2/A6)', async () => {
+        usePgEngine();
+        await srcAdapter.initGlobalSchema();
+        await srcAdapter.createTable('custom_extra', [
+            { name: 'id', type: 'INTEGER', constraints: 'PRIMARY KEY' },
+            { name: 'val', type: 'TEXT' }
+        ]);
+        for (let i = 1; i <= 2; i++) {
+            await srcAdapter.insert('cache_avatar', {
+                id: `avt_${i}`,
+                added_at: '2024-01-01',
+                author_id: 'a',
+                author_name: 'a',
+                created_at: '2024-01-01',
+                description: 'd',
+                image_url: 'u',
+                name: `Avatar${i}`,
+                release_status: 'public',
+                thumbnail_image_url: 'tu',
+                updated_at: '2024-01-01',
+                version: 1
+            });
+            await srcAdapter.insert('custom_extra', { id: i, val: `v${i}` });
+        }
+
+        // 用真实列元数据(listTablesTypes)构造 mock 条目,避免手工拼错形状。
+        const allTables = await srcAdapter.listTablesTypes();
+        const cacheAvatar = allTables.find((t) => t.tableName === 'cache_avatar');
+        const customExtra = allTables.find((t) => t.tableName === 'custom_extra');
+        mockPgSource({
+            globalTables: [
+                { tableName: 'public.cache_avatar', columns: cacheAvatar.columns },
+                { tableName: 'public.custom_extra', columns: customExtra.columns }
+            ],
+            userTables: []
+        });
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        // global 组只有白名单内的 cache_avatar(1 张),custom_extra 落 mirror。
+        expect(result.globalTables).toBe(1);
+        expect(result.unknownTables).toBe(1);
+        expect(result.userTables).toBe(0);
+        expect(result.rowsCopied).toBe(4); // 2 + 2
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('cache_avatar')).toBe(2);
+        expect(await dstCount('custom_extra')).toBe(2);
+    });
+
+    test('PG 源:account_* 用户表走 per-prefix 事务', async () => {
+        usePgEngine();
+        await srcAdapter.initGlobalSchema();
+        await srcAdapter.initUserSchema('abc');
+        await srcAdapter.insert('abc_notes', {
+            user_id: 'u1',
+            display_name: 'Alice',
+            note: 'hello',
+            created_at: '2024-01-01'
+        });
+
+        const allTables = await srcAdapter.listTablesTypes();
+        const notes = allTables.find((t) => t.tableName === 'abc_notes');
+        mockPgSource({
+            globalTables: [],
+            userTables: [{ tableName: 'account_abc.notes', columns: notes.columns }]
+        });
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        expect(result.globalTables).toBe(0);
+        expect(result.userTables).toBe(1);
+        expect(result.unknownTables).toBe(0);
+        expect(result.rowsCopied).toBe(1);
+        expect(result.errors).toEqual([]);
+        expect(await dstCount('abc_notes')).toBe(1);
+    });
+});
+

@@ -20,6 +20,9 @@
 // we probe for the PG-specific `listGlobalTablesTypes` extension and fall
 // back to deriving global tables from the `GLOBAL_TABLES` whitelist for
 // MySQL/SQLite (which enumerate all tables flatly through `listTablesTypes`).
+// The PG branch whitelist-filters the `listGlobalTablesTypes` result
+// (public-schema enumeration covers every table, known or not);
+// non-whitelist `public` tables fall into the §5 mirror bucket.
 //
 // Design constraints honoured here (mirrors `pushEngine.js`):
 //   - The source is the live singleton `adapter` only — there is no
@@ -35,10 +38,10 @@
 //     whole pull. Tables within a group share one transaction (atomic +
 //     1 fsync per group instead of per-batch).
 //   - Row-count verification per table; deeper sampling left to QA.
-//   - DATA-INTEGRITY PRIORITY: the 16 global + 22 user base-name whitelists
+//   - DATA-INTEGRITY PRIORITY: the 18 global + 22 user base-name whitelists
 //     cover the *known* schema, but the backup MUST NOT silently drop tables
-//     that fall outside them (upstream additions, legacy tables, the
-//     `configs` JSON store, etc.). After the known tables are copied, every
+//     that fall outside them (upstream additions, legacy tables, etc.).
+//     After the known tables are copied, every
 //     remaining source table is mirrored into the destination: its column
 //     metadata is read from the source adapter's `listTablesTypes` and
 //     re-emitted as a `CREATE TABLE IF NOT EXISTS` via the destination
@@ -52,7 +55,7 @@
 import { adapter, createAdapter } from './adapter/index.js';
 
 /**
- * 16 global tables (public schema) — mirrors `pushEngine.js`'s
+ * 18 global tables (public schema) — mirrors `pushEngine.js`'s
  * `GLOBAL_TABLES` and `SQLiteAdapter.initGlobalSchema` /
  * `PgSQLAdapter.initGlobalSchema` / `MySQLAdapter.initGlobalSchema`
  * table-for-table. Used to split the flat MySQL/SQLite `listTablesTypes`
@@ -129,7 +132,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 
 /**
  * @typedef {Object} PullResult
- * @property {number} globalTables - number of known global tables processed
+ * @property {number} globalTables - count of whitelist global tables actually enumerated on the source (MySQL: flat `listTablesTypes` whitelist filter; PG: `listGlobalTablesTypes` whitelist filter), ≤18; unlike push side which is always 18 (fixed whitelist iteration, includes missing tables)
  * @property {number} userTables - number of known user tables processed (across all prefixes)
  * @property {number} unknownTables - number of non-whitelist tables mirrored + copied (data-integrity safety net)
  * @property {number} rowsCopied - total rows copied
@@ -239,6 +242,10 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     // tables in per-account `account_*` schemas. Its `listTablesTypes`
     // only enumerates `account_*` tables (per its JSDoc), so we call the
     // PG-specific `listGlobalTablesTypes` extension for the global half.
+    // `listGlobalTablesTypes` enumerates EVERY `public`-schema table, so
+    // its result is whitelist-filtered below: known globals go to the
+    // global group, anything else (upstream additions, legacy tables) to
+    // the §5 mirror bucket — mirroring the MySQL branch's split.
     // MySQL/SQLite enumerate ALL tables flatly through `listTablesTypes`,
     // so we derive the global/user/unknown split from the whitelists.
     /** @type {Array<{tableName: string, columns: Array<{name: string, type: string, notNull: boolean, defaultValue: *, isPK: boolean, isHidden: boolean}>}>} */
@@ -268,7 +275,17 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         // PG: global tables in `public`, user tables in `account_*`.
         const pgGlobal = await pgGlobalExt.listGlobalTablesTypes();
         for (const entry of pgGlobal) {
-            globalSchema.push(entry);
+            // A2 fix: whitelist-filter the public-schema enumeration, mirroring
+            // the MySQL branch's global/unknown split. Known global tables go to
+            // the global group; anything else (upstream additions, legacy tables)
+            // is a data-integrity mirror candidate keyed by its schema-qualified
+            // name so §5 can recreate it from real column metadata (A6).
+            if (GLOBAL_TABLES.includes(stripSchemaPrefix(entry.tableName))) {
+                globalSchema.push(entry);
+            } else {
+                unknownNames.push(entry.tableName);
+                srcSchemaMap.set(entry.tableName, entry);
+            }
         }
         const pgUser = await src.listTablesTypes();
         for (const entry of pgUser) {
@@ -400,13 +417,17 @@ export async function pullToSqlite(dstConnStr, options = {}) {
     }
 
     // ── 5. Mirror + copy unknown tables (data-integrity safety net) ───
-    // Only the MySQL/SQLite branch produces unknowns (PG's
-    // `listTablesTypes` + `listGlobalTablesTypes` cover every table, so
-    // there is no unknown bucket for PG). Every source table not covered
-    // by the known global/user schema is recreated on the destination
-    // from its column metadata (column-level PK + type mapping only;
-    // UNIQUE/indexes are NOT re-created) then copied through the same
-    // paged `copyTable`. `configs` is copied under its original name.
+    // Both branches produce unknowns: the MySQL/SQLite branch from the
+    // flat `listTablesTypes` enumeration, the PG branch from non-whitelist
+    // `public` tables (A2 fix — its `listGlobalTablesTypes` enumerates
+    // every public table, not just the known globals). Every source table
+    // not covered by the known global/user schema is recreated on the
+    // destination from its column metadata (column-level PK + type mapping
+    // only; UNIQUE/indexes are NOT re-created) then copied through the
+    // same paged `copyTable`. The destination table is created under the
+    // schema-stripped bare name (`public.x` → `x`). `configs` ∈
+    // GLOBAL_TABLES, so it is copied in §3 under its original name, never
+    // through this bucket.
     if (unknownNames.length > 0) {
         console.warn(
             `[备份] 发现 ${unknownNames.length} 张非白名单表，将镜像保底复制: ` +
@@ -419,7 +440,7 @@ export async function pullToSqlite(dstConnStr, options = {}) {
         await dstAdapter.withTransaction(async () => {
             for (const srcTable of unknownNames) {
                 mirrorIdx += 1;
-                const dstTable = srcTable;
+                const dstTable = stripSchemaPrefix(srcTable);
                 const entry = srcSchemaMap.get(srcTable);
                 if (typeof onProgress === 'function') {
                     onProgress({

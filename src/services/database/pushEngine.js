@@ -36,10 +36,10 @@
 //     whole push. Tables within a group share one transaction (atomic +
 //     1 fsync per group instead of per-batch).
 //   - Row-count verification per table; deeper sampling left to S12.
-//   - DATA-INTEGRITY PRIORITY: the 16 global + 22 user base-name whitelists
+//   - DATA-INTEGRITY PRIORITY: the 18 global + 22 user base-name whitelists
 //     cover the *known* schema, but the push MUST NOT silently drop tables
-//     that fall outside them (upstream additions, legacy tables, the
-//     `configs` JSON store, etc.). After the known tables are copied, every
+//     that fall outside them (upstream additions, legacy tables, etc.).
+//     After the known tables are copied, every
 //     remaining source table is mirrored into the destination: its column
 //     metadata is read from PRAGMA `table_xinfo` and re-emitted as a
 //     `CREATE TABLE IF NOT EXISTS` via the destination adapter's
@@ -47,17 +47,18 @@
 //     rows are copied through the same paged `copyTable` path. Constraints
 //     are mirrored at column-level only (single-col PK inline, composite PK
 //     as a table-level `PRIMARY KEY(...)` clause; UNIQUE/indexes are NOT
-//     re-created — recovery-time concerns). `configs` is copied under its
-//     original name: `bulkInsert('ignore')` preserves the destination's
-//     pre-existing `config:schema_version` (written by `runMigrations`
-//     before this user-triggered push), so no boot-state pollution; each
-//     mirrored table is warn-logged so operators can see which tables the
-//     safety net preserved.
+//     re-created — recovery-time concerns). `configs` ∈ GLOBAL_TABLES, so it
+//     is copied in §3 (the global group) under its original name:
+//     `bulkInsert('ignore')` preserves the destination's pre-existing
+//     `config:schema_version` (written by `runMigrations` before this
+//     user-triggered push), so no boot-state pollution. Each mirrored table
+//     in §6 is warn-logged so operators can see which tables the safety
+//     net preserved.
 
 import { adapter, createAdapter } from './adapter/index.js';
 
 /**
- * 16 global tables (public schema) — mirrors `SQLiteAdapter.initGlobalSchema`
+ * 18 global tables (public schema) — mirrors `SQLiteAdapter.initGlobalSchema`
  * (L985-1049), `PgSQLAdapter.initGlobalSchema` (L1293-1341) and
  * `MySQLAdapter.initGlobalSchema` table-for-table. Order matches the
  * schema-init order so the push log reads naturally.
@@ -139,7 +140,7 @@ const USER_TABLE_NAMES_BY_LENGTH_DESC = [...USER_TABLE_NAMES].sort(
 
 /**
  * @typedef {Object} PushResult
- * @property {number} globalTables - number of known global tables processed
+ * @property {number} globalTables - fixed whitelist iteration count, always 18 (source-missing tables still count as 0-row copies); unlike pull's "actually-enumerated whitelist count (≤18)" semantics
  * @property {number} userTables - number of known user tables processed (across all prefixes)
  * @property {number} unknownTables - number of non-whitelist tables mirrored + copied (data-integrity safety net)
  * @property {number} rowsCopied - total rows copied
@@ -274,8 +275,8 @@ export async function pushFromSqlite(
     // ── 2. Ensure destination global schema exists ───────────────────
     await dst.initGlobalSchema();
 
-    // ── 3. Push global tables (16, public schema) ─────────────────
-    // 整组包一个事务:16 张全局表要么全成功要么全回滚,1 次 fsync。
+    // ── 3. Push global tables (18, public schema) ─────────────────
+    // 整组包一个事务:18 张全局表要么全成功要么全回滚,1 次 fsync。
     const globalTotal = GLOBAL_TABLES.length;
     let globalIdx = 0;
     try {
@@ -309,14 +310,14 @@ export async function pushFromSqlite(
 
     // ── 4. Discover user tables + unknown tables from source SQLite ──
     // Known user tables are grouped by prefix so `initUserSchema(prefix)`
-    // runs once per prefix. Tables that match NEITHER the 16 global names
+    // runs once per prefix. Tables that match NEITHER the 18 global names
     // NOR any of the 22 user base-name suffixes are collected separately as
     // "unknown" — they are mirrored + copied in §6 so no source data is
     // silently dropped (data-integrity priority). `sqlite_*` are already
-    // excluded by `listTablesTypes`; `configs` is NOT skipped here: it flows
-    // into the unknown bucket and is mirrored under its original name in §6
-    // (merged into the destination's live `configs` via `bulkInsert('ignore')`,
-    // which preserves any keys the new engine already wrote — see §6).
+    // excluded by `listTablesTypes`; `configs` needs no special-casing here:
+    // it is a member of `GLOBAL_TABLES` (see §3), so this loop skips it —
+    // the global group copies it with `bulkInsert('ignore')`, preserving any
+    // keys the new engine already wrote (e.g. `config:schema_version`).
     //
     // M2: reuse `srcSchema` cached in §1 (no second listTablesTypes call).
     const tables = srcSchema;
