@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -45,6 +46,13 @@ namespace VRCX
         private int _pinnedActive;
         private int _maxPoolSize;
         private DateTime _lastHealthCheck;
+
+        // 反射驱动真值(MySqlConnector 2.6.1 内部结构,懒初始化,失败静默回退估算):
+        // _idleSessionsField = ConnectionPool.m_sessions(LinkedList<ServerSession>)
+        // _sessionSemaphoreField = ConnectionPool.m_sessionSemaphore(SemaphoreSlim)
+        private bool _poolStatsReflected;
+        private FieldInfo? _idleSessionsField;
+        private FieldInfo? _sessionSemaphoreField;
 
         // ── Transaction pinning ────────────────────────────────────────────
         // 与 PostgreSQL.cs 对称:_pinned Map 持有借出的连接,sliding Timer
@@ -801,14 +809,18 @@ namespace VRCX
         ///   max               = 连接池上限
         ///
         /// 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
-        ///   totalOpen  = 池中当前存活的物理连接总数(MySQL 估算,无公开 API)
-        ///   idleInPool = 池中存活且空闲的物理连接数(MySQL 估算,无公开 API)
+        ///   totalOpen  = 池中当前存活的物理连接总数(MySQL 反射真值)
+        ///   idleInPool = 池中存活且空闲的物理连接数(MySQL 反射真值)
         /// MySqlConnector 公开 API 不暴露 idle/total 计数(仅 IsEmpty 布尔),
-        /// 反射 internal m_leasedSessions 强耦合驱动实现、版本易碎,故用估算:
+        /// 反射 internal 结构(2.6.1,升级驱动需重新验证)拿真值:
+        ///   idle   = m_sessions(LinkedList&lt;ServerSession&gt;).Count,空闲物理连接数
+        ///   leased = _maxPoolSize - m_sessionSemaphore.CurrentCount,已借出连接数
+        ///   totalOpen = idle + leased;idleInPool = idle
+        /// 驱动启动 ReaperTask(ConnectionIdleTimeout=300)主动回收超时空闲连接,
+        /// 故 idleInPool 随时间真实下降,不再是旧估算恒显 99/100 的配额假象。
+        /// 反射失败(字段改名/驱动升级)时静默回退估算:
         ///   totalOpen  = active + pinnedIdle + availableCapacity  (下界)
-        ///   idleInPool = availableCapacity  (空闲时偏高的下界)
-        /// 实际 idle-in-pool ≤ availableCapacity(可能因 ConnectionIdleTimeout
-        /// 被驱动 prune,但应用层不可见)。桌面负载下两者多数时刻相等。
+        ///   idleInPool = availableCapacity
         /// 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle。
         /// </summary>
         public string GetPoolStats()
@@ -816,8 +828,65 @@ namespace VRCX
             var active = _activeCount;
             var pinnedIdle = _pinned.Count - _pinnedActive;
             var availableCapacity = _maxPoolSize - _totalBorrowed;
+
+            // 默认估算:假设所有可用容量都是空闲物理连接(下界估算,偏高)。
+            // 反射成功后用真值覆盖。
             var totalOpen = active + pinnedIdle + availableCapacity;
             var idleInPool = availableCapacity;
+
+            // 反射 MySqlConnector.Core.ConnectionPool 拿真值。懒初始化,
+            // 字段解析失败即标记不再重试(PG 同款容错模式),回退估算。
+            if (!_poolStatsReflected)
+            {
+                try
+                {
+                    var poolType = typeof(MySqlDataSource).Assembly
+                        .GetType("MySqlConnector.Core.ConnectionPool");
+                    _idleSessionsField = poolType?.GetField(
+                        "m_sessions", BindingFlags.NonPublic | BindingFlags.Instance);
+                    _sessionSemaphoreField = poolType?.GetField(
+                        "m_sessionSemaphore", BindingFlags.NonPublic | BindingFlags.Instance);
+                }
+                catch
+                {
+                    _idleSessionsField = null;
+                    _sessionSemaphoreField = null;
+                }
+                _poolStatsReflected = true;
+            }
+
+            if (_dataSource != null && _idleSessionsField != null && _sessionSemaphoreField != null)
+            {
+                try
+                {
+                    // 2.6.1:MySqlDataSource 经 ConnectionPool.CreatePool 持有专属池实例,
+                    // 不注册进静态 s_pools 注册表(静态 GetPool 对 datasource 路径
+                    // 恒 miss,见 MySqlConnection 借出用 m_dataSource?.Pool),
+                    // 故反射 internal Pool 属性取池实例。
+                    var pool = typeof(MySqlDataSource)
+                        .GetProperty("Pool", BindingFlags.NonPublic | BindingFlags.Instance)
+                        ?.GetValue(_dataSource);
+                    if (pool != null)
+                    {
+                        // 池为 null(池未就绪)时不标记失败,下次调用重试;
+                        // 池实例存在即反射成功,数值为驱动真值。
+                        var idleSessions = _idleSessionsField.GetValue(pool) as ICollection;
+                        var semaphore = _sessionSemaphoreField.GetValue(pool) as SemaphoreSlim;
+                        if (idleSessions != null && semaphore != null)
+                        {
+                            var idle = idleSessions.Count;
+                            var leased = _maxPoolSize - semaphore.CurrentCount;
+                            idleInPool = idle;
+                            totalOpen = idle + leased;
+                        }
+                    }
+                }
+                catch
+                {
+                    // 反射执行失败(驱动版本变化/对象已 Dispose):保持估算值。
+                }
+            }
+
             var stats = new
             {
                 active,

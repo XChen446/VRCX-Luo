@@ -881,14 +881,18 @@ class EngineAdapter {
      * 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
      *   - `totalOpen`: total live physical connections in the pool
      *     (PG: reflected `PoolingDataSource.Statistics.Total` 真值;
-     *      MySQL/SQLite: 估算 = active + pinnedIdle + availableCapacity)
+     *      MySQL: reflected `ConnectionPool.m_sessions` + `m_sessionSemaphore` 真值;
+     *      SQLite: peak-borrowed 近似 = 并发借出历史峰值)
      *   - `idleInPool`: live-but-idle physical connections in the pool
      *     (PG: reflected `Statistics.Idle` 真值;
-     *      MySQL/SQLite: 估算 = availableCapacity)
+     *      MySQL: reflected `m_sessions.Count` 真值;
+     *      SQLite: `peak - 当前借出` 近似)
      *
      * 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle,
-     * 扩展字段仅供诊断/校验。驱动公开 API 不暴露物理连接生命周期事件,
-     * 因此 MySQL/SQLite 的扩展字段是下界估算(偏高),PG 是反射真值。
+     * 扩展字段仅供诊断/校验。驱动公开 API 不暴露物理连接生命周期事件:
+     * PG/MySQL 用反射读驱动内部计数(真值),SQLite 无池统计 API 且池中
+     * 空闲连接弱引用保存(GC 回收不可见),故用 peak-borrowed 上界近似。
+     * 反射失败/字段改名时 PG/MySQL 静默回退旧估算(下界、偏高)。
      *
      * @abstract
      * @returns {Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number, totalOpen: number, idleInPool: number }>}

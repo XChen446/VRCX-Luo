@@ -1164,6 +1164,9 @@ class SQLiteAdapter extends EngineAdapter {
         return this.executeNonQuery('PRAGMA optimize');
     }
 
+    // C# 侧用 peak-borrowed 近似(并发借出峰值)返回 totalOpen/idleInPool,
+    // 非估算也非真值——池无统计 API 且空闲连接弱引用(GC 回收不可见),
+    // 详见 Dotnet/SQLite.cs GetPoolStats。
     async getPoolStats() {
         const json = await SQLite.GetPoolStats();
         return json

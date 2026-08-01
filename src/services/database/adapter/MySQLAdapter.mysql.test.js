@@ -82,5 +82,31 @@ describeIntegration(
             expect(adapter.connectionString).toContain('User ID=root');
             expect(adapter.connectionString).toContain('Password=root');
         });
+
+        it('getPoolStats returns driver truth values after pool warm-up (MySQL reflection verifier)', async () => {
+            // 池统计真值化(设计文档 pool-stats-design):MySQL.cs GetPoolStats
+            // 反射 MySqlConnector 2.6.1 内部结构(m_sessions / m_sessionSemaphore)
+            // 拿驱动真值。真值下 idleInPool/totalOpen 是实际物理连接数(远小于 50);
+            // 反射失败(字段改名/驱动升级)或回退估算时是配额假象(99/100) → 变红,
+            // 此用例即"验证器",本地带 C# 桥环境(桌面运行 / dotnet + bridge 测试
+            // 环境)下每次真值化改动需保持绿。
+            // 需要真实 C# 桥:vitest 的 noopAsync stub 下 MySQL.Ping() 返回 ''(falsy),
+            // 直接跳过(CI test_mysql job 无 .NET 桥,与文件头注释的桥限制一致)。
+            const bridgeAlive = Boolean(await globalThis.MySQL.Ping());
+            if (!bridgeAlive) return;
+
+            // 无 connection 参数 → 走单例 _dataSource 池路径(非 ExecuteJsonOnConnection),
+            // 两次查询确保池已建物理连接(min=1 常驻)。
+            const adapter = new MySQLAdapter();
+            await adapter.execute(() => {}, 'SELECT 1');
+            await adapter.execute(() => {}, 'SELECT 1');
+
+            const stats = await adapter.getPoolStats();
+            expect(stats.max).toBeGreaterThanOrEqual(50);
+            expect(stats.idleInPool).toBeGreaterThanOrEqual(0);
+            expect(stats.idleInPool).toBeLessThan(50);
+            expect(stats.totalOpen).toBeGreaterThanOrEqual(1);
+            expect(stats.totalOpen).toBeLessThan(50);
+        });
     }
 );

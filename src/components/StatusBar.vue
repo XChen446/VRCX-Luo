@@ -965,7 +965,7 @@
             const pinnedIdle = stats.pinnedIdle || 0;
             const availableCapacity = stats.availableCapacity || 0;
             const max = stats.max || 0;
-            // 扩展字段(C# 提供,PG 真值 / MySQL/SQLite 估算);缺失时回退基础字段自算
+            // 扩展字段(C# 提供,PG/MySQL 反射真值 / SQLite 近似);缺失时回退基础字段自算
             // idleInPool = totalOpen - active - pinnedIdle;无 totalOpen 时退化为 availableCapacity
             const totalOpen = stats.totalOpen != null ? stats.totalOpen : active + pinnedIdle + availableCapacity;
             const idleInPool = stats.idleInPool != null ? stats.idleInPool : totalOpen - active - pinnedIdle;
@@ -1060,7 +1060,7 @@
         };
 
         // idle-in-pool (green), pinned-idle (yellow/amber), active (red)
-        // 绿线画池中空闲物理连接数(PG 反射真值 / MySQL/SQLite 估算),
+        // 绿线画池中空闲物理连接数(PG/MySQL 反射真值 / SQLite 近似),
         // 而非 availableCapacity(可用容量 = 池空 + 未用配额)。后者空闲时
         // 恒=max 对波线无信息量,作为 tooltip 补充信息展示即可。
         drawLine(dbIdleInPoolHistory.value, '#22c55e', 0.7);

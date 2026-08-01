@@ -1277,6 +1277,8 @@ class MySQLAdapter extends EngineAdapter {
         return json ? JSON.parse(json) : { connected: false };
     }
 
+    // C# 侧反射 MySqlConnector 内部计数(m_sessions / m_sessionSemaphore)
+    // 返回驱动真值(2.6.1);反射失败静默回退估算,详见 Dotnet/MySQL.cs GetPoolStats。
     async getPoolStats() {
         const json = await MySQL.GetPoolStats();
         return json

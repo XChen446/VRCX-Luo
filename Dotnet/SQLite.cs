@@ -19,6 +19,7 @@ namespace VRCX
 
         // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
         private int _totalBorrowed;
+        private int _peakBorrowed;
         private int _activeCount;
         private int _pinnedActive;
         private int _maxPoolSize;
@@ -475,7 +476,8 @@ namespace VRCX
                 try
                 {
                     var sw = Stopwatch.StartNew();
-                    Interlocked.Increment(ref _totalBorrowed);
+                    var b = Interlocked.Increment(ref _totalBorrowed);
+                    UpdatePeak(b);
                     using var conn = new SQLiteConnection(_connectionString);
                     conn.Open();
                     try
@@ -517,7 +519,8 @@ namespace VRCX
         {
             try
             {
-                Interlocked.Increment(ref _totalBorrowed);
+                var b = Interlocked.Increment(ref _totalBorrowed);
+                UpdatePeak(b);
                 using var conn = new SQLiteConnection(_connectionString);
                 conn.Open();
                 try
@@ -554,7 +557,8 @@ namespace VRCX
                 return ExecutePinned(typedConnId.Value, sql, args);
             }
             EnsureInitialized();
-            Interlocked.Increment(ref _totalBorrowed);
+            var b = Interlocked.Increment(ref _totalBorrowed);
+            UpdatePeak(b);
             using var connection = new SQLiteConnection(_connectionString);
             connection.Open();
             try
@@ -606,7 +610,8 @@ namespace VRCX
                 return ExecuteNonQueryPinned(typedConnId.Value, sql, args);
             }
             EnsureInitialized();
-            Interlocked.Increment(ref _totalBorrowed);
+            var b = Interlocked.Increment(ref _totalBorrowed);
+            UpdatePeak(b);
             using var connection = new SQLiteConnection(_connectionString);
             connection.Open();
             try
@@ -977,7 +982,8 @@ namespace VRCX
         {
             EnsureInitialized();
             var connId = Interlocked.Increment(ref _nextConnId);
-            Interlocked.Increment(ref _totalBorrowed);
+            var b = Interlocked.Increment(ref _totalBorrowed);
+            UpdatePeak(b);
             var conn = new SQLiteConnection(_connectionString);
             conn.Open();
             var holder = new TxHolder { Conn = conn };
@@ -1000,11 +1006,17 @@ namespace VRCX
         /// (the target connection), independent of the singleton _connectionString.
         /// Does NOT call EnsureInitialized — the target DB is independent of the
         /// singleton app DB and need not be open.
+        ///
+        /// 注意:外部连接串的借用计入主池 _totalBorrowed 并进 _peakBorrowed
+        /// (与既有计数哲学一致),迁移完成后 peak 抬高会持续反映在
+        /// GetPoolStats 的 idleInPool 上界近似,直到 ClearIdleConnections/重启。
+        /// 仅迁移场景(pullEngine)使用,显示级影响,可接受。
         /// </summary>
         public long BeginTransactionOnConnection(string connectionString)
         {
             var connId = Interlocked.Increment(ref _nextConnId);
-            Interlocked.Increment(ref _totalBorrowed);
+            var b = Interlocked.Increment(ref _totalBorrowed);
+            UpdatePeak(b);
             var conn = new SQLiteConnection(connectionString);
             conn.Open();
             var holder = new TxHolder { Conn = conn };
@@ -1105,6 +1117,17 @@ namespace VRCX
         // ── Pool stats ──────────────────────────────────────────────────────
 
         /// <summary>
+        /// CAS 循环更新 <c>_peakBorrowed</c>(Interlocked 无 Max 原语),
+        /// 每次池路径借出点 Increment 后调用,记录并发借出的历史峰值。
+        /// </summary>
+        private void UpdatePeak(int value)
+        {
+            int current;
+            while ((current = Volatile.Read(ref _peakBorrowed)) < value &&
+                   Interlocked.CompareExchange(ref _peakBorrowed, value, current) != current) { }
+        }
+
+        /// <summary>
         /// 返回当前连接池的三态 + 扩展快照,纯内存计数器读取,不涉及网络调用。
         /// JS 侧每秒采样一次,用于底部栏三色波线展示(Issue #14)。
         ///
@@ -1114,13 +1137,17 @@ namespace VRCX
         ///   availableCapacity = 可用容量(_maxPoolSize - _totalBorrowed)
         ///   max               = 连接池上限
         ///
-        /// 扩展字段(冗余校验,驱动版本变化可能失效,UI 不强依赖):
-        ///   totalOpen  = 池中当前存活的物理连接总数(SQLite 估算,无公开 API)
-        ///   idleInPool = 池中存活且空闲的物理连接数(SQLite 估算,无公开 API)
-        /// System.Data.SQLite 无任何连接池统计 API,池不自动 prune(连接常驻
-        /// 到 ClearAllPools),故估算与真值偏差小:
-        ///   totalOpen  = active + pinnedIdle + availableCapacity
-        ///   idleInPool = availableCapacity
+        /// 扩展字段(冗余校验,UI 不强依赖):
+        ///   totalOpen  = 池中物理连接数的上界近似(peak-borrowed)
+        ///   idleInPool = 池中空闲物理连接数的近似(peak - 当前借出)
+        /// System.Data.SQLite 无任何连接池统计 API,故用连接生命周期近似:
+        ///   _peakBorrowed = 自上次 ClearIdleConnections 以来并发借出的峰值
+        ///                   (每个池路径借出点 Increment 后 UpdatePeak 累计)
+        ///   totalOpen     = Volatile.Read(_peakBorrowed)
+        ///   idleInPool    = Math.Max(0, peak - _totalBorrowed)
+        /// 语义:池中空闲连接以弱引用保存,被 GC 回收不可见,故数字是"上界近似"
+        /// (不小于真实常驻连接数);驱动不主动回收空闲连接(连接常驻到
+        /// ClearAllPools 是有意设计),平时数字真实反映常驻连接数。
         /// 上层 JS 主用基础字段自算 idleInPool = totalOpen - active - pinnedIdle。
         /// </summary>
         public string GetPoolStats()
@@ -1128,8 +1155,9 @@ namespace VRCX
             var active = _activeCount;
             var pinnedIdle = _pinned.Count - _pinnedActive;
             var availableCapacity = _maxPoolSize - _totalBorrowed;
-            var totalOpen = active + pinnedIdle + availableCapacity;
-            var idleInPool = availableCapacity;
+            var peak = Volatile.Read(ref _peakBorrowed);
+            var totalOpen = peak;
+            var idleInPool = Math.Max(0, peak - _totalBorrowed);
             var stats = new
             {
                 active,
@@ -1150,6 +1178,10 @@ namespace VRCX
         public void ClearIdleConnections()
         {
             SQLiteConnection.ClearAllPools();
+            // 池已清空,常驻连接数归零,借出峰值同步归零,下次借出重新累计。
+            // Interlocked.Exchange 防与并发 UpdatePeak 的 CAS 竞态(普通写可能
+            // 覆盖晚到的 CAS 新峰值或残留旧峰值)。
+            Interlocked.Exchange(ref _peakBorrowed, 0);
         }
     }
 }
