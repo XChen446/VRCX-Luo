@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { MySQLAdapter } from './MySQLAdapter.js';
 
@@ -359,5 +359,68 @@ describe('createIndex 幂等(预检查 + 兜底)', () => {
         await expect(adapter.createIndex('idx_x', 't', ['c'])).rejects.toThrow(
             'some other error'
         );
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// CAST 方言映射:MySQL 的 CAST 不支持 TEXT / BIGINT 类型(仅 CHAR / SIGNED),
+// SQLite/PG 支持。feed.js / gameLog.js 的 UNION 查询用
+// `CAST(NULL AS TEXT)` / `CAST(NULL AS BIGINT)` 填充空列,模块加载时生成
+// 无法感知运行时 adapter —— 差异统一包裹在 MySQLAdapter 的 SQL 入口
+// (execute / executeNonQuery),业务模块零改动。
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('CAST 方言映射(_mapMySqlDialect)', () => {
+    /** @type {MySQLAdapter} */
+    let adapter;
+    /** @type {any} */
+    let savedMySQL;
+
+    beforeEach(() => {
+        adapter = new MySQLAdapter();
+        // 保留真实 execute / executeNonQuery 方法体 —— 生产路径里在 SQL
+        // 传给 C# 前调用 _mapMySqlDialect —— 只 stub 驱动边界
+        // (globalThis.MySQL)。若像其它 describe 那样整体 mock adapter
+        // 方法,真实方法体内的映射不会执行,断言将永远拿到原始 SQL。
+        savedMySQL = globalThis.MySQL;
+        globalThis.MySQL = {
+            // 非 connectionString 路径的 C# 绑定直接返回行数组(JSON 字符串
+            // 只用于 ExecuteJson* 变体),故 stub 用数组 [] 而非 '[]'。
+            Execute: vi.fn().mockResolvedValue([]),
+            ExecuteNonQuery: vi.fn().mockResolvedValue(0)
+        };
+    });
+
+    afterEach(() => {
+        globalThis.MySQL = savedMySQL;
+    });
+
+    test('execute 收到替换后的 SQL(TEXT→CHAR, BIGINT→SIGNED)', async () => {
+        const sql =
+            'SELECT CAST(NULL AS TEXT) AS status, CAST(NULL AS BIGINT) AS time FROM t';
+        await adapter.execute(() => {}, sql, {});
+        expect(globalThis.MySQL.Execute.mock.calls[0][0]).toBe(
+            'SELECT CAST(NULL AS CHAR) AS status, CAST(NULL AS SIGNED) AS time FROM t'
+        );
+    });
+
+    test('executeNonQuery 收到替换后的 SQL', async () => {
+        const sql = 'INSERT INTO t (a) VALUES (CAST(NULL AS TEXT))';
+        await adapter.executeNonQuery(sql, {});
+        expect(globalThis.MySQL.ExecuteNonQuery.mock.calls[0][0]).toBe(
+            'INSERT INTO t (a) VALUES (CAST(NULL AS CHAR))'
+        );
+    });
+
+    test('不含 CAST 的 SQL 原样透传', async () => {
+        const sql = 'SELECT id, created_at FROM t WHERE id = @id';
+        await adapter.execute(() => {}, sql, { id: 1 });
+        expect(globalThis.MySQL.Execute.mock.calls[0][0]).toBe(sql);
+    });
+
+    test('_mapMySqlDialect 幂等(重复调用无副作用)', () => {
+        const once = adapter._mapMySqlDialect('CAST(NULL AS TEXT)');
+        const twice = adapter._mapMySqlDialect(once);
+        expect(twice).toBe('CAST(NULL AS CHAR)');
     });
 });

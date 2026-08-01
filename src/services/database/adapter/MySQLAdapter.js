@@ -151,6 +151,27 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     /**
+     * @private Map engine-agnostic SQL fragments to MySQL dialect.
+     *
+     * MySQL 的 CAST 不支持 TEXT / BIGINT 类型(仅 CHAR / SIGNED 等),
+     * SQLite/PG 支持。feed.js / gameLog.js 的 UNION 查询用
+     * `CAST(NULL AS TEXT)` / `CAST(NULL AS BIGINT)` 填充空列 —— 在
+     * MySQL 上直接执行会语法错误。此处统一映射:
+     *   CAST(NULL AS TEXT)   → CAST(NULL AS CHAR)
+     *   CAST(NULL AS BIGINT) → CAST(NULL AS SIGNED)
+     * 值均为 NULL,类型语义不变(CHAR/SIGNED 与 VARCHAR/BIGINT 的 NULL
+     * 在 MySQL 宽松 UNION 合并下等价)。
+     *
+     * @param {string} sql
+     * @returns {string} MySQL-dialect SQL
+     */
+    _mapMySqlDialect(sql) {
+        return sql
+            .replaceAll('CAST(NULL AS TEXT)', 'CAST(NULL AS CHAR)')
+            .replaceAll('CAST(NULL AS BIGINT)', 'CAST(NULL AS SIGNED)');
+    }
+
+    /**
      * Execute raw SQL with row callback. Normalizes named-param keys.
      * @override
      * @param {(row: Array) => void} callback - called once per result row
@@ -159,6 +180,7 @@ class MySQLAdapter extends EngineAdapter {
      * @returns {Promise<void>}
      */
     async execute(callback, sql, args) {
+        sql = this._mapMySqlDialect(sql);
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
@@ -206,6 +228,7 @@ class MySQLAdapter extends EngineAdapter {
      * @returns {Promise<number>}
      */
     async executeNonQuery(sql, args) {
+        sql = this._mapMySqlDialect(sql);
         args = this._normalizeArgs(args);
         const connId = this._txStack.at(-1);
         try {
