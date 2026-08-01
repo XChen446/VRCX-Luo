@@ -817,12 +817,15 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     /**
-     * CREATE INDEX with idempotent error handling.
+     * CREATE INDEX with two-layer idempotency (pre-check + catch fallback).
      *
-     * MySQL does NOT support `CREATE INDEX IF NOT EXISTS` (MariaDB does).
-     * For MySQL, we attempt `CREATE INDEX` and catch error 1061
-     * ("Duplicate key name") to achieve idempotency — mirroring the
-     * migration runner's error-swallowing pattern for duplicate indexes.
+     * MySQL does NOT support `CREATE INDEX IF NOT EXISTS` (MariaDB does),
+     * and error-text-only idempotency is fragile: the C# bridge can reject
+     * with a bare string (no `Error.message`), which defeats a catch-only
+     * swallow. We first pre-check `information_schema.statistics` (standard
+     * in both MySQL 8.0 and MariaDB, no dialect differences) and skip when
+     * the index already exists; the catch remains as a TOCTOU fallback for
+     * concurrent starts that both pass the pre-check.
      *
      * @override
      * @param {string} indexName - index name
@@ -832,6 +835,20 @@ class MySQLAdapter extends EngineAdapter {
      * @returns {Promise<number>}
      */
     async createIndex(indexName, table, columns, unique = false) {
+        // MySQL 8.0 不支持 `CREATE INDEX IF NOT EXISTS`(MariaDB 支持)。
+        // 预检查 information_schema.statistics(MySQL 8.0 / MariaDB 标准表,
+        // 无方言差异):索引已存在则跳过,不依赖服务端错误消息文本。
+        let exists = false;
+        await this.execute(
+            (row) => {
+                exists = Number(row[0]) > 0;
+            },
+            'SELECT COUNT(*) FROM information_schema.statistics ' +
+                'WHERE table_schema = DATABASE() AND table_name = @table AND index_name = @index',
+            { table, index: indexName }
+        );
+        if (exists) return 0;
+
         const uniqueStr = unique ? 'UNIQUE ' : '';
         const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
         try {
@@ -839,9 +856,10 @@ class MySQLAdapter extends EngineAdapter {
                 `CREATE ${uniqueStr}INDEX ${indexName} ON ${table} (${colStr})`
             );
         } catch (e) {
-            if (e && e.message && e.message.includes('Duplicate key name')) {
-                return 0;
-            }
+            // 兜底:TOCTOU 竞态(并发启动都通过预检查)+ 未知 reject 形态。
+            // 用 String(e) 兜底纯字符串 reject(Error.message 不存在时)。
+            const errStr = e?.message ?? String(e);
+            if (errStr.includes('Duplicate key name')) return 0;
             throw e;
         }
     }
@@ -881,7 +899,7 @@ class MySQLAdapter extends EngineAdapter {
      *   - TEXT PRIMARY KEY → VARCHAR(255) PRIMARY KEY (MySQL disallows TEXT as PK)
      *   - Composite PK on TEXT columns → VARCHAR(255) (index prefix requirement)
      *   - Indexed TEXT columns → VARCHAR(255) (MySQL requires key length for TEXT)
-     *   - CREATE INDEX IF NOT EXISTS → this.createIndex() (idempotent via error catch)
+     *   - CREATE INDEX IF NOT EXISTS → this.createIndex() (idempotent via information_schema pre-check + catch fallback)
      *
      * @override
      * @param {string} prefix - user table prefix

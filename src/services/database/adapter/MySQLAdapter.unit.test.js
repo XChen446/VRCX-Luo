@@ -286,3 +286,78 @@ describe('SQL 构建器标识符转义', () => {
         });
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bug: MySQL 原生模式二次启动 `Duplicate key name` 冒泡(Uncaught in promise)
+// 旧实现靠 catch `e.message.includes('Duplicate key name')` 幂等,但 C# 桥
+// reject 形态可能是纯字符串(`e.message` 为 undefined)→ catch 失效冒泡。
+// 新实现双层幂等:先预检查 information_schema.statistics,已存在则跳过;
+// catch 兜底 TOCTOU 竞态 + `String(e)` 兼容纯字符串 reject。
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('createIndex 幂等(预检查 + 兜底)', () => {
+    /** @type {MySQLAdapter} */
+    let adapter;
+    beforeEach(() => {
+        adapter = new MySQLAdapter();
+        adapter.executeNonQuery = vi.fn().mockResolvedValue(0);
+        adapter.execute = vi.fn().mockImplementation(async (cb) => cb(['0']));
+    });
+
+    test('索引已存在(预检查 count>0)→ 跳过,不调 executeNonQuery', async () => {
+        adapter.execute = vi.fn().mockImplementation(async (cb) => cb(['1']));
+        const result = await adapter.createIndex('idx_x', 't', ['c']);
+        expect(result).toBe(0);
+        expect(adapter.executeNonQuery).not.toHaveBeenCalled();
+    });
+
+    test('索引不存在 → CREATE INDEX 执行且 SQL 正确', async () => {
+        await adapter.createIndex('idx_x', 't', ['a', 'b']);
+        expect(adapter.executeNonQuery).toHaveBeenCalledTimes(1);
+        expect(adapter.executeNonQuery.mock.calls[0][0]).toBe(
+            'CREATE INDEX idx_x ON t (a, b)'
+        );
+        // unique 变体
+        await adapter.createIndex('idx_u', 't', ['c'], true);
+        expect(adapter.executeNonQuery.mock.calls[1][0]).toBe(
+            'CREATE UNIQUE INDEX idx_u ON t (c)'
+        );
+    });
+
+    test('预检查参数为命名参数(table/index)', async () => {
+        await adapter.createIndex('idx_x', 't', ['c']);
+        expect(adapter.execute.mock.calls[0][1]).toContain('@table');
+        expect(adapter.execute.mock.calls[0][2]).toEqual({
+            table: 't',
+            index: 'idx_x'
+        });
+    });
+
+    test('纯字符串 reject 含 Duplicate key name → 吞掉返回 0', async () => {
+        adapter.executeNonQuery = vi.fn().mockRejectedValue(
+            "MySqlConnector.MySqlException (0x80004005): Duplicate key name 'idx_x'"
+        );
+        const result = await adapter.createIndex('idx_x', 't', ['c']);
+        expect(result).toBe(0);
+    });
+
+    test('Error 对象 reject 含 Duplicate key name(完整 CefSharp 链)→ 吞掉', async () => {
+        adapter.executeNonQuery = vi.fn().mockRejectedValue(
+            new Error(
+                'System.InvalidOperationException: Could not execute method: ... \n' +
+                    " ---> MySqlConnector.MySqlException (0x80004005): Duplicate key name 'idx_x'"
+            )
+        );
+        const result = await adapter.createIndex('idx_x', 't', ['c']);
+        expect(result).toBe(0);
+    });
+
+    test('无关错误 → 重新抛出', async () => {
+        adapter.executeNonQuery = vi.fn().mockRejectedValue(
+            new Error('some other error')
+        );
+        await expect(adapter.createIndex('idx_x', 't', ['c'])).rejects.toThrow(
+            'some other error'
+        );
+    });
+});
