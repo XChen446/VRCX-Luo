@@ -31,10 +31,16 @@
            1. Stubs' by-design fields (Program.AppDataDirectory / ConfigLocation are assigned
               in test Setup, not at field declaration; VRCXStorage.Get intentionally returns
               null as fail-fast sentinel).
-            2. Link'd SQLite.cs _connectionString field (initialized in Init(), not ctor; security
-               tests never call Init() so the field stays null at test time — by design).
+           2. Link'd SQLite.cs _connectionString field (initialized in Init(), not ctor; security
+              tests never call Init() so the field stays null at test time — by design).
+         CS8601 (possible null assignment) is suppressed because the DBNull normalization
+         (`reader.IsDBNull(i) ? null : reader.GetValue(i)`, L583/683/898) intentionally puts
+         null into the object[] row buffer — the marshaling layer must carry NULL to JS.
+         This mirrors the long-standing MySQL.cs L353 pattern (VRCX-Cef.csproj disables
+         warnings entirely via WarningLevel=0; the linked test build needs the explicit
+         suppression).
          Task constraint forbids modifying stub content; suppressing here is the minimal fix. -->
-    <NoWarn>CS8618;CS8603</NoWarn>
+    <NoWarn>CS8618;CS8603;CS8601</NoWarn>
     <!-- 不设 EnableWindowsTargeting，TFM 无 -windows 后缀，可在 Linux CI 跑 -->
   </PropertyGroup>
 

@@ -527,7 +527,14 @@ async function copyTable(
     }
     const visibleColumns = tableMeta.columns.filter((c) => !c.isHidden);
     if (visibleColumns.length === 0) return 0;
-    const colList = visibleColumns.map((c) => c.name).join(', ');
+    // MySQL 目标侧列名(key 是 MySQL 保留字)需反引号转义;此处为对称防御,
+    // 实际 push 源恒为 SQLite(无 quoteIdent → 回退裸名,key 在 SQLite 合法)。
+    const srcQuoteIdent =
+        /** @type {{ quoteIdent?: (name: string) => string } | null} */ (
+            srcAdapter
+        ).quoteIdent;
+    const quote = (name) => srcQuoteIdent?.(name) ?? name;
+    const colList = visibleColumns.map((c) => quote(c.name)).join(', ');
 
     // ── 游标分页(keyset pagination)─────────────────────────────────
     // 旧实现用 LIMIT/OFFSET,OFFSET 是"扫描并丢弃",第 N 页扫描
@@ -549,10 +556,10 @@ async function copyTable(
         let params;
         if (useCursor) {
             if (lastPk === null) {
-                sql = `SELECT ${colList} FROM ${srcTable} ORDER BY ${pkCol} LIMIT @limit`;
+                sql = `SELECT ${colList} FROM ${srcTable} ORDER BY ${quote(pkCol)} LIMIT @limit`;
                 params = { limit: batchSize };
             } else {
-                sql = `SELECT ${colList} FROM ${srcTable} WHERE ${pkCol} > @lastPk ORDER BY ${pkCol} LIMIT @limit`;
+                sql = `SELECT ${colList} FROM ${srcTable} WHERE ${quote(pkCol)} > @lastPk ORDER BY ${quote(pkCol)} LIMIT @limit`;
                 params = { limit: batchSize, lastPk };
             }
         } else {
@@ -565,7 +572,10 @@ async function copyTable(
                 // (C# ExecuteJson → object[][] → JSON.parse → array).
                 const obj = {};
                 visibleColumns.forEach((col, i) => {
-                    obj[col.name] = row[i];
+                    // DBNull 经 C# 封送/JSON 序列化为 null/undefined,统一
+                    // 兜底为 null,避免 undefined 作为参数传回 C# 时被跳过
+                    // (MySqlConnector: "Parameter '@x' must be defined")。
+                    obj[col.name] = row[i] ?? null;
                 });
                 batch.push(obj);
             },

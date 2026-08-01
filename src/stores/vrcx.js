@@ -516,7 +516,9 @@ export const useVrcxStore = defineStore('Vrcx', () => {
         const rowsAsObjects = dataRows.map((row) => {
             const obj = {};
             visibleColumns.forEach((col, i) => {
-                obj[col.name] = row[i];
+                // DBNull 经 C# 封送为 undefined,兜底为 null 保证参数对象
+                // 无 undefined 值(源恒 SQLite,列名无需转义)。
+                obj[col.name] = row[i] ?? null;
             });
             return obj;
         });

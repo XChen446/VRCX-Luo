@@ -587,3 +587,58 @@ describe('pullEngine — PG 分支(白名单过滤 + mirror 兜底)', () => {
     });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// 6. copyTable 防御式处理(undefined 兜底 + quoteIdent 转义)
+// ─────────────────────────────────────────────────────────────────────────
+// 与 pushEngine 对称,但这里是生产真实路径:pull 方向源是 MySQLAdapter,
+// cookies/configs 的 key 列必须反引号转义(Bug A),DBNull 封送的
+// undefined 必须兜底为 null(Bug B)。
+
+describe('pullEngine — copyTable 防御式处理(undefined 兜底 + quoteIdent)', () => {
+    test('源行含 undefined(DBNull 封送)→ 目标写入 null,无错误', async () => {
+        await srcAdapter.initGlobalSchema();
+
+        // 注入含 undefined 的行,模拟 DBNull 经 CefSharp 封送为 undefined。
+        const origExecute = srcAdapter.execute.bind(srcAdapter);
+        vi.spyOn(srcAdapter, 'execute').mockImplementation(
+            async (cb, sql, params) => {
+                if (sql.includes('FROM cookies')) {
+                    cb(['k1', undefined]);
+                    return;
+                }
+                return origExecute(cb, sql, params);
+            }
+        );
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        expect(result.errors).toEqual([]);
+        const rows = await dstAdapter.select('cookies', ['key', 'value']);
+        expect(rows).toEqual([['k1', null]]);
+    });
+
+    test('srcAdapter 有 quoteIdent 时列名被反引号转义(MySQL 源真实场景)', async () => {
+        await srcAdapter.initGlobalSchema();
+        await srcAdapter.insert('cookies', { key: 'k1', value: 'v1' });
+
+        // pull 方向的真实源是 MySQLAdapter(有 quoteIdent)。
+        srcAdapter.quoteIdent = (n) => `\`${n}\``;
+        const captured = [];
+        const origExecute = srcAdapter.execute.bind(srcAdapter);
+        vi.spyOn(srcAdapter, 'execute').mockImplementation(
+            async (cb, sql, params) => {
+                if (sql.includes('FROM cookies')) captured.push(sql);
+                return origExecute(cb, sql, params);
+            }
+        );
+
+        const result = await pullToSqlite('sqlite:///fake/dst.db');
+
+        expect(result.errors).toEqual([]);
+        expect(captured[0]).toBe(
+            'SELECT `key`, `value` FROM cookies ORDER BY `key` LIMIT @limit'
+        );
+        expect(await dstCount('cookies')).toBe(1);
+    });
+});
+

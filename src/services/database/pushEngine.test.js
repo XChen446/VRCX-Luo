@@ -559,3 +559,63 @@ describe('pushEngine — engine guard', () => {
         );
     });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. copyTable 防御式处理(undefined 兜底 + quoteIdent 转义)
+// ─────────────────────────────────────────────────────────────────────────
+// Bug B: C# SQLite.Execute 未做 DBNull 归一化时,DBNull 经 CefSharp 封送为
+// JS undefined,copyTable 行对象含 undefined 值 → bulkInsert 参数 undefined
+// → CefSharp 跳过 undefined 属性 → MySqlConnector "Parameter '@x' must be
+// defined"。修复:obj[col.name] = row[i] ?? null。
+// Bug A: MySQL 源列名 key 需反引号转义,copyTable 防御式调用
+// srcAdapter.quoteIdent?.(name) ?? name(push 方向源恒 SQLite → 裸名)。
+
+describe('pushEngine — copyTable 防御式处理(undefined 兜底 + quoteIdent)', () => {
+    test('源行含 undefined(DBNull 封送)→ 目标写入 null,无错误', async () => {
+        await srcAdapter.initGlobalSchema();
+
+        // 注入含 undefined 的行,模拟 DBNull 经 CefSharp 封送为 undefined。
+        const origExecute = srcAdapter.execute.bind(srcAdapter);
+        vi.spyOn(srcAdapter, 'execute').mockImplementation(
+            async (cb, sql, params) => {
+                if (sql.includes('FROM cookies')) {
+                    cb(['k1', undefined]);
+                    return;
+                }
+                return origExecute(cb, sql, params);
+            }
+        );
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.errors).toEqual([]);
+        expect(result.rowsCopied).toBe(1);
+        const rows = await dstAdapter.select('cookies', ['key', 'value']);
+        expect(rows).toEqual([['k1', null]]);
+    });
+
+    test('srcAdapter 有 quoteIdent 时列名被反引号转义(MySQL 源场景)', async () => {
+        await srcAdapter.initGlobalSchema();
+        await srcAdapter.insert('cookies', { key: 'k1', value: 'v1' });
+
+        // 模拟 MySQL 源(pull 方向的真实源);quote 回退逻辑应探测到它。
+        srcAdapter.quoteIdent = (n) => `\`${n}\``;
+        const captured = [];
+        const origExecute = srcAdapter.execute.bind(srcAdapter);
+        vi.spyOn(srcAdapter, 'execute').mockImplementation(
+            async (cb, sql, params) => {
+                if (sql.includes('FROM cookies')) captured.push(sql);
+                return origExecute(cb, sql, params);
+            }
+        );
+
+        const result = await pushFromSqlite('sqlite:///fake/src.db');
+
+        expect(result.errors).toEqual([]);
+        expect(captured[0]).toBe(
+            'SELECT `key`, `value` FROM cookies ORDER BY `key` LIMIT @limit'
+        );
+        // 反引号标识符在 SQLite 上同样可执行,数据完整复制。
+        expect(await dstCount('cookies')).toBe(1);
+    });
+});

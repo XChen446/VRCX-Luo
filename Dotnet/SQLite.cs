@@ -580,7 +580,7 @@ namespace VRCX
                             var values = new object[reader.FieldCount];
                             for (var i = 0; i < reader.FieldCount; i++)
                             {
-                                values[i] = reader.GetValue(i);
+                                values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                             }
                             result.Add(values);
                         }
@@ -680,7 +680,7 @@ namespace VRCX
                 var values = new object[reader.FieldCount];
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
-                    values[i] = reader.GetValue(i);
+                    values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                 }
                 result.Add(values);
             }
@@ -895,7 +895,7 @@ namespace VRCX
                         var values = new object[reader.FieldCount];
                         for (var i = 0; i < reader.FieldCount; i++)
                         {
-                            values[i] = reader.GetValue(i);
+                            values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                         }
                         result.Add(values);
                     }

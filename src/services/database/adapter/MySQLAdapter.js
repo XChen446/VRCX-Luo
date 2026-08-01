@@ -267,7 +267,7 @@ class MySQLAdapter extends EngineAdapter {
             return `@${col}`;
         });
         return this.executeNonQuery(
-            `${clause} INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
+            `${clause} INTO ${table} (${columns.map((c) => this.quoteIdent(c)).join(', ')}) VALUES (${values.join(', ')})`,
             params
         );
     }
@@ -298,7 +298,7 @@ class MySQLAdapter extends EngineAdapter {
             );
         });
         return this.executeNonQuery(
-            `${clause} INTO ${table} (${columns.join(', ')}) VALUES ${values.join(', ')}`,
+            `${clause} INTO ${table} (${columns.map((c) => this.quoteIdent(c)).join(', ')}) VALUES ${values.join(', ')}`,
             params
         );
     }
@@ -310,11 +310,11 @@ class MySQLAdapter extends EngineAdapter {
         const params = {};
         const setClauses = Object.keys(data).map((col) => {
             params[`set_${col}`] = data[col];
-            return `${col} = @set_${col}`;
+            return `${this.quoteIdent(col)} = @set_${col}`;
         });
         const whereClauses = Object.keys(where).map((col) => {
             params[`where_${col}`] = where[col];
-            return `${col} = @where_${col}`;
+            return `${this.quoteIdent(col)} = @where_${col}`;
         });
         return this.executeNonQuery(
             `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`,
@@ -326,7 +326,7 @@ class MySQLAdapter extends EngineAdapter {
     updateWhere(table, data, whereClause, params = {}) {
         const setClauses = Object.keys(data).map((col) => {
             params[`set_${col}`] = data[col];
-            return `${col} = @set_${col}`;
+            return `${this.quoteIdent(col)} = @set_${col}`;
         });
         return this.executeNonQuery(
             `UPDATE ${table} SET ${setClauses.join(', ')} WHERE ${whereClause}`,
@@ -339,7 +339,7 @@ class MySQLAdapter extends EngineAdapter {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
             params[col] = where[col];
-            return `${col} = @${col}`;
+            return `${this.quoteIdent(col)} = @${col}`;
         });
         return this.executeNonQuery(
             `DELETE FROM ${table} WHERE ${clauses.join(' AND ')}`,
@@ -372,9 +372,11 @@ class MySQLAdapter extends EngineAdapter {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
             params[col] = where[col];
-            return `${col} = @${col}`;
+            return `${this.quoteIdent(col)} = @${col}`;
         });
-        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        const colStr = Array.isArray(columns)
+            ? columns.map((c) => this.quoteIdent(c)).join(', ')
+            : columns;
         let result = null;
         await this.execute(
             (row) => {
@@ -389,14 +391,16 @@ class MySQLAdapter extends EngineAdapter {
     /** @override */
     async select(table, columns, where, options = {}) {
         const { order, limit, distinct } = options;
-        const colStr = Array.isArray(columns) ? columns.join(', ') : columns;
+        const colStr = Array.isArray(columns)
+            ? columns.map((c) => this.quoteIdent(c)).join(', ')
+            : columns;
         const distinctStr = distinct ? 'DISTINCT ' : '';
         let sql = `SELECT ${distinctStr}${colStr} FROM ${table}`;
         const params = {};
         if (where && Object.keys(where).length > 0) {
             const clauses = Object.keys(where).map((col) => {
                 params[col] = where[col];
-                return `${col} = @${col}`;
+                return `${this.quoteIdent(col)} = @${col}`;
             });
             sql += ` WHERE ${clauses.join(' AND ')}`;
         }
@@ -561,7 +565,7 @@ class MySQLAdapter extends EngineAdapter {
         const params = {};
         const clauses = Object.keys(where).map((col) => {
             params[col] = where[col];
-            return `${col} = @${col}`;
+            return `${this.quoteIdent(col)} = @${col}`;
         });
         let result = 0;
         await this.execute(
@@ -617,10 +621,10 @@ class MySQLAdapter extends EngineAdapter {
         const params = { amount };
         const whereClauses = Object.keys(where).map((col) => {
             params[`where_${col}`] = where[col];
-            return `${col} = @where_${col}`;
+            return `${this.quoteIdent(col)} = @where_${col}`;
         });
         return this.executeNonQuery(
-            `UPDATE ${table} SET ${column} = ${column} + @amount WHERE ${whereClauses.join(' AND ')}`,
+            `UPDATE ${table} SET ${this.quoteIdent(column)} = ${this.quoteIdent(column)} + @amount WHERE ${whereClauses.join(' AND ')}`,
             params
         );
     }
@@ -757,9 +761,9 @@ class MySQLAdapter extends EngineAdapter {
         });
         const updateClauses = Object.keys(updateData).map((col) => {
             params[`up_${col}`] = updateData[col];
-            return `${col} = @up_${col}`;
+            return `${this.quoteIdent(col)} = @up_${col}`;
         });
-        const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${values.join(', ')}) ON DUPLICATE KEY UPDATE ${updateClauses.join(', ')}`;
+        const sql = `INSERT INTO ${table} (${columns.map((c) => this.quoteIdent(c)).join(', ')}) VALUES (${values.join(', ')}) ON DUPLICATE KEY UPDATE ${updateClauses.join(', ')}`;
         return this.executeNonQuery(sql, params);
     }
 
@@ -805,7 +809,7 @@ class MySQLAdapter extends EngineAdapter {
             if (typeof col === 'string') return col;
             const mappedType = this._mapColumnType(col.type, col.constraints);
             const constraints = col.constraints ? ` ${col.constraints}` : '';
-            return `${col.name} ${mappedType}${constraints}`;
+            return `${this.quoteIdent(col.name)} ${mappedType}${constraints}`;
         });
         return this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${tableName} (${colDefs.join(', ')})`
@@ -1156,6 +1160,24 @@ class MySQLAdapter extends EngineAdapter {
     }
 
     // ── Naming ───────────────────────────────────────────────────────
+
+    /**
+     * Quote a column/table identifier for MySQL.
+     *
+     * MySQL 是唯一把 `KEY` 当作保留字的引擎,列名 `key`(cookies/configs 表)
+     * 必须用反引号包裹。内部反引号按 MySQL 规则转义为双反引号。
+     *
+     * 本方法是 MySQLAdapter 子类专有扩展,不在 EngineAdapter 基类接口上
+     * (基类冻结)。copyTable 等引擎无关代码用防御式探测调用:
+     * `srcAdapter.quoteIdent?.(name) ?? name`。SQLite/PG 无此方法,
+     * 回退裸列名 —— 这两个引擎中 `key` 均非保留字。
+     *
+     * @param {string} name - column or table identifier
+     * @returns {string} backtick-quoted identifier
+     */
+    quoteIdent(name) {
+        return `\`${String(name).replace(/`/g, '``')}\``;
+    }
 
     /**
      * Resolve a user table name with prefix applied.
