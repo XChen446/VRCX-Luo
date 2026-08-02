@@ -121,6 +121,17 @@ function safeText(value, fallback = '暂无') {
     return value ? String(value) : fallback;
 }
 
+function safeExternalUrl(value) {
+    try {
+        const url = new URL(String(value || ''));
+        return url.protocol === 'http:' || url.protocol === 'https:'
+            ? url.toString()
+            : '';
+    } catch {
+        return '';
+    }
+}
+
 function friendLocationText(friend) {
     return (
         friend?.locationName ||
@@ -1372,7 +1383,13 @@ function renderNotification(noty) {
                     disabled: !noty.id,
                     onClick: () => {
                         if (response.type === 'link' && response.data) {
-                            window.open(response.data, '_blank', 'noopener');
+                            // Only http(s) links: notification data is
+                            // user-controlled and must not open arbitrary
+                            // schemes (e.g. javascript: or file:).
+                            const url = safeExternalUrl(response.data);
+                            if (url) {
+                                window.open(url, '_blank', 'noopener');
+                            }
                             return;
                         }
                         if (confirm(`确定要发送「${response.text || response.type}」吗？`)) {

@@ -58,6 +58,14 @@ let isOverlayActive = false;
 let appIsQuitting = false;
 const rootDir = app.getAppPath();
 
+function clampRemotePort(value) {
+    const port = Number.parseInt(value, 10);
+    if (!Number.isFinite(port)) {
+        return 23580;
+    }
+    return Math.min(65535, Math.max(1024, port));
+}
+
 let tray = null;
 let trayIcon = null;
 let trayIconNotify = null;
@@ -257,7 +265,7 @@ ipcMain.handle('app:restart', () => {
 });
 
 ipcMain.handle('remote:start', (event, port, privacyMode) => {
-    return remoteAccessServer.start(port, privacyMode);
+    return remoteAccessServer.start(clampRemotePort(port), privacyMode);
 });
 
 ipcMain.handle('remote:stop', () => {
@@ -269,7 +277,7 @@ ipcMain.handle('remote:status', () => {
 });
 
 ipcMain.handle('remote:repairLanAccess', (event, port) => {
-    return remoteAccessServer.repairLanAccess(port);
+    return remoteAccessServer.repairLanAccess(clampRemotePort(port));
 });
 
 ipcMain.handle('app:getOverlayWindow', () => {
