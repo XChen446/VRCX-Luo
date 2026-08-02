@@ -607,8 +607,13 @@ function createBridge() {
     let notifySnapshotChanged = () => {};
     let timer = null;
     let stopWatching = null;
+    let cachedSnapshot = null;
+    let cachedPrivacyMode = null;
+    let dirty = true;
+    let tickCount = 0;
 
     function scheduleSnapshotChanged() {
+        dirty = true;
         if (timer) {
             return;
         }
@@ -642,10 +647,28 @@ function createBridge() {
     return {
         getRemoteSnapshot(options) {
             ensureWatching();
-            return buildSnapshot(options);
+            const privacyMode = Boolean(options?.privacyMode);
+            // Periodic forced refresh bounds staleness for mutations the
+            // watcher cannot observe cheaply (e.g. friend state changes).
+            if (++tickCount % 15 === 0) {
+                dirty = true;
+            }
+            if (cachedSnapshot !== null && !dirty && privacyMode === cachedPrivacyMode) {
+                return cachedSnapshot;
+            }
+            const snapshot = buildSnapshot(options);
+            cachedSnapshot = snapshot;
+            cachedPrivacyMode = privacyMode;
+            dirty = false;
+            return snapshot;
+        },
+        isSnapshotDirty() {
+            ensureWatching();
+            return dirty;
         },
         executeRemoteAction(type, payload) {
             ensureWatching();
+            dirty = true;
             return executeAction(type, payload);
         },
         setSnapshotChangedCallback(callback) {

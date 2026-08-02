@@ -432,4 +432,83 @@ describe('remoteAccessBridge', () => {
         expect(snapshot.location.location).toBe('');
         expect(() => initRemoteAccessBridge()).not.toThrow();
     });
+
+    it('serves cached snapshots until the change watcher fires', async () => {
+        const { initRemoteAccessBridge } = await import(
+            '../remoteAccessBridge'
+        );
+        initRemoteAccessBridge();
+
+        const first = window.$remoteBridge.getRemoteSnapshot({
+            privacyMode: false
+        });
+        const accessesAfterFirst = mocks.storeAccesses.length;
+
+        // No change -> cached object is returned without touching stores.
+        const second = window.$remoteBridge.getRemoteSnapshot({
+            privacyMode: false
+        });
+        expect(second).toBe(first);
+        expect(mocks.storeAccesses.length).toBe(accessesAfterFirst);
+        expect(window.$remoteBridge.isSnapshotDirty()).toBe(false);
+
+        // Firing the watcher marks the snapshot dirty and rebuilds it.
+        const watchCallback = mocks.watch.mock.calls.at(-1)[1];
+        watchCallback();
+        expect(window.$remoteBridge.isSnapshotDirty()).toBe(true);
+
+        const third = window.$remoteBridge.getRemoteSnapshot({
+            privacyMode: false
+        });
+        expect(mocks.storeAccesses.length).toBeGreaterThan(accessesAfterFirst);
+        expect(window.$remoteBridge.isSnapshotDirty()).toBe(false);
+    });
+
+    it('rebuilds the snapshot when the privacy mode changes', async () => {
+        const { initRemoteAccessBridge } = await import(
+            '../remoteAccessBridge'
+        );
+        initRemoteAccessBridge();
+
+        window.$remoteBridge.getRemoteSnapshot({ privacyMode: false });
+        const accesses = mocks.storeAccesses.length;
+
+        window.$remoteBridge.getRemoteSnapshot({ privacyMode: true });
+        expect(mocks.storeAccesses.length).toBeGreaterThan(accesses);
+    });
+
+    it('marks the snapshot dirty after executing a remote action', async () => {
+        const { initRemoteAccessBridge } = await import(
+            '../remoteAccessBridge'
+        );
+        initRemoteAccessBridge();
+
+        window.$remoteBridge.getRemoteSnapshot({ privacyMode: false });
+        expect(window.$remoteBridge.isSnapshotDirty()).toBe(false);
+
+        await window.$remoteBridge.executeRemoteAction(
+            'ui.clearNotificationCenter',
+            {}
+        );
+        expect(window.$remoteBridge.isSnapshotDirty()).toBe(true);
+    });
+
+    it('periodically forces a snapshot refresh as a staleness safety net', async () => {
+        const { initRemoteAccessBridge } = await import(
+            '../remoteAccessBridge'
+        );
+        initRemoteAccessBridge();
+
+        window.$remoteBridge.getRemoteSnapshot({ privacyMode: false });
+        const accesses = mocks.storeAccesses.length;
+
+        // 13 cache hits then the 15th call forces a rebuild (tickCount % 15).
+        for (let i = 0; i < 13; i++) {
+            window.$remoteBridge.getRemoteSnapshot({ privacyMode: false });
+        }
+        expect(mocks.storeAccesses.length).toBe(accesses);
+
+        window.$remoteBridge.getRemoteSnapshot({ privacyMode: false });
+        expect(mocks.storeAccesses.length).toBeGreaterThan(accesses);
+    });
 });
