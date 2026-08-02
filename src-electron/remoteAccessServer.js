@@ -203,23 +203,27 @@ class RemoteAccessServer {
             this.error = err.message;
             this.stop();
         });
-        try {
-            this.server.listen(this.port, '0.0.0.0', () => {
+        // Resolve only once listen has actually succeeded (or failed), so the
+        // renderer sees the real running state instead of a premature "running".
+        return new Promise((resolve) => {
+            this.server.once('listening', () => {
                 this.error = '';
+                this.broadcastTimer = setInterval(() => {
+                    if (this.sockets.size === 0) {
+                        return;
+                    }
+                    this.broadcastTick().catch((err) => {
+                        this.error = err?.message || String(err);
+                    });
+                }, 2000);
+                resolve(this.status());
             });
-            this.broadcastTimer = setInterval(() => {
-                if (this.sockets.size === 0) {
-                    return;
-                }
-                this.broadcastTick().catch((err) => {
-                    this.error = err?.message || String(err);
-                });
-            }, 2000);
-        } catch (err) {
-            this.error = err.message;
-            this.server = null;
-        }
-        return this.status();
+            this.server.once('error', (err) => {
+                this.error = err.message;
+                resolve(this.status());
+            });
+            this.server.listen(this.port, '0.0.0.0');
+        });
     }
 
     async broadcastTick() {
