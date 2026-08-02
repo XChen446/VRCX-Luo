@@ -27,6 +27,11 @@
  * 启用),WebStorm 仍会对外部调用显示警告,达到引导效果。
  * 详见 docs/TRANSACTION_DESIGN.md。
  *
+ * onTableChange(变更通知订阅)是 @optional 默认实现——基类提供完整
+ * 实现(订阅注册表 + 完备层计数器轮询 + 基线去重),实现方不覆写
+ * 即退化为 no-op,行为与现状一致;引擎只需覆写 _readChangeCounter()
+ * 启用计数器兜底。详见 docs/CHANGE_NOTIFICATION_API.md。
+ *
  * The `engineType` getter below is metadata, not part of the 42+3
  * method interface — it carries no SQL semantics and exists solely so
  * the migration runner can detect the active engine without importing
@@ -36,6 +41,14 @@
 class EngineAdapter {
     /** @type {string|null} */
     _prefixOverride = null;
+
+    /**
+     * 连接标识:默认单例为 null(对应 C# 侧 conn="default"),
+     * createAdapter 实例为构建后的 connectionString。
+     * 写漏斗事件按此值路由(见 CHANGE_NOTIFICATION_API.md)。
+     * @type {string|null}
+     */
+    connectionString = null;
 
     /**
      * 事务 connId 栈,withTransaction 自动 push/pop。
@@ -976,6 +989,217 @@ class EngineAdapter {
     daysAgoISO(_days) {
         return new Date(Date.now() - _days * 86400000).toISOString();
     }
+
+    // ── Change notification: onTableChange ───────────────────────────
+    //
+    // 数据库变更通知(详见 docs/CHANGE_NOTIFICATION_API.md):
+    //   - 实时层:C# 写漏斗事件,负载携带发射时的计数器快照(dv),
+    //     经 _syncChangeBaseline() 推进基线;
+    //   - 完备层:引擎原生计数器轮询(_readChangeCounter),
+    //     仅在"版本前进且无对应漏斗事件"时触发全部订阅表失效重查——
+    //     自写被基线同步吸收,完备层精确等价"外部写者检测器"。
+    // 订阅按实例作用域(实例 = 连接):默认单例与 connectionString 实例
+    // 天然隔离,多账号订阅互不串扰。轮询为订阅驱动:无订阅者 → 零轮询。
+
+    /** 完备层轮询间隔(ms)。兜底只服务完整性、不服务响应性——间隔越慢,分层职责越清晰。 */
+    static CHANGE_POLL_MS = 5000;
+
+    /** @type {Map<string, Set<(evt: object) => void>>} 物理表名 → 订阅回调集合(订阅方以 userTable(prefix, name) 计算) */
+    _changeSubs = new Map();
+
+    /** @type {ReturnType<typeof setInterval> | null} 共享轮询定时器(有订阅才运行) */
+    _changeTimer = null;
+
+    /** @type {number | null} 计数器基线:最近一次漏斗事件快照(dv)或轮询观察值 */
+    _changeBaseline = null;
+
+    /**
+     * 订阅某张物理表的变更。
+     *
+     * 检测层 = C# 漏斗事件(实时)+ 计数器轮询兜底(完备),对消费方透明。
+     * table 用物理表名(订阅方以 userTable(prefix, name) 计算,如 'abc_feed_gps');前缀随账号,同实例多账号订阅天然隔离。
+     * 返回 unsubscribe,store 卸载时调用,与 Vue watch 停用同构。
+     *
+     * @optional
+     * @param {string} table - 物理表名(以 userTable(prefix, name) 计算)
+     * @param {(evt: { table: string, count: number, ts: number }) => void} cb -
+     *        变更回调;count=-1 表示完备层兜底触发的全量失效提示
+     * @returns {() => void} unsubscribe
+     */
+    onTableChange(table, cb) {
+        if (typeof table !== 'string' || table.length === 0) {
+            throw new TypeError('onTableChange: table must be a non-empty string');
+        }
+        if (typeof cb !== 'function') {
+            throw new TypeError('onTableChange: cb must be a function');
+        }
+        let set = this._changeSubs.get(table);
+        if (!set) {
+            set = new Set();
+            this._changeSubs.set(table, set);
+            // 新表项(实例×表)首个订阅 → 全局计数 +1,0→1 时开启 C# 门控
+            _changeSubscriberCount += 1;
+            if (_changeSubscriberCount === 1) {
+                _changeGateHook?.(true);
+            }
+        }
+        set.add(cb);
+        if (!this._changeTimer) {
+            this._startChangeTimer();
+        }
+        return () => {
+            // 重复退订幂等退出 — 同一 cb 引用被订阅两次时返回两个闭包,
+            // 第二个闭包 Set 已无此 cb,直接返回避免重复递减全局计数。
+            if (!set.has(cb)) return;
+            set.delete(cb);
+            if (set.size === 0) {
+                this._changeSubs.delete(table);
+                // 表项(实例×表)全部退订 → 全局计数 -1,归零时关闭 C# 门控
+                _changeSubscriberCount -= 1;
+                if (_changeSubscriberCount === 0) {
+                    _changeGateHook?.(false);
+                }
+            }
+            if (this._changeSubs.size === 0) {
+                this._stopChangeTimer();
+            }
+        };
+    }
+
+    /** @private 启动完备层轮询(首个订阅者出现时;无订阅者 → 零轮询) */
+    _startChangeTimer() {
+        this._changeTimer = setInterval(() => {
+            this._pollChangeCounter().catch((err) => {
+                // 兜底轮询失败静默:完备层只是保险,失败等价于"本轮无外部写"。
+                console.error('[onTableChange] fallback poll failed', err);
+            });
+        }, EngineAdapter.CHANGE_POLL_MS);
+    }
+
+    /** @private 停止轮询(最后一个订阅者退订时),并重置基线供下次重建 */
+    _stopChangeTimer() {
+        if (this._changeTimer) {
+            clearInterval(this._changeTimer);
+            this._changeTimer = null;
+        }
+        this._changeBaseline = null;
+    }
+
+    /**
+     * 完备层轮询一拍:读引擎原生计数器;版本前进且无对应漏斗事件时
+     * 触发全部订阅表失效重查(粒度缺陷:全局计数器不分表)。
+     * 首轮只建立基线、不触发——订阅方通常自会做初始拉取。
+     * @protected
+     */
+    async _pollChangeCounter() {
+        const version = await this._readChangeCounter();
+        if (version === null) return; // 引擎未实现计数器 → 完备层不运行
+        if (this._changeBaseline === null) {
+            this._changeBaseline = version;
+            return;
+        }
+        if (version !== this._changeBaseline) {
+            this._changeBaseline = version;
+            this._fireAllTables();
+        }
+    }
+
+    /**
+     * 同步基线(漏斗事件调用):自写已被事件覆盖,版本前进无需
+     * 兜底触发。version = 事件发射时的计数器快照(dv)。
+     * @param {number | null} version
+     * @protected
+     */
+    _syncChangeBaseline(version) {
+        if (version !== null && version !== undefined) {
+            this._changeBaseline = version;
+        }
+    }
+
+    /**
+     * 接收本实例的写漏斗事件(由 adapter 路由层按 conn 分发后调用)。
+     *
+     * - dv 存在 → 推进基线:自写已被事件覆盖,完备层不再兜底触发;
+     * - table 命中订阅 → 实时触发该表回调(毫秒级,表级粒度);
+     * - table 未知/无订阅 → 仅同步基线:非 watched 表写不打扰订阅方。
+     *
+     * 注意:table 为物理表名(订阅方以 userTable(prefix, name) 计算),
+     * 前缀随账号,同实例多账号订阅天然隔离。
+     *
+     * 半公开接口:adapter 路由层(index.js wireFunnelEvents)按 conn
+     * 分发后调用,消费方不应直接调用。
+     *
+     * @param {{ table?: string | null, count?: number, ts?: number, dv?: number | null }} evt
+     */
+    _onFunnelEvent(evt) {
+        if (evt && evt.dv != null) {
+            this._syncChangeBaseline(Number(evt.dv));
+        }
+        const table = evt?.table;
+        const set =
+            typeof table === 'string' ? this._changeSubs.get(table) : undefined;
+        if (!set || set.size === 0) return;
+        const payload = {
+            table,
+            count: typeof evt?.count === 'number' ? evt.count : -1,
+            ts: typeof evt?.ts === 'number' ? evt.ts : Date.now()
+        };
+        for (const cb of [...set]) {
+            try {
+                cb(payload);
+            } catch (err) {
+                console.error(
+                    `[onTableChange] subscriber error for ${table}`,
+                    err
+                );
+            }
+        }
+    }
+
+    /** @private 触发全部订阅表的回调(完备层兜底:全量失效提示,count=-1) */
+    _fireAllTables() {
+        const ts = Date.now();
+        for (const [table, set] of this._changeSubs) {
+            for (const cb of [...set]) {
+                try {
+                    cb({ table, count: -1, ts });
+                } catch (err) {
+                    // 订阅方异常不阻断其他订阅者与轮询循环
+                    console.error(`[onTableChange] subscriber error for ${table}`, err);
+                }
+            }
+        }
+    }
+
+    /**
+     * 读引擎原生计数器(完备层信号)。
+     * 默认 null = 该引擎不启用计数器兜底(onTableChange 退化为纯 no-op)。
+     * SQLite: PRAGMA data_version;PG: xact_commit;MySQL: performance_schema 聚合。
+     * @protected
+     * @returns {Promise<number | null>}
+     */
+    async _readChangeCounter() {
+        return null;
+    }
+}
+
+// ── 变更通知门控(C# SetChangeEnabled)────────────────────────────
+// 跨实例订阅计数:任何实例的首个订阅开启 C# 写漏斗,最后一个退订关闭。
+// 无消费者时 C# EmitChange 首行早退,写路径零成本。钩子由
+// adapter/index.js 注入(按桥对象三引擎扇出);未注入(纯单测)静默跳过。
+/** @type {number} */
+let _changeSubscriberCount = 0;
+/** @type {((enabled: boolean) => void) | null} */
+let _changeGateHook = null;
+
+/**
+ * 注入/卸载 C# 门控钩子(index.js 模块加载时注入一次;注入即重置计数,
+ * 保证测试可重复安装后计数从 0 开始)。
+ * @param {((enabled: boolean) => void) | null} hook
+ */
+export function setChangeGateHook(hook) {
+    _changeGateHook = hook;
+    _changeSubscriberCount = 0;
 }
 
 export { EngineAdapter };

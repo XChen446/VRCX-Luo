@@ -70,6 +70,8 @@ build/            → build output (gitignored)
 - `vrcx_mcd_mld.md` / `vrcx_sr_mld.md` — Merise 逻辑模型与关系模式，列出所有表名、字段、主键/外键
 - `DATA_REFRESH.md` — 四层数据刷新架构（L1 游戏日志、L2 WS、L3 轮询、L4 全量同步 + Luo 补全机制），Feed 采集/持久化/UI 查询全链路
 - `MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` — 多账号 V4 详细设计（AccountHub、AccountSession、热替换 Store、聚合视图、通知路由），含文件改动清单与代码量估算
+- `TRANSACTION_DESIGN.md` — 栈式事务上下文 + 统一池化设计（withTransaction/_txStack/keepAlive、Sliding 超时、三引擎对称）
+- `CHANGE_NOTIFICATION_API.md` — 数据库变更通知 API 使用指南（面向消费方开发者：onTableChange 订阅/退订、事件负载语义、实例与 conn 路由、userTable 物理表名、边界与限制）
 - `vrcx_erd.svg` / `vrcx_erd.mmd` / `vrcx_erd.dbml` — ER 图多格式输出
 
 ## VRCX_Database Config Refactoring (Jul 2026)

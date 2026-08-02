@@ -17,6 +17,42 @@ namespace VRCX
         private string _connectionString;
         private bool _initialized;
 
+        /// <summary>
+        /// 数据库变更通知(写漏斗):进程内任何写提交后触发,负载 JSON 字符串
+        /// `{ conn, table, count, ts, dv }`(dv 仅主库有值,来自专用观察连接)。
+        /// 检测语义:事件只是失效提示(invalidate hint),不是数据管道——
+        /// 消费方应自行按需重查;漏事件由 data_version 兜底轮询补上。
+        /// 详见 docs/CHANGE_NOTIFICATION_API.md。
+        /// </summary>
+        public event Action<string>? DatabaseChanged;
+
+        private Action<string>? _changeCallback;
+
+        /// <summary>
+        /// Electron 反向通道:node-api-dotnet 以 JS 函数作 .NET delegate
+        /// 注册变更回调。回调经 JSSynchronizationContext 自动
+        /// 编组回 JS 主线程;发射路径无 ConfigureAwait(false),编组失败
+        /// 静默——完备层计数器轮询兜底。
+        /// </summary>
+        public void SetChangeCallback(Action<string> callback)
+        {
+            _changeCallback = callback;
+        }
+
+        private volatile bool _changeEnabled;
+
+        /// <summary>
+        /// 变更通知门控:JS 侧在首个 onTableChange 订阅时开启、最后一个退订时关闭。
+        /// 无消费者时 EmitChange 首行早退,写路径零开销——桥绑定(CefSharp
+        /// add_DatabaseChanged / Electron SetChangeCallback)不再等于"恒有消费者"。
+        /// volatile:事件回调线程与 JS 调用线程可能不同。旧桥缺此方法 → 事件恒发,
+        /// 行为同现状。
+        /// </summary>
+        public void SetChangeEnabled(bool enabled)
+        {
+            _changeEnabled = enabled;
+        }
+
         // ── Pool metrics (三态连接池监控,Issue #14) ───────────────────────
         private int _totalBorrowed;
         private int _peakBorrowed;
@@ -71,6 +107,10 @@ namespace VRCX
             public int InFlight;
             /// <summary>OnTxTimeout 已来过,等 SQL 执行完由 finally 清理。</summary>
             public bool TimedOut;
+            /// <summary>事务内累积的表级写计数,COMMIT 成功后按表发射;回滚/超时丢弃。</summary>
+            public Dictionary<string, int>? Changes;
+            /// <summary>事务所属连接标识:"default"(主池)或外部 connectionString。</summary>
+            public string? ConnLabel;
         }
 
         private static readonly Dictionary<string, string> DefaultOptions = new()
@@ -449,6 +489,12 @@ namespace VRCX
             }
             // 清空 ADO.NET 池(System.Data.SQLite 专属 API)
             try { SQLiteConnection.ClearAllPools(); } catch { }
+            // 关闭专用观察连接
+            lock (_observerLock)
+            {
+                try { _observerConn?.Dispose(); } catch { }
+                _observerConn = null;
+            }
         }
 
         // ── Health checks (与 PostgreSQL.cs / MySQL.cs 对称) ──────────────
@@ -566,7 +612,8 @@ namespace VRCX
                 Interlocked.Increment(ref _activeCount);
                 try
                 {
-                    return ExecuteWithRetry(() =>
+                    int affected = -1;
+                    var result = ExecuteWithRetry(() =>
                     {
                         using var command = new SQLiteCommand(sql, connection);
                         if (args != null)
@@ -578,7 +625,8 @@ namespace VRCX
                         }
 
                         using var reader = command.ExecuteReader();
-                        var result = new List<object[]>();
+                        affected = reader.RecordsAffected;
+                        var rows = new List<object[]>();
                         while (reader.Read())
                         {
                             var values = new object[reader.FieldCount];
@@ -586,10 +634,16 @@ namespace VRCX
                             {
                                 values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                             }
-                            result.Add(values);
+                            rows.Add(values);
                         }
-                        return result.ToArray();
+                        return rows.ToArray();
                     }, "Execute(pool)");
+                    var table = ExtractTable(sql);
+                    if (table != null && _changeEnabled)
+                    {
+                        EmitChange(ChangeConnDefault, table, affected, GetDataVersion());
+                    }
+                    return result;
                 }
                 finally
                 {
@@ -627,7 +681,13 @@ namespace VRCX
                             command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
                         }
                     }
-                    return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pool)");
+                    var affected = ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pool)");
+                    var table = ExtractTable(sql);
+                    if (table != null && _changeEnabled)
+                    {
+                        EmitChange(ChangeConnDefault, table, affected, GetDataVersion());
+                    }
+                    return affected;
                 }
                 finally
                 {
@@ -690,6 +750,11 @@ namespace VRCX
                 result.Add(values);
             }
 
+            var writeTable = ExtractTable(sql);
+            if (writeTable != null && _changeEnabled)
+            {
+                EmitChange(connectionString, writeTable, -1, null);
+            }
             return JsonSerializer.Serialize(result);
         }
 
@@ -727,7 +792,13 @@ namespace VRCX
                     command.Parameters.Add(new SQLiteParameter(arg.Key, arg.Value));
                 }
             }
-            return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(fresh)");
+            var affected = ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(fresh)");
+            var table = ExtractTable(sql);
+            if (table != null && _changeEnabled)
+            {
+                EmitChange(connectionString, table, affected, null);
+            }
+            return affected;
         }
 
         /// <summary>
@@ -784,6 +855,110 @@ namespace VRCX
                 }
             }
             throw new InvalidOperationException("Unreachable");
+        }
+
+        // ── 写漏斗:表名提取与事件发射 ─────────────────────────────────
+        // 表名从 SQL 语句形态提取(adapter 生成的 INSERT/UPDATE/DELETE/
+        // CREATE 等语句结构固定,足够可靠);提取失败时 table=null → 不发
+        // 事件(与 Execute 门控对称),由完备层计数器轮询兜底(版本前进 →
+        // 全量失效)。
+        private const string ChangeConnDefault = "default";
+
+        private static readonly System.Text.RegularExpressions.Regex TableFromSqlPattern =
+            new System.Text.RegularExpressions.Regex(
+                @"^\s*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+([`""\[\]\w.-]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string? ExtractTable(string sql)
+        {
+            if (string.IsNullOrWhiteSpace(sql)) return null;
+            var m = TableFromSqlPattern.Match(sql);
+            if (!m.Success) return null;
+            return m.Groups[1].Value.Trim('`', '"', '[', ']');
+        }
+
+        /// <summary>
+        /// 主库专用观察连接(永不用于写)——data_version 是"他写者视角"
+        /// 计数器,写者连接读不到自己提交的递增,dv 快照必须读自
+        /// 非写者连接才能与 JS 轮询视角一致。惰性创建,进程级存活。
+        /// </summary>
+        private SQLiteConnection? _observerConn;
+        private readonly object _observerLock = new();
+
+        /// <summary>
+        /// 读主库观察连接的 data_version(与漏斗事件 dv 同源)。
+        /// JS 完备层轮询经桥调用;旧桥缺此方法 → JS 回退池连接 PRAGMA。
+        /// </summary>
+        public long? GetDataVersion()
+        {
+            if (!_initialized) return null;
+            lock (_observerLock)
+            {
+                try
+                {
+                    if (_observerConn == null)
+                    {
+                        _observerConn = new SQLiteConnection(_connectionString);
+                        _observerConn.Open();
+                    }
+                    using var cmd = _observerConn.CreateCommand();
+                    cmd.CommandText = "PRAGMA data_version";
+                    var v = cmd.ExecuteScalar();
+                    return v is null ? null : Convert.ToInt64(v);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        private void EmitChange(string conn, string? table, int count, long? dv)
+        {
+            if (!_changeEnabled) return; // 无消费者零成本
+            if (DatabaseChanged == null && _changeCallback == null) return; // 无订阅者,零开销
+            string payload;
+            try
+            {
+                payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["conn"] = conn,
+                    ["table"] = table,
+                    ["count"] = count,
+                    ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    ["dv"] = dv
+                });
+            }
+            catch
+            {
+                // 序列化失败静默:完备层计数器轮询兜底
+                return;
+            }
+            try
+            {
+                DatabaseChanged?.Invoke(payload);
+            }
+            catch
+            {
+                // 事件处理器异常静默
+            }
+            try
+            {
+                _changeCallback?.Invoke(payload);
+            }
+            catch
+            {
+                // 编组失败静默:完备层计数器轮询兜底
+            }
+        }
+
+        /// <summary>事务内累积表级写计数(供 COMMIT 后按表发射)。</summary>
+        private static void RecordChange(TxHolder h, string? table, int count)
+        {
+            if (string.IsNullOrEmpty(table) || count <= 0) return;
+            h.Changes ??= new Dictionary<string, int>();
+            h.Changes[table] = h.Changes.GetValueOrDefault(table) + count;
         }
 
         /// <summary>
@@ -890,11 +1065,13 @@ namespace VRCX
             }
             try
             {
-                return ExecuteWithRetry(() =>
+                int affected = -1;
+                var result = ExecuteWithRetry(() =>
                 {
                     using var command = CreateTxCommand(h, sql, args);
                     using var reader = command.ExecuteReader();
-                    var result = new List<object[]>();
+                    affected = reader.RecordsAffected;
+                    var rows = new List<object[]>();
                     while (reader.Read())
                     {
                         var values = new object[reader.FieldCount];
@@ -902,10 +1079,12 @@ namespace VRCX
                         {
                             values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                         }
-                        result.Add(values);
+                        rows.Add(values);
                     }
-                    return result.ToArray();
+                    return rows.ToArray();
                 }, "Execute(pinned)");
+                RecordChange(h, ExtractTable(sql), affected);
+                return result;
             }
             finally
             {
@@ -945,7 +1124,9 @@ namespace VRCX
             try
             {
                 using var command = CreateTxCommand(h, sql, args);
-                return ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pinned)");
+                var affected = ExecuteWithRetry(() => command.ExecuteNonQuery(), "ExecuteNonQuery(pinned)");
+                RecordChange(h, ExtractTable(sql), affected);
+                return affected;
             }
             finally
             {
@@ -986,7 +1167,7 @@ namespace VRCX
             UpdatePeak(b);
             var conn = new SQLiteConnection(_connectionString);
             conn.Open();
-            var holder = new TxHolder { Conn = conn };
+            var holder = new TxHolder { Conn = conn, ConnLabel = ChangeConnDefault };
             using (var beginCmd = conn.CreateCommand())
             {
                 beginCmd.CommandText = "BEGIN";
@@ -1019,7 +1200,7 @@ namespace VRCX
             UpdatePeak(b);
             var conn = new SQLiteConnection(connectionString);
             conn.Open();
-            var holder = new TxHolder { Conn = conn };
+            var holder = new TxHolder { Conn = conn, ConnLabel = connectionString };
             using (var beginCmd = conn.CreateCommand())
             {
                 beginCmd.CommandText = "BEGIN";
@@ -1035,6 +1216,8 @@ namespace VRCX
         /// </summary>
         public void CommitTransaction(long connId)
         {
+            Dictionary<string, int>? changes;
+            string connLabel;
             lock (_txLock)
             {
                 if (!_pinned.TryRemove(connId, out var h))
@@ -1051,6 +1234,17 @@ namespace VRCX
                 {
                     Interlocked.Decrement(ref _totalBorrowed);
                     h.Conn.Dispose();
+                }
+                changes = h.Changes;
+                connLabel = h.ConnLabel ?? ChangeConnDefault;
+            }
+            // 锁外发射:事件编组可能回调进本类,避免持锁重入。
+            if (changes is { Count: > 0 } && _changeEnabled)
+            {
+                var dv = connLabel == ChangeConnDefault ? GetDataVersion() : null;
+                foreach (var kv in changes)
+                {
+                    EmitChange(connLabel, kv.Key, kv.Value, dv);
                 }
             }
         }

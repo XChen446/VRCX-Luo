@@ -69,6 +69,10 @@ contextBridge.exposeInMainWorld('electron', {
         registerManagedListener('setZoomLevel', callback),
     onBrowserFocus: (callback) =>
         registerManagedListener('onBrowserFocus', callback),
+    onDbChange: (callback) =>
+        registerManagedListener('db-change', (_event, payload) =>
+            callback(payload)
+        ),
     desktopNotification: (title, body, icon, silent) =>
         ipcRenderer.invoke(
             'notification:showNotification',

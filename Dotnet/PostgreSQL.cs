@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Reflection;
 using Npgsql;
 
@@ -25,6 +26,218 @@ namespace VRCX
     public class PostgreSQL : IAuthStore
     {
         public static PostgreSQL Instance;
+
+        /// <summary>
+        /// 数据库变更通知(写漏斗):进程内任何写提交后触发,负载 JSON 字符串
+        /// `{ conn, table, count, ts, dv }`(dv 读自服务端计数器,任意连接
+        /// 视角一致,无需观察连接)。检测语义:事件只是失效提示,不是数据
+        /// 管道——漏事件由计数器兜底轮询补上。详见 docs/CHANGE_NOTIFICATION_API.md。
+        /// </summary>
+        public event Action<string>? DatabaseChanged;
+
+        private Action<string>? _changeCallback;
+
+        /// <summary>Electron 反向通道:node-api-dotnet 以 JS 函数作
+        /// .NET delegate 注册变更回调;编组失败静默,完备层轮询兜底。</summary>
+        public void SetChangeCallback(Action<string> callback)
+        {
+            _changeCallback = callback;
+        }
+
+        private volatile bool _changeEnabled;
+
+        /// <summary>
+        /// 变更通知门控:JS 侧在首个 onTableChange 订阅时开启、最后一个退订时关闭。
+        /// 无消费者时 EmitChange 首行早退,写路径零开销——桥绑定(CefSharp
+        /// add_DatabaseChanged / Electron SetChangeCallback)不再等于"恒有消费者"。
+        /// volatile:事件回调线程与 JS 调用线程可能不同。旧桥缺此方法 → 事件恒发,
+        /// 行为同现状。
+        /// </summary>
+        public void SetChangeEnabled(bool enabled)
+        {
+            _changeEnabled = enabled;
+            if (enabled)
+            {
+                StartChangeListener();
+            }
+            else
+            {
+                StopChangeListener();
+            }
+        }
+
+        // ── 原生变更通知:trigger + LISTEN/NOTIFY(PG 专属) ─────────────
+        // 上层 onTableChange 接口统一,检测机制允许引擎异构——PG 用原生
+        // trigger+NOTIFY 提供"外部写者表级实时检测",替代计数器轮询的
+        // 主路径;计数器轮询保留为安全网。
+        // 成本:每张 watched 表一个 FOR EACH STATEMENT 触发器(消费方负责
+        // 安装,经 CreateChangeTrigger)+ 一条专用监听连接(随门控启停,
+        // 无消费者时不存在)。
+        // 去重:漏斗与 NOTIFY 对自写双发——EmitChange(漏斗路径)按表记录
+        // 发射时间,监听侧 500ms 窗口内的 NOTIFY 视为自写镜像丢弃;
+        // 窗口误杀的外部写由计数器兜底(≤5s)补上。NOTIFY 负载仅表名
+        // (statement 级触发器无行数),事件 count=-1 全量失效。
+        private const string ChangeChannel = "vrcx_change";
+        private const string ChangeTriggerName = "vrcx_change_notify_trg";
+        private const string ChangeFunctionName = "vrcx_change_notify";
+        private static readonly TimeSpan ChangeDedupeWindow = TimeSpan.FromMilliseconds(500);
+        private readonly ConcurrentDictionary<string, long> _lastFunnelEmitTicks = new();
+        private CancellationTokenSource? _listenerCts;
+
+        private void StartChangeListener()
+        {
+            if (_listenerCts != null) return;
+            _listenerCts = new CancellationTokenSource();
+            _ = Task.Run(() => ChangeListenerLoop(_listenerCts.Token));
+        }
+
+        private void StopChangeListener()
+        {
+            var cts = Interlocked.Exchange(ref _listenerCts, null);
+            if (cts == null) return;
+            cts.Cancel();
+        }
+
+        private async Task ChangeListenerLoop(CancellationToken ct)
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    using var conn = _dataSource.CreateConnection();
+                    conn.Open();
+                    conn.Notification += OnChangeNotification;
+                    using (var listenCmd = conn.CreateCommand())
+                    {
+                        listenCmd.CommandText = $"LISTEN {ChangeChannel}";
+                        listenCmd.ExecuteNonQuery();
+                    }
+                    try
+                    {
+                        while (!ct.IsCancellationRequested)
+                        {
+                            await conn.WaitAsync(ct);
+                        }
+                    }
+                    finally
+                    {
+                        conn.Notification -= OnChangeNotification;
+                    }
+                    return; // 仅 Exit/门控关闭时正常退出
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // PG 暂不可达/监听断开:30s 后重连;期间外部写由计数器兜底。
+                    Console.Error.WriteLine(
+                        $"[PostgreSQL] change listener unavailable, retry in 30s: {ex.Message}");
+                    try { await Task.Delay(TimeSpan.FromSeconds(30), ct); }
+                    catch (OperationCanceledException) { return; }
+                }
+            }
+        }
+
+        private void OnChangeNotification(object? sender, NpgsqlNotificationEventArgs e)
+        {
+            if (e.Channel != ChangeChannel || string.IsNullOrEmpty(e.Payload)) return;
+            // 负载格式校验:与触发器 DDL 白名单同一正则(单一事实源)。
+            // 非表名负载(误配置/意外 pg_notify/伪造)静默丢弃,不进 Map 查找
+            // 与事件序列化。风暴不设限速——PG 为单应用独占 DB,同库不可信
+            // 会话不在威胁模型内(外部写者为非支持场景)。
+            if (!TableIdentifierPattern.IsMatch(e.Payload)) return;
+            if (IsSelfMirror(e.Payload)) return; // 自写镜像:漏斗事件已发,丢弃
+            // 监听连接处于 Waiting 态不可查询——dv 改走池中独立连接读
+            // (外部写为稀有路径,+1 次池借还可忽略)。失败则 dv=null,
+            // 由计数器轮询兜底(基线不推进,≤5s 全量失效,安全)。
+            long? dv = null;
+            try
+            {
+                using var conn = _dataSource.CreateConnection();
+                conn.Open();
+                dv = ReadDataVersion(conn);
+            }
+            catch
+            {
+                // dv 读取失败静默:计数器轮询兜底
+            }
+            EmitChange(ChangeConnDefault, e.Payload, -1, dv, recordFunnel: false);
+        }
+
+        /// <summary>漏斗是否刚为该表发过事件(500ms 窗口)——自写镜像去重。</summary>
+        private bool IsSelfMirror(string table)
+        {
+            if (!_lastFunnelEmitTicks.TryGetValue(table, out var ticks)) return false;
+            return DateTime.UtcNow.Ticks - ticks <= ChangeDedupeWindow.Ticks;
+        }
+
+        /// <summary>变更触发器表名标识符(模式限定可选),防 SQL 注入。</summary>
+        private static readonly Regex TableIdentifierPattern =
+            new("^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)?$", RegexOptions.Compiled);
+
+        private static string QuoteTableName(string table)
+        {
+            if (!TableIdentifierPattern.IsMatch(table))
+            {
+                throw new ArgumentException(
+                    $"非法表名(仅字母数字下划线,可含模式限定): {table}");
+            }
+            var parts = table.Split('.');
+            return parts.Length == 1
+                ? $"\"{parts[0]}\""
+                : $"\"{parts[0]}\".\"{parts[1]}\"";
+        }
+
+        /// <summary>
+        /// 安装/更新通知函数(幂等)。触发器依赖此函数,消费方在安装
+        /// 触发器前调用一次即可。
+        /// </summary>
+        public int EnsureChangeFunction()
+        {
+            EnsureInitialized();
+            return ExecuteNonQuery(
+                $"CREATE OR REPLACE FUNCTION {ChangeFunctionName}() RETURNS trigger AS $$ " +
+                "BEGIN PERFORM pg_notify('" + ChangeChannel + "', " +
+                "CASE WHEN TG_TABLE_SCHEMA = 'public' THEN TG_TABLE_NAME " +
+                "ELSE TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME END); " +
+                $"RETURN NULL; END $$ LANGUAGE plpgsql");
+        }
+
+        /// <summary>
+        /// 在指定表上安装变更触发器(幂等:先 DROP IF EXISTS 再 CREATE)。
+        /// FOR EACH STATEMENT:每条语句一次 NOTIFY,批量友好;负载为
+        /// 模式限定表名(public 省略前缀,与漏斗 ExtractTable 形态一致)。
+        /// 表不存在时抛错。无触发器的表不被 NOTIFY 覆盖,由计数器兜底。
+        /// </summary>
+        public int CreateChangeTrigger(string table)
+        {
+            EnsureInitialized();
+            var q = QuoteTableName(table);
+            ExecuteNonQuery($"DROP TRIGGER IF EXISTS {ChangeTriggerName} ON {q}");
+            return ExecuteNonQuery(
+                $"CREATE TRIGGER {ChangeTriggerName} AFTER INSERT OR UPDATE OR DELETE ON {q} " +
+                $"FOR EACH STATEMENT EXECUTE FUNCTION {ChangeFunctionName}()");
+        }
+
+        /// <summary>移除指定表上的变更触发器(表不存在时静默)。</summary>
+        public int DropChangeTrigger(string table)
+        {
+            EnsureInitialized();
+            return ExecuteNonQuery(
+                $"DROP TRIGGER IF EXISTS {ChangeTriggerName} ON {QuoteTableName(table)}");
+        }
+
+        /// <summary>列出所有已安装变更触发器的表(JSON 行数组)。</summary>
+        public string ListChangeTriggers()
+        {
+            EnsureInitialized();
+            return ExecuteJson(
+                "SELECT event_object_schema || '.' || event_object_table AS table_name " +
+                "FROM information_schema.triggers WHERE trigger_name = $1",
+                new object[] { ChangeTriggerName });
+        }
 
         private NpgsqlDataSource _dataSource;
         private readonly ReaderWriterLockSlim _connectionLock;
@@ -83,6 +296,122 @@ namespace VRCX
             public int InFlight;
             /// <summary>OnTxTimeout 已来过,等 SQL 执行完由 finally 清理。</summary>
             public bool TimedOut;
+            /// <summary>事务内累积的表级写计数,COMMIT 成功后按表发射;回滚/超时丢弃。</summary>
+            public Dictionary<string, int>? Changes;
+            /// <summary>事务所属连接标识:"default"(主池)或外部 connectionString。</summary>
+            public string? ConnLabel;
+        }
+
+        // ── 写漏斗:表名提取与事件发射 ─────────────────────────────────
+        // 表名从 SQL 语句形态提取(adapter 生成的 INSERT/UPDATE/DELETE/
+        // CREATE 等语句结构固定,足够可靠);提取失败时 table=null → 不发
+        // 事件(与 Execute 门控对称),由完备层计数器轮询兜底(版本前进 →
+        // 全量失效)。
+        // dv 读自服务端计数器(pg_stat),任意连接视角一致——PG 无 SQLite
+        // 的"写者连接滞后"问题,无需专用观察连接。
+        private const string ChangeConnDefault = "default";
+
+        private static readonly System.Text.RegularExpressions.Regex TableFromSqlPattern =
+            new System.Text.RegularExpressions.Regex(
+                @"^\s*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+([`""\[\]\w.-]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string? ExtractTable(string sql)
+        {
+            if (string.IsNullOrWhiteSpace(sql)) return null;
+            var m = TableFromSqlPattern.Match(sql);
+            if (!m.Success) return null;
+            return m.Groups[1].Value.Trim('`', '"', '[', ']');
+        }
+
+        /// <summary>读服务端完备层计数器:pg_stat_user_tables 行级 DML 计数
+        /// 聚合(仅真实行变更;只读事务不计入,避免兜底网被高频查询打满)。</summary>
+        private static long? ReadDataVersion(NpgsqlConnection connection)
+        {
+            try
+            {
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "SELECT COALESCE(SUM(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_user_tables";
+                var v = cmd.ExecuteScalar();
+                return v is null or DBNull ? null : Convert.ToInt64(v);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void EmitChange(string conn, string? table, int count, long? dv, bool recordFunnel = true)
+        {
+            if (!_changeEnabled) return; // 无消费者零成本
+            if (DatabaseChanged == null && _changeCallback == null) return; // 无订阅者,零开销
+            if (recordFunnel && !string.IsNullOrEmpty(table))
+            {
+                // 漏斗发射时间戳:NOTIFY 监听侧据此丢弃自写镜像
+                _lastFunnelEmitTicks[table] = DateTime.UtcNow.Ticks;
+                if (_lastFunnelEmitTicks.Count > 2048)
+                {
+                    // 防无界增长:清理窗口外的旧条目
+                    var cutoff = DateTime.UtcNow.Ticks - ChangeDedupeWindow.Ticks;
+                    foreach (var kv in _lastFunnelEmitTicks)
+                    {
+                        if (kv.Value < cutoff)
+                        {
+                            _lastFunnelEmitTicks.TryRemove(kv.Key, out _);
+                        }
+                    }
+                }
+            }
+            string payload;
+            try
+            {
+                payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["conn"] = conn,
+                    ["table"] = table,
+                    ["count"] = count,
+                    ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    ["dv"] = dv
+                });
+            }
+            catch
+            {
+                // 序列化失败静默:完备层计数器轮询兜底
+                return;
+            }
+            try
+            {
+                DatabaseChanged?.Invoke(payload);
+            }
+            catch
+            {
+                // 事件处理器异常静默
+            }
+            try
+            {
+                _changeCallback?.Invoke(payload);
+            }
+            catch
+            {
+                // 编组失败静默:完备层计数器轮询兜底
+            }
+        }
+
+        /// <summary>事务内累积表级写计数(供 COMMIT 后按表发射);-1 表示未知计数。</summary>
+        private static void RecordChange(TxHolder h, string? table, int count)
+        {
+            if (string.IsNullOrEmpty(table)) return;
+            h.Changes ??= new Dictionary<string, int>();
+            var prev = h.Changes.GetValueOrDefault(table);
+            if (prev == -1 || count == -1)
+            {
+                h.Changes[table] = -1; // 存在未知计数 → 整体未知
+            }
+            else if (count > 0)
+            {
+                h.Changes[table] = prev + count;
+            }
         }
 
         static PostgreSQL()
@@ -153,6 +482,7 @@ namespace VRCX
         public void Exit()
         {
             _initialized = false;
+            StopChangeListener();
             _dataSource?.Dispose();
         }
 
@@ -187,6 +517,11 @@ namespace VRCX
             using var connection = dataSource.CreateConnection();
             connection.Open();
             var rows = ExecuteCore(connection, sql, nArgs);
+            var table = ExtractTable(sql);
+            if (table != null && _changeEnabled)
+            {
+                EmitChange(connectionString, table, -1, ReadDataVersion(connection));
+            }
             return JsonSerializer.Serialize(rows);
         }
 
@@ -222,7 +557,16 @@ namespace VRCX
                 Interlocked.Increment(ref _activeCount);
                 try
                 {
-                    return ExecuteCore(connection, sql, nArgs);
+                    var rows = ExecuteCore(connection, sql, nArgs);
+                    var table = ExtractTable(sql);
+                    if (table != null && _changeEnabled)
+                    {
+                        // 先记漏斗时间戳再读 dv:NOTIFY 监听侧据此丢弃自写镜像
+                        // (dv 读为 1 次 RTT,若在其后才记录,镜像先到导致去重失效)
+                        _lastFunnelEmitTicks[table] = DateTime.UtcNow.Ticks;
+                        EmitChange(ChangeConnDefault, table, -1, ReadDataVersion(connection));
+                    }
+                    return rows;
                 }
                 finally
                 {
@@ -258,7 +602,14 @@ namespace VRCX
                 try
                 {
                     using var command = CreateCommand(connection, sql, nArgs);
-                    return command.ExecuteNonQuery();
+                    var affected = command.ExecuteNonQuery();
+                    var table = ExtractTable(sql);
+                    if (table != null && _changeEnabled)
+                    {
+                        _lastFunnelEmitTicks[table] = DateTime.UtcNow.Ticks;
+                        EmitChange(ChangeConnDefault, table, affected, ReadDataVersion(connection));
+                    }
+                    return affected;
                 }
                 finally
                 {
@@ -287,7 +638,13 @@ namespace VRCX
             using var connection = dataSource.CreateConnection();
             connection.Open();
             using var command = CreateCommand(connection, sql, nArgs);
-            return command.ExecuteNonQuery();
+            var affected = command.ExecuteNonQuery();
+            var table = ExtractTable(sql);
+            if (table != null && _changeEnabled)
+            {
+                EmitChange(connectionString, table, affected, ReadDataVersion(connection));
+            }
+            return affected;
         }
 
         // ── Health checks ────────────────────────────────────────────────────
@@ -573,6 +930,7 @@ namespace VRCX
                     }
                     result.Add(values);
                 }
+                RecordChange(h, ExtractTable(sql), -1);
                 return result.ToArray();
             }
             finally
@@ -615,7 +973,9 @@ namespace VRCX
             try
             {
                 using var command = CreateTxCommand(h, sql, args);
-                return command.ExecuteNonQuery();
+                var affected = command.ExecuteNonQuery();
+                RecordChange(h, ExtractTable(sql), affected);
+                return affected;
             }
             finally
             {
@@ -658,7 +1018,7 @@ namespace VRCX
             Interlocked.Increment(ref _totalBorrowed);
             var conn = dataSource.OpenConnection();
             var tx = conn.BeginTransaction();
-            var holder = new TxHolder { Conn = conn, Tx = tx };
+            var holder = new TxHolder { Conn = conn, Tx = tx, ConnLabel = connectionString };
             holder.Timer = new Timer(
                 _ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
             _pinned[connId] = holder;
@@ -682,7 +1042,7 @@ namespace VRCX
             Interlocked.Increment(ref _totalBorrowed);
             var conn = _dataSource.OpenConnection();
             var tx = conn.BeginTransaction();
-            var holder = new TxHolder { Conn = conn, Tx = tx };
+            var holder = new TxHolder { Conn = conn, Tx = tx, ConnLabel = ChangeConnDefault };
             holder.Timer = new Timer(
                 _ => OnTxTimeout(connId), null, TX_IDLE_MS, -1);
             _pinned[connId] = holder;
@@ -696,17 +1056,53 @@ namespace VRCX
         /// </summary>
         public void CommitTransaction(long connId)
         {
+            Dictionary<string, int>? changes;
+            string connLabel;
+            long? dv = null;
+            NpgsqlConnection conn;
+            NpgsqlTransaction tx;
             lock (_txLock)
             {
                 if (!_pinned.TryRemove(connId, out var h))
                     throw new InvalidOperationException(
                         $"connId={connId} 已超时回滚或不存在,无法 commit");
                 h.Timer.Dispose();
-                try { h.Tx.Commit(); }
-                finally
+                conn = h.Conn;
+                tx = h.Tx;
+                changes = h.Changes;
+                connLabel = h.ConnLabel ?? ChangeConnDefault;
+            }
+            // 锁外 COMMIT+dv 读+归还:TryRemove 成功后连接已独占(Timer 已停),
+            // 锁外执行不阻塞其他事务;COMMIT 失败时 finally 仍归还连接,
+            // 异常传播且事件不发射(与现状锁内路径等价)。
+            try
+            {
+                // 时间戳在 COMMIT 之前落账:NOTIFY 随 COMMIT 发送,监听线程
+                // 处理镜像时时间戳必已存在(零竞态)
+                if (connLabel == ChangeConnDefault && _changeEnabled && changes is { Count: > 0 })
                 {
-                    Interlocked.Decrement(ref _totalBorrowed);
-                    h.Conn.Dispose();
+                    foreach (var kv in changes)
+                    {
+                        _lastFunnelEmitTicks[kv.Key] = DateTime.UtcNow.Ticks;
+                    }
+                }
+                tx.Commit();
+                if (connLabel == ChangeConnDefault && _changeEnabled)
+                {
+                    dv = ReadDataVersion(conn);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _totalBorrowed);
+                conn.Dispose();
+            }
+            // 锁外发射:事件编组可能回调进本类,避免持锁重入。
+            if (changes is { Count: > 0 })
+            {
+                foreach (var kv in changes)
+                {
+                    EmitChange(connLabel, kv.Key, kv.Value, dv);
                 }
             }
         }

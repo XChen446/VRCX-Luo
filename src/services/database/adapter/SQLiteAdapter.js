@@ -1204,6 +1204,43 @@ class SQLiteAdapter extends EngineAdapter {
         const json = await SQLite.GetHealth();
         return json ? JSON.parse(json) : { connected: false };
     }
+
+    /**
+     * 完备层计数器:`PRAGMA data_version`(DB 级,提交级,无假阳性)。
+     * 任何写者(含外部进程)提交后递增;按文件计数,VRCX 运行时数据
+     * 单文件,计数范围即业务范围。
+     *
+     * data_version 是"他写者视角"计数器——本连接读不到自己提交的
+     * 递增(单连接下恒为初始值),但能可靠追踪其他连接/外部进程的
+     * 提交。漏斗事件的 dv 快照须读自非写者连接(专用观察连接),
+     * 否则基线去重会滞后一版失效。详见 docs/CHANGE_NOTIFICATION_API.md。
+     *
+     * @override @protected
+     * @returns {Promise<number | null>}
+     */
+    async _readChangeCounter() {
+        if (!this.connectionString) {
+            // F7:默认单例经桥读 C# 专用观察连接(与漏斗事件 dv 同源)——池连接是
+            // "写者视角",读不到自己提交的递增,会造成基线滞后与假触发。
+            // CefSharp 同步返回 number|null,Electron 经 IPC 异步——await 统一。
+            // 旧桥无 GetDataVersion 或调用失败 → 回退 execute 池路径(行为同现状)。
+            if (typeof SQLite?.GetDataVersion === 'function') {
+                try {
+                    const v = await SQLite.GetDataVersion();
+                    if (v === null || v === undefined) return null;
+                    const n = Number(v);
+                    return Number.isInteger(n) ? n : null;
+                } catch {
+                    /* 回退下方 execute 路径 */
+                }
+            }
+        }
+        let version = null;
+        await this.execute((row) => {
+            version = Number(row[0]);
+        }, 'PRAGMA data_version');
+        return version;
+    }
 }
 
 export { SQLiteAdapter };

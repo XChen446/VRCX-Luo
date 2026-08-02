@@ -176,6 +176,28 @@ function createOverlayWindowShm() {
     // cookies 表,不直接调用引擎单例,杜绝跨引擎读写。必须紧跟 engine.Init()
     // 之后、WebApi.Init() 之前调用。
     interopApi.getDotNetObject('WebApi').SetAuthStoreByMode(mode);
+    // 写漏斗事件 → 渲染进程:node-api-dotnet 以 JS 函数作 .NET
+    // delegate 注册变更回调,主进程转推 webContents('db-change'),preload
+    // 经 electron.onDbChange 透传给 interopApi.onDbChange。回调负载为 JSON
+    // 字符串;编组失败由完备层计数器轮询兜底。
+    const changeEngine =
+        mode === 'mysql' || mode === 'mariadb'
+            ? 'MySQL'
+            : mode === 'postgresql'
+              ? 'PostgreSQL'
+              : 'SQLite';
+    try {
+        interopApi
+            .getDotNetObject(changeEngine)
+            .SetChangeCallback((payload) => {
+                mainWindow?.webContents?.send('db-change', payload);
+            });
+    } catch (err) {
+        console.warn(
+            '[bootstrap] SetChangeCallback failed:',
+            err && err.message
+        );
+    }
 })().catch(e => {
     const msg = '[bootstrap] Fatal error: ' + (e && e.stack ? e.stack : e);
     console.error(msg);

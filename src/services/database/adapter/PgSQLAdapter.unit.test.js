@@ -498,4 +498,36 @@ describe('PgSQLAdapter', () => {
             expect(() => new PgSQLAdapter()).not.toThrow();
         });
     });
+
+    // ── _readChangeCounter(完备层计数器钩子,Phase 1) ────────────────
+
+    describe('_readChangeCounter', () => {
+        it('读取 pg_stat_user_tables 行级 DML 计数聚合,返回 row[0] 数值', async () => {
+            vi.stubGlobal('PostgreSQL', {
+                ExecuteJsonOnConnection: vi.fn().mockResolvedValue('[[7]]')
+            });
+            try {
+                const version = await adapter._readChangeCounter();
+                expect(version).toBe(7);
+                const sql = globalThis.PostgreSQL.ExecuteJsonOnConnection.mock
+                    .calls[0][1];
+                expect(sql).toContain('pg_stat_user_tables');
+                expect(sql).toContain('n_tup_ins');
+                expect(sql).not.toContain('xact_commit');
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        });
+
+        it('查询无返回行时返回 null(完备层不运行)', async () => {
+            vi.stubGlobal('PostgreSQL', {
+                ExecuteJsonOnConnection: vi.fn().mockResolvedValue('[]')
+            });
+            try {
+                await expect(adapter._readChangeCounter()).resolves.toBeNull();
+            } finally {
+                vi.unstubAllGlobals();
+            }
+        });
+    });
 });

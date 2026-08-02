@@ -424,3 +424,40 @@ describe('CAST 方言映射(_mapMySqlDialect)', () => {
         expect(twice).toBe('CAST(NULL AS CHAR)');
     });
 });
+
+// ── _readChangeCounter(完备层计数器钩子,Phase 1) ───────────────────
+
+describe('_readChangeCounter', () => {
+    it('聚合 performance_schema 行级 DML 计数,返回 row[0] 数值', async () => {
+        vi.stubGlobal('MySQL', {
+            ExecuteJsonOnConnection: vi.fn().mockResolvedValue('[[42]]')
+        });
+        try {
+            const adapter = new MySQLAdapter({
+                connection: 'mysql://root:pass@127.0.0.1:3306/vrcx_test'
+            });
+            const version = await adapter._readChangeCounter();
+            expect(version).toBe(42);
+            const sql = globalThis.MySQL.ExecuteJsonOnConnection.mock
+                .calls[0][1];
+            expect(sql).toContain('performance_schema');
+            expect(sql).toContain('table_io_waits_summary_by_table');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('查询无返回行时返回 null(完备层不运行)', async () => {
+        vi.stubGlobal('MySQL', {
+            ExecuteJsonOnConnection: vi.fn().mockResolvedValue('[]')
+        });
+        try {
+            const adapter = new MySQLAdapter({
+                connection: 'mysql://root:pass@127.0.0.1:3306/vrcx_test'
+            });
+            await expect(adapter._readChangeCounter()).resolves.toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+});

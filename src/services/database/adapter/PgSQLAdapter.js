@@ -1814,6 +1814,24 @@ class PgSQLAdapter extends EngineAdapter {
         }
         return result;
     }
+
+    /**
+     * 完备层计数器:`pg_stat_user_tables` 行级 DML 计数聚合
+     * (n_tup_ins + n_tup_upd + n_tup_del,DB 级信号)。
+     * 仅真实行变更递增——只读事务/查询不计入,避免兜底网被高频查询
+     * 打满(假阳性只来自回滚,罕见且无害)。与 C# 漏斗 dv 同一计数器,
+     * 基线去重保持一致。详见 docs/CHANGE_NOTIFICATION_API.md。
+     *
+     * @override @protected
+     * @returns {Promise<number | null>}
+     */
+    async _readChangeCounter() {
+        let version = null;
+        await this.execute((row) => {
+            version = Number(row[0]);
+        }, 'SELECT COALESCE(SUM(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_user_tables');
+        return version;
+    }
 }
 
 export { PgSQLAdapter };

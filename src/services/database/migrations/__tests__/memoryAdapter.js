@@ -96,6 +96,20 @@ class MemorySQLiteAdapter extends SQLiteAdapter {
         // 始终返回 true(事务永远存活)。
         return true;
     }
+
+    /**
+     * @override @protected
+     * @returns {Promise<number | null>}
+     */
+    async _readChangeCounter() {
+        // F7:覆写桥路径——vitest 全局 SQLite 是 noopAsync Proxy,经桥会读到
+        // Number('')=0 假值;本地 DatabaseSync 直读 PRAGMA 保持真实语义。
+        let version = null;
+        await this.execute((row) => {
+            version = Number(row[0]);
+        }, 'PRAGMA data_version');
+        return version;
+    }
 }
 
 export { MemorySQLiteAdapter };

@@ -1296,6 +1296,28 @@ class MySQLAdapter extends EngineAdapter {
     async clearIdleConnections() {
         await MySQL.ClearIdleConnections();
     }
+
+    /**
+     * 完备层计数器:`performance_schema.table_io_waits_summary_by_table`
+     * 行级 DML 计数聚合(表级源数据 → DB 级信号,与基类"版本前进 →
+     * 全部订阅表失效"语义对齐;逐表失效留待粒度升级)。默认开启、
+     * 零 DDL;回滚也计数(假阳性,对失效提示语义无害)。
+     *
+     * 注意:依赖 `performance_schema_max_table_instances` 覆盖全部动态表
+     * (默认 AUTO 跟随 table_definition_cache,多账号大量建表时需核查/调大);
+     * `information_schema.TABLES.UPDATE_TIME` 在 InnoDB 下文档明确不可靠,
+     * 不作备选。详见 docs/CHANGE_NOTIFICATION_API.md。
+     *
+     * @override @protected
+     * @returns {Promise<number | null>}
+     */
+    async _readChangeCounter() {
+        let version = null;
+        await this.execute((row) => {
+            version = Number(row[0]);
+        }, 'SELECT SUM(COUNT_INSERT + COUNT_UPDATE + COUNT_DELETE) FROM performance_schema.table_io_waits_summary_by_table');
+        return version;
+    }
 }
 
 export { MySQLAdapter };

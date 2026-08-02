@@ -71,6 +71,7 @@ declare global {
                 Function: (event: any, state: { windowState: any }) => void
             ) => () => void;
             onBrowserFocus: (Function: (event: any) => void) => () => void;
+            onDbChange: (callback: (payload: string) => void) => () => void;
             restartApp: () => Promise<void>;
             getOverlayWindow: () => Promise<boolean>;
             updateVr: (
@@ -192,6 +193,19 @@ declare global {
          * `{ connected, latencyMs, lastHealthCheck }`.
          */
         GetHealth: () => Promise<string>;
+        /**
+         * F7:主库专用观察连接的 data_version,与漏斗事件 dv 同源(非写者
+         * 视角);未初始化/失败返回 null。旧桥无此方法 → JS 回退池连接
+         * PRAGMA data_version。
+         */
+        GetDataVersion: () => Promise<number | null>;
+        /**
+         * 变更通知门控——JS 侧在首个 onTableChange 订阅时开启、最后一个
+         * 退订时关闭;无消费者时 C# EmitChange 首行早退,写路径零成本。
+         * Promise 形态 = 最宽运行时(Electron IPC 异步;CefSharp 同步值
+         * 经 Promise.resolve 统一)。
+         */
+        SetChangeEnabled: (enabled: boolean) => Promise<void>;
     };
 
     // PostgreSQL backend bridge (Dotnet/PostgreSQL.cs). Bound via CefSharp
@@ -264,6 +278,27 @@ declare global {
          * marks busy connections to close on return (see C# docs).
          */
         ClearIdleConnections: () => Promise<void>;
+        /**
+         * 变更通知门控——JS 侧在首个 onTableChange 订阅时开启、最后一个
+         * 退订时关闭;无消费者时 C# EmitChange 首行早退,写路径零成本。
+         * Promise 形态 = 最宽运行时(Electron IPC 异步;CefSharp 同步值
+         * 经 Promise.resolve 统一)。
+         */
+        SetChangeEnabled: (enabled: boolean) => Promise<void>;
+        /**
+         * 安装/更新 NOTIFY 通知函数(幂等)。装触发器前调用一次。
+         * 返回受影响行数(CefSharp int / Electron Promise<number>)。
+         */
+        EnsureChangeFunction: () => Promise<number>;
+        /**
+         * 在指定表上安装变更触发器(幂等)。FOR EACH STATEMENT,
+         * 负载为模式限定表名;表不存在抛错。返回受影响行数。
+         */
+        CreateChangeTrigger: (table: string) => Promise<number>;
+        /** 移除指定表上的变更触发器(表不存在静默)。返回受影响行数。 */
+        DropChangeTrigger: (table: string) => Promise<number>;
+        /** 列出所有已装变更触发器的表(JSON 行数组字符串)。 */
+        ListChangeTriggers: () => Promise<string>;
     };
 
     const LogWatcher: {
@@ -612,6 +647,13 @@ declare global {
          * unaffected (MySqlConnector ClearAllPools only drops idle).
          */
         ClearIdleConnections: () => Promise<void>;
+        /**
+         * 变更通知门控——JS 侧在首个 onTableChange 订阅时开启、最后一个
+         * 退订时关闭;无消费者时 C# EmitChange 首行早退,写路径零成本。
+         * Promise 形态 = 最宽运行时(Electron IPC 异步;CefSharp 同步值
+         * 经 Promise.resolve 统一)。
+         */
+        SetChangeEnabled: (enabled: boolean) => Promise<void>;
     };
 
     const webApiService: {

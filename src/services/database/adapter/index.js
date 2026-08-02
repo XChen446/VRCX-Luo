@@ -1,4 +1,6 @@
 import { SQLiteAdapter } from './SQLiteAdapter.js';
+import { setChangeGateHook } from './EngineAdapter.js';
+import InteropApi from '../../../ipc-electron/interopApi.js';
 
 // ── Engine singleton & lazy-load policy ──────────────────────────────
 //
@@ -121,6 +123,98 @@ const _engineSpec = {
     }
 };
 
+// ── 写漏斗事件路由 ───────────────────────────────────────────────
+//
+// C# DatabaseChanged 事件(CefSharp: 绑定对象事件暴露为 add_EventName;
+// Electron: SetChangeCallback)负载 { conn, table, count, ts, dv },
+// 按 conn 路由:conn="default" → 单例 adapter;conn=connectionString →
+// createAdapter 创建的实例(外部迁移文件的写无对应实例,直接丢弃)。
+// 详见 docs/CHANGE_NOTIFICATION_API.md。
+
+/** @type {Map<string, import('./EngineAdapter.js').EngineAdapter>} connectionString → 实例 */
+const _changeInstances = new Map();
+
+/**
+ * @param {string} payloadJson - C# 漏斗事件负载(JSON 字符串)
+ * @private
+ */
+function _onFunnelEvent(payloadJson) {
+    let payload;
+    try {
+        payload = JSON.parse(payloadJson);
+    } catch {
+        return;
+    }
+    if (!payload || typeof payload !== 'object') return;
+    const instance =
+        payload.conn === 'default'
+            ? adapter
+            : _changeInstances.get(payload.conn);
+    if (!instance) return;
+    instance._onFunnelEvent(payload);
+}
+
+/** @type {Set<object>} 已绑定的桥对象(按对象幂等,防止重复绑定) */
+const _funnelBridges = new Set();
+
+/** @type {string[]} 门控扇出的引擎桥名(与 wireFunnelEvents 同列表) */
+const CHANGE_BRIDGES = ['SQLite', 'PostgreSQL', 'MySQL'];
+
+/**
+ * C# 写漏斗门控扇出。桥缺 SetChangeEnabled(旧版)静默跳过——事件恒发,
+ * 行为同现状;Electron 下桥方法经 IPC 异步返回 Promise,CefSharp 同步返回
+ * undefined——Promise.resolve 统一两种形态,调用不等待结果(门控是尽力而为)。
+ * @param {boolean} enabled
+ */
+function _applyChangeEnabled(enabled) {
+    for (const bridgeName of CHANGE_BRIDGES) {
+        const bridge = globalThis[bridgeName];
+        if (!bridge || typeof bridge.SetChangeEnabled !== 'function') continue;
+        try {
+            Promise.resolve(bridge.SetChangeEnabled(enabled)).catch(() => {});
+        } catch {
+            /* 旧桥/绑定异常静默 */
+        }
+    }
+}
+
+setChangeGateHook(_applyChangeEnabled);
+
+/**
+ * 绑定运行时桥的写漏斗事件(启动后调用;按桥对象幂等)。
+ * - Electron:preload 暴露 `window.electron.onDbChange`(主进程 SetChangeCallback
+ *   → 'db-change' 转推)。InteropApi Proxy 对任意类名属性返回 async 函数,
+ *   不能走 add_DatabaseChanged——JS 函数无法经 IPC 序列化;
+ * - CefSharp:绑定对象事件暴露为 `add_EventName(handler)`;
+ * - 桥版本差异/绑定失败静默——完备层计数器轮询兜底,不阻断主流程。
+ */
+export function wireFunnelEvents() {
+    if (
+        typeof window !== 'undefined' &&
+        window.electron &&
+        typeof window.electron.onDbChange === 'function'
+    ) {
+        try {
+            InteropApi.onDbChange(_onFunnelEvent);
+        } catch {
+            /* 绑定失败静默:完备层轮询兜底 */
+        }
+        return;
+    }
+    for (const bridgeName of ['SQLite', 'PostgreSQL', 'MySQL']) {
+        const bridge = globalThis[bridgeName];
+        if (!bridge || _funnelBridges.has(bridge)) continue;
+        try {
+            if (typeof bridge.add_DatabaseChanged === 'function') {
+                bridge.add_DatabaseChanged(_onFunnelEvent);
+                _funnelBridges.add(bridge);
+            }
+        } catch {
+            /* 桥版本差异/绑定失败静默 */
+        }
+    }
+}
+
 /**
  * Initialise (or switch) the singleton adapter for the given engine mode.
  *
@@ -153,6 +247,9 @@ const _engineSpec = {
  */
 export async function initAdapter(mode = 'sqlite') {
     const normalized = _normalizeMode(mode);
+    wireFunnelEvents();
+    // 启动时无订阅 → 门控关闭;首个 onTableChange 订阅经钩子开启。
+    _applyChangeEnabled(false);
 
     // sqlite: synchronous, no lazy import.
     if (normalized === 'sqlite') {
@@ -256,7 +353,12 @@ async function createAdapter(config) {
         if (!rest || /^\/+$/.test(rest) || !rest.trim()) {
             throw new Error('createAdapter: connection URI has empty path');
         }
-        return new SQLiteAdapter(config);
+        const instance = new SQLiteAdapter(config);
+        if (instance.connectionString) {
+            // 漏斗事件按 conn=connectionString 路由到实例(与 PG/MySQL 分支同款)
+            _changeInstances.set(instance.connectionString, instance);
+        }
+        return instance;
     }
     // Non-sqlite schemes: resolve via the `_engineSpec` table. Each
     // entry's `load` is a literal-path dynamic `import()` that Rolldown
@@ -280,7 +382,12 @@ async function createAdapter(config) {
             `createAdapter: adapter module did not export ${spec.className}`
         );
     }
-    return new AdapterClass(config);
+    const instance = new AdapterClass(config);
+    if (instance.connectionString) {
+        // 漏斗事件按 conn=connectionString 路由到实例
+        _changeInstances.set(instance.connectionString, instance);
+    }
+    return instance;
 }
 
 export { adapter, SQLiteAdapter, createAdapter };
