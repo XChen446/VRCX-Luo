@@ -23,6 +23,8 @@ import {
 const TOKEN_KEY = 'vrcxRemoteToken';
 const FRIEND_SECTION_HEIGHTS_KEY = 'vrcxRemoteFriendSectionHeights';
 
+const MAX_REMEMBERED_NOTIFICATION_IDS = 500;
+
 const state = {
     token: localStorage.getItem(TOKEN_KEY) || '',
     snapshot: null,
@@ -549,12 +551,21 @@ function observeRemoteNotifications(snapshot) {
         state.knownNotificationIds,
         notifications
     );
+    // Merge instead of replacing: the snapshot is a top-80 window, so entries
+    // that scroll out must stay remembered or they would be re-reported as
+    // fresh when they re-enter the window. Cap the set to bound memory.
+    const merged = new Set(currentIds);
+    for (const id of state.knownNotificationIds) {
+        if (merged.size >= MAX_REMEMBERED_NOTIFICATION_IDS) {
+            break;
+        }
+        merged.add(id);
+    }
+    state.knownNotificationIds = merged;
     if (!state.notificationSnapshotReady) {
-        state.knownNotificationIds = currentIds;
         state.notificationSnapshotReady = true;
         return;
     }
-    state.knownNotificationIds = currentIds;
     if (!fresh.length) {
         return;
     }

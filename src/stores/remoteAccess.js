@@ -151,6 +151,10 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
     }
 
     async function setPassword(password) {
+        if (!password || password.length < 6) {
+            toast.error('密码至少需要 6 个字符');
+            return false;
+        }
         const hash = await createPasswordHash(password);
         await configRepository.setString(PASSWORD_KEY, hash);
         await syncPasswordHashToNativeStorage(hash);
@@ -158,6 +162,7 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
         if (enabled.value) {
             await start();
         }
+        return true;
     }
 
     async function repairLanAccess() {
