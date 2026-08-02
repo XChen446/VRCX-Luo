@@ -21,7 +21,15 @@ public class RemoteAccessServer
     public static RemoteAccessServer Instance { get; } = new();
 
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-    private readonly ConcurrentDictionary<string, DateTime> _tokens = new();
+    private sealed class TokenEntry
+    {
+        public DateTime ExpiresAt;
+        public DateTime LastUsedAt;
+    }
+
+    private static readonly TimeSpan TokenLifetime = TimeSpan.FromDays(7);
+    private static readonly TimeSpan TokenIdleTimeout = TimeSpan.FromHours(24);
+    private readonly ConcurrentDictionary<string, TokenEntry> _tokens = new();
     private readonly ConcurrentDictionary<WebSocket, SemaphoreSlim> _sockets = new();
     private readonly ConcurrentDictionary<string, LoginFailure> _loginFailures = new();
     private HttpListener? _listener;
@@ -102,6 +110,7 @@ public class RemoteAccessServer
                     gate.Dispose();
             }
             _sockets.Clear();
+            _tokens.Clear(); // Changing the password or stopping the server revokes every session.
         }
         catch (Exception e)
         {
@@ -234,7 +243,11 @@ public class RemoteAccessServer
             }
             _loginFailures.TryRemove(clientKey, out _);
             var token = CreateToken();
-            _tokens[token] = DateTime.UtcNow.AddDays(7);
+            _tokens[token] = new TokenEntry
+            {
+                ExpiresAt = DateTime.UtcNow.Add(TokenLifetime),
+                LastUsedAt = DateTime.UtcNow
+            };
             await SendJson(context, new { token });
             return;
         }
@@ -463,13 +476,15 @@ public class RemoteAccessServer
 
     private bool ValidateToken(string token)
     {
-        if (!_tokens.TryGetValue(token, out var expiresAt))
+        if (!_tokens.TryGetValue(token, out var entry))
             return false;
-        if (expiresAt < DateTime.UtcNow)
+        var now = DateTime.UtcNow;
+        if (entry.ExpiresAt < now || entry.LastUsedAt + TokenIdleTimeout < now)
         {
             _tokens.TryRemove(token, out _);
             return false;
         }
+        entry.LastUsedAt = now;
         return true;
     }
 

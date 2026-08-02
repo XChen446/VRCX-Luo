@@ -107,6 +107,9 @@ function createWsFrame(payload) {
     return Buffer.concat([header, data]);
 }
 
+const TOKEN_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+const TOKEN_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 class RemoteAccessServer {
     constructor({ rootDir, storage, getMainWindow }) {
         this.rootDir = rootDir;
@@ -236,6 +239,7 @@ class RemoteAccessServer {
             }
         }
         this.sockets.clear();
+        this.tokens.clear(); // Changing the password or stopping the server revokes every session.
         if (this.broadcastTimer) {
             clearInterval(this.broadcastTimer);
             this.broadcastTimer = null;
@@ -276,11 +280,16 @@ class RemoteAccessServer {
     }
 
     validateToken(token) {
-        const expiresAt = this.tokens.get(token);
-        if (!expiresAt || expiresAt < Date.now()) {
+        const entry = this.tokens.get(token);
+        if (!entry) {
+            return false;
+        }
+        const now = Date.now();
+        if (entry.expiresAt < now || entry.lastUsedAt + TOKEN_IDLE_TIMEOUT_MS < now) {
             this.tokens.delete(token);
             return false;
         }
+        entry.lastUsedAt = now;
         return true;
     }
 
@@ -311,7 +320,10 @@ class RemoteAccessServer {
                 }
                 this.loginFailures.delete(clientKey);
                 const token = crypto.randomBytes(32).toString('base64url');
-                this.tokens.set(token, Date.now() + 7 * 24 * 60 * 60 * 1000);
+                this.tokens.set(token, {
+                    expiresAt: Date.now() + TOKEN_LIFETIME_MS,
+                    lastUsedAt: Date.now()
+                });
                 sendJson(res, 200, { token });
                 return;
             }
