@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Timers;
+using Timer = System.Timers.Timer;
 using NLog;
 
 namespace VRCX

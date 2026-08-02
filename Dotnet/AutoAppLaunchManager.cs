@@ -8,6 +8,7 @@ using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Timers;
+using Timer = System.Timers.Timer;
 using Microsoft.Win32;
 using NLog;
 

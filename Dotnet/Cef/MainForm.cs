@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
+using Timer = System.Windows.Forms.Timer;
 using CefSharp;
 using CefSharp.WinForms;
 using NLog;
