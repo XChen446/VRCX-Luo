@@ -24,4 +24,13 @@ describe('initRemoteAccessOnStartup', () => {
 
         expect(mocks.init).toHaveBeenCalledTimes(1);
     });
+
+    it('does not throw when store initialization fails', async () => {
+        mocks.init.mockRejectedValueOnce(new Error('native API unavailable'));
+        const { initRemoteAccessOnStartup } = await import(
+            '../remoteAccessStartup'
+        );
+
+        await expect(initRemoteAccessOnStartup()).resolves.toBeUndefined();
+    });
 });
