@@ -24,4 +24,32 @@ describe('remote scroll state', () => {
         expect(newRoot.querySelectorAll('.friend-list')[0].scrollTop).toBe(120);
         expect(newRoot.querySelectorAll('.friend-list')[1].scrollTop).toBe(260);
     });
+
+    it('captures and restores multiple scroll containers by selector', () => {
+        const oldRoot = document.createElement('div');
+        oldRoot.innerHTML = `
+            <div class="content"><div class="friend-grid"></div></div>
+        `;
+        oldRoot.querySelector('.content').scrollTop = 540;
+        oldRoot.querySelector('.friend-grid').scrollTop = 30;
+
+        const state = captureScrollState(oldRoot, [
+            '.content',
+            '.friend-grid'
+        ]);
+        expect(state).toHaveLength(2);
+
+        const newRoot = document.createElement('div');
+        newRoot.innerHTML = `
+            <div class="content"><div class="friend-grid"></div></div>
+        `;
+        restoreScrollState(
+            newRoot,
+            ['.content', '.friend-grid'],
+            state
+        );
+
+        expect(newRoot.querySelector('.content').scrollTop).toBe(540);
+        expect(newRoot.querySelector('.friend-grid').scrollTop).toBe(30);
+    });
 });

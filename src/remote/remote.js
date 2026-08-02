@@ -304,12 +304,59 @@ async function logout() {
 async function refreshSnapshot() {
     applySnapshot(await api('/api/snapshot'));
     state.error = '';
+    // Manual refreshes and action follow-ups always re-render so UI state
+    // (banner, busy indicators) settles immediately; the 2s broadcast path
+    // is the one that benefits from the fingerprint gate in applySnapshot.
     render();
 }
+
+function snapshotFingerprint(snap) {
+    if (!snap) {
+        return '';
+    }
+    const friends = snap.friends || [];
+    const friendsSig = friends
+        .map(
+            (friend) =>
+                `${friend.id}:${friend.state}:${friend.location}:${friend.displayName}`
+        )
+        .join('|');
+    const notificationsSig = (snap.notifications || [])
+        .map((notification) => `${notification.id}:${notification.seen}`)
+        .join('|');
+    const feedSig = (snap.feed || [])
+        .map((entry) => entry.id || `${entry.userId}:${entry.created_at}`)
+        .join('|');
+    return [
+        snap.loggedIn,
+        snap.currentUser?.status,
+        snap.currentUser?.statusDescription,
+        snap.currentUser?.location,
+        snap.game?.isRunning,
+        snap.game?.isSteamVrRunning,
+        snap.autoFollow?.isActive,
+        snap.autoFollow?.targetFriendId,
+        snap.location?.location,
+        snap.location?.name,
+        friendsSig,
+        notificationsSig,
+        feedSig
+    ].join('~');
+}
+
+let lastSnapshotFingerprint = '';
 
 function applySnapshot(snapshot) {
     state.snapshot = snapshot;
     observeRemoteNotifications(snapshot);
+    const fingerprint = snapshotFingerprint(snapshot);
+    if (fingerprint === lastSnapshotFingerprint) {
+        // Nothing the UI renders changed: skip the full tree rebuild so the
+        // page keeps its DOM (and therefore its scroll positions) untouched.
+        return;
+    }
+    lastSnapshotFingerprint = fingerprint;
+    render();
 }
 
 function connectSocket() {
@@ -338,7 +385,6 @@ function connectSocket() {
         const message = JSON.parse(event.data);
         if (message.type === 'snapshot') {
             applySnapshot(message.data);
-            render();
         } else if (message.type === 'action-result' && message.ok === false) {
             notify(message.error || '远控动作失败', 'error');
         }
@@ -1208,7 +1254,13 @@ function renderFriendsView(snap, selected) {
                     el('h2', { text: '好友列表' }),
                     renderBadge(`${friends.length} 人`)
                 ]),
-                el('div', { class: 'friend-grid' }, friends.map(renderFriend))
+                // Cap the rendered list: 1000 DOM nodes per friend is far more
+                // than any phone can keep smooth at 2s intervals.
+                el(
+                    'div',
+                    { class: 'friend-grid' },
+                    friends.slice(0, 1000).map(renderFriend)
+                )
             ])
         ])
     ];
@@ -1565,7 +1617,11 @@ function renderMain() {
         state.selectedFriendId = selected.id;
     }
 
-    const scrollState = captureScrollState(root, '.friend-list');
+    const scrollState = captureScrollState(root, [
+        '.friend-list',
+        '.content',
+        '.friend-grid'
+    ]);
     root.replaceChildren(
         el('main', { class: 'app-shell' }, [
             el('aside', { class: 'left-nav' }, [
@@ -1589,7 +1645,7 @@ function renderMain() {
             renderToastLayer()
         ])
     );
-    restoreScrollState(root, '.friend-list', scrollState);
+    restoreScrollState(root, ['.friend-list', '.content', '.friend-grid'], scrollState);
 }
 
 function renderToastLayer() {
