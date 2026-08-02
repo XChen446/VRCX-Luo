@@ -137,7 +137,7 @@ namespace VRCX
         {
         }
 
-        public override RemoteAccessStatus StartRemoteAccessServer(int port, bool privacyMode)
+        public override RemoteAccessStatus StartRemoteAccessServer(int port, string bindAddress, bool privacyMode)
         {
             return new RemoteAccessStatus
             {

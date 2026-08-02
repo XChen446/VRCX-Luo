@@ -170,6 +170,15 @@
                     @change="remoteAccessStore.setPort($event.target.value)" />
             </SettingsItem>
 
+            <SettingsItem label="监听地址" description="留空监听所有网卡；多网卡（VPN/虚拟交换机）场景可指定 IPv4 地址仅在本机该网卡监听。">
+                <Input
+                    class="w-44"
+                    type="text"
+                    placeholder="留空 = 所有网卡"
+                    :model-value="remoteAccessStore.bindAddress"
+                    @change="remoteAccessStore.setBindAddress($event.target.value)" />
+            </SettingsItem>
+
             <SettingsItem label="访问密码" description="密码仅用于换取网页会话令牌，不会明文保存。">
                 <div class="flex items-center gap-2">
                     <Input

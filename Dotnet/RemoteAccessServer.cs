@@ -39,6 +39,7 @@ public class RemoteAccessServer
     private Task? _lanProxyLoopTask;
     private Func<string, Task<string>>? _evaluateScript;
     private int _port = 23580;
+    private string _bindAddress = "";
     private bool _privacyMode;
     private bool _localOnly;
     private bool _lanProxyRunning;
@@ -49,7 +50,7 @@ public class RemoteAccessServer
         running = IsListenerRunning(_listener),
         port = _port,
         url = IsListenerRunning(_listener)
-            ? $"http://{(_localOnly ? "127.0.0.1" : GetLanAddress())}:{_port}/"
+            ? $"http://{(string.IsNullOrEmpty(_bindAddress) ? (_localOnly ? "127.0.0.1" : GetLanAddress()) : _bindAddress)}:{_port}/"
             : "",
         error = _error,
         localOnly = _localOnly,
@@ -57,10 +58,11 @@ public class RemoteAccessServer
         lanAddress = GetLanAddress()
     };
 
-    public RemoteAccessStatus Start(int port, bool privacyMode, Func<string, Task<string>> evaluateScript)
+    public RemoteAccessStatus Start(int port, string bindAddress, bool privacyMode, Func<string, Task<string>> evaluateScript)
     {
         Stop();
         _port = port;
+        _bindAddress = bindAddress ?? "";
         _privacyMode = privacyMode;
         _evaluateScript = evaluateScript;
         _error = "";
@@ -69,8 +71,8 @@ public class RemoteAccessServer
         _cts = new CancellationTokenSource();
         try
         {
-            _listener = CreateStartedListener(_port);
-            if (_localOnly)
+            _listener = CreateStartedListener(_port, _bindAddress);
+            if (_localOnly && string.IsNullOrEmpty(_bindAddress))
                 PromoteLocalListenerToLanProxy(_cts.Token);
             var listener = _listener;
             var token = _cts.Token;
@@ -589,14 +591,18 @@ public class RemoteAccessServer
         await socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
     }
 
-    private HttpListener CreateStartedListener(int port)
+    private HttpListener CreateStartedListener(int port, string bindAddress)
     {
-        var prefixes = new[]
-        {
-            $"http://+:{port}/",
-            $"http://{GetLanAddress()}:{port}/",
-            $"http://127.0.0.1:{port}/"
-        };
+        // An explicit bind address wins; otherwise try the wildcard prefix and
+        // fall back to the LAN address / loopback.
+        var prefixes = string.IsNullOrEmpty(bindAddress)
+            ? new[]
+            {
+                $"http://+:{port}/",
+                $"http://{GetLanAddress()}:{port}/",
+                $"http://127.0.0.1:{port}/"
+            }
+            : new[] { $"http://{bindAddress}:{port}/" };
 
         Exception? lastError = null;
         for (var i = 0; i < prefixes.Length; i++)
@@ -606,7 +612,7 @@ public class RemoteAccessServer
             {
                 listener.Prefixes.Add(prefixes[i]);
                 listener.Start();
-                if (i == prefixes.Length - 1)
+                if (i == prefixes.Length - 1 && string.IsNullOrEmpty(bindAddress))
                 {
                     _localOnly = true;
                     _error = "LAN listener requires Windows URL ACL permission; started on 127.0.0.1 only.";

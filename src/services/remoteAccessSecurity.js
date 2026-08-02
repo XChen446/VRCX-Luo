@@ -58,6 +58,32 @@ export function clampRemotePort(value) {
     return Math.min(65535, Math.max(1024, port));
 }
 
+/**
+ * Normalises a remote-access bind address.
+ * - Empty / '0.0.0.0' / '*' -> '' (all interfaces, current default)
+ * - Anything else must be a valid IPv4 literal, otherwise it is rejected
+ *   (empty) so a malformed setting can never crash the listener startup.
+ */
+export function normalizeBindAddress(value) {
+    if (!value) {
+        return '';
+    }
+    const address = String(value).trim();
+    if (address === '0.0.0.0' || address === '*') {
+        return '';
+    }
+    const parts = address.split('.');
+    if (
+        parts.length === 4 &&
+        parts.every(
+            (part) => /^\d{1,3}$/.test(part) && Number(part) <= 255
+        )
+    ) {
+        return address;
+    }
+    return '';
+}
+
 export function createRemoteToken() {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     return bytesToBase64(bytes)

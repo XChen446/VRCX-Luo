@@ -26,7 +26,7 @@ namespace VRCX
         public abstract void FlashWindow();
         public abstract void SetUserAgent();
         public abstract void OpenCalendarFile(string icsContent);
-        public abstract RemoteAccessStatus StartRemoteAccessServer(int port, bool privacyMode);
+        public abstract RemoteAccessStatus StartRemoteAccessServer(int port, string bindAddress, bool privacyMode);
         public abstract void StopRemoteAccessServer();
         public abstract RemoteAccessStatus GetRemoteAccessStatus();
         public abstract RemoteAccessStatus RepairRemoteAccessLan(int port);

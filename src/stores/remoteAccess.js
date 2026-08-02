@@ -5,11 +5,13 @@ import { toast } from 'vue-sonner';
 import configRepository from '../services/config';
 import {
     clampRemotePort,
-    createPasswordHash
+    createPasswordHash,
+    normalizeBindAddress
 } from '../services/remoteAccessSecurity';
 
 const ENABLED_KEY = 'VRCX_remoteAccessEnabled';
 const PORT_KEY = 'VRCX_remoteAccessPort';
+const BIND_ADDRESS_KEY = 'VRCX_remoteAccessBindAddress';
 const PASSWORD_KEY = 'VRCX_remoteAccessPasswordHash';
 const PRIVACY_KEY = 'VRCX_remoteAccessPrivacyMode';
 const NATIVE_API_UNAVAILABLE_MESSAGE =
@@ -37,6 +39,7 @@ function applyStatus(status, refs) {
 export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
     const enabled = ref(false);
     const port = ref(23580);
+    const bindAddress = ref('');
     const hasPassword = ref(false);
     const privacyMode = ref(false);
     const running = ref(false);
@@ -50,6 +53,7 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
     const canStart = computed(() => hasPassword.value && port.value > 0);
     const refs = {
         port,
+        bindAddress,
         running,
         url,
         error,
@@ -64,15 +68,17 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
             return;
         }
         initialized = true;
-        const [enabledValue, portValue, passwordHash, privacyValue] =
+        const [enabledValue, portValue, bindAddressValue, passwordHash, privacyValue] =
             await Promise.all([
                 configRepository.getBool(ENABLED_KEY, false),
                 configRepository.getInt(PORT_KEY, 23580),
+                configRepository.getString(BIND_ADDRESS_KEY, ''),
                 configRepository.getString(PASSWORD_KEY, ''),
                 configRepository.getBool(PRIVACY_KEY, false)
             ]);
         enabled.value = enabledValue;
         port.value = clampRemotePort(portValue);
+        bindAddress.value = normalizeBindAddress(bindAddressValue);
         hasPassword.value = Boolean(passwordHash);
         privacyMode.value = privacyValue;
         await syncPasswordHashToNativeStorage(passwordHash);
@@ -95,6 +101,7 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
         try {
             const status = await getNativeRemoteApi().start(
                 port.value,
+                bindAddress.value,
                 privacyMode.value
             );
             applyStatus(status, refs);
@@ -137,6 +144,14 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
     async function setPort(value) {
         port.value = clampRemotePort(value);
         await configRepository.setInt(PORT_KEY, port.value);
+        if (enabled.value) {
+            await start();
+        }
+    }
+
+    async function setBindAddress(value) {
+        bindAddress.value = normalizeBindAddress(value);
+        await configRepository.setString(BIND_ADDRESS_KEY, bindAddress.value);
         if (enabled.value) {
             await start();
         }
@@ -199,6 +214,7 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
     return {
         enabled,
         port,
+        bindAddress,
         hasPassword,
         privacyMode,
         running,
@@ -214,6 +230,7 @@ export const useRemoteAccessStore = defineStore('RemoteAccess', () => {
         stop,
         setEnabled,
         setPort,
+        setBindAddress,
         setPrivacyMode,
         setPassword,
         repairLanAccess

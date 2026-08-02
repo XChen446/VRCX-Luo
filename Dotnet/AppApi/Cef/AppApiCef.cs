@@ -248,9 +248,9 @@ namespace VRCX
             }
         }
 
-        public override RemoteAccessStatus StartRemoteAccessServer(int port, bool privacyMode)
+        public override RemoteAccessStatus StartRemoteAccessServer(int port, string bindAddress, bool privacyMode)
         {
-            return RemoteAccessServer.Instance.Start(port, privacyMode, async (script) =>
+            return RemoteAccessServer.Instance.Start(port, bindAddress, privacyMode, async (script) =>
             {
                 var response = await MainForm.Instance.Browser.EvaluateScriptAsync(script);
                 return response.Success ? response.Result?.ToString() ?? "null" : JsonSerializer.Serialize(new { error = response.Message });

@@ -63,8 +63,8 @@ contextBridge.exposeInMainWorld('electron', {
     desktopNotification: (title, body, icon) =>
         ipcRenderer.invoke('notification:showNotification', title, body, icon),
     restartApp: () => ipcRenderer.invoke('app:restart'),
-    startRemoteAccessServer: (port, privacyMode) =>
-        ipcRenderer.invoke('remote:start', port, privacyMode),
+    startRemoteAccessServer: (port, bindAddress, privacyMode) =>
+        ipcRenderer.invoke('remote:start', port, bindAddress, privacyMode),
     stopRemoteAccessServer: () => ipcRenderer.invoke('remote:stop'),
     getRemoteAccessStatus: () => ipcRenderer.invoke('remote:status'),
     repairRemoteAccessLan: (port) =>

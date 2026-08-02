@@ -66,6 +66,26 @@ function clampRemotePort(value) {
     return Math.min(65535, Math.max(1024, port));
 }
 
+// Only allow IPv4 literals (or empty = all interfaces). A malicious renderer
+// must not be able to bind the server to arbitrary hostnames.
+function normalizeBindAddress(value) {
+    if (!value) {
+        return '';
+    }
+    const address = String(value).trim();
+    if (address === '0.0.0.0' || address === '*') {
+        return '';
+    }
+    const parts = address.split('.');
+    if (
+        parts.length === 4 &&
+        parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+    ) {
+        return address;
+    }
+    return '';
+}
+
 let tray = null;
 let trayIcon = null;
 let trayIconNotify = null;
@@ -264,8 +284,12 @@ ipcMain.handle('app:restart', () => {
     }
 });
 
-ipcMain.handle('remote:start', (event, port, privacyMode) => {
-    return remoteAccessServer.start(clampRemotePort(port), privacyMode);
+ipcMain.handle('remote:start', (event, port, bindAddress, privacyMode) => {
+    return remoteAccessServer.start(
+        clampRemotePort(port),
+        normalizeBindAddress(bindAddress),
+        privacyMode
+    );
 });
 
 ipcMain.handle('remote:stop', () => {

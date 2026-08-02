@@ -140,7 +140,9 @@ class RemoteAccessServer {
         return {
             running: !!this.server,
             port: this.port,
-            url: this.server ? `http://${getLanAddress()}:${this.port}/` : '',
+            url: this.server
+                ? `http://${this.bindAddress || getLanAddress()}:${this.port}/`
+                : '',
             error: this.error,
             localOnly: false,
             lanAccessReady: this.hasFirewallRule(this.port),
@@ -206,9 +208,10 @@ class RemoteAccessServer {
         return result.status === 0;
     }
 
-    start(port, privacyMode) {
+    start(port, bindAddress, privacyMode) {
         this.stop();
         this.port = port;
+        this.bindAddress = bindAddress || '';
         this.privacyMode = !!privacyMode;
         this.error = '';
         this.server = http.createServer((req, res) => this.handleRequest(req, res));
@@ -236,7 +239,9 @@ class RemoteAccessServer {
                 this.error = err.message;
                 resolve(this.status());
             });
-            this.server.listen(this.port, '0.0.0.0');
+            // Empty bind address = all interfaces; otherwise bind to the
+            // user-selected interface only.
+            this.server.listen(this.port, this.bindAddress || '0.0.0.0');
         });
     }
 

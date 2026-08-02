@@ -105,6 +105,7 @@ describe('useRemoteAccessStore native bridge compatibility', () => {
         expect(saveStorage).toHaveBeenCalled();
         expect(globalThis.AppApi.StartRemoteAccessServer).toHaveBeenCalledWith(
             23580,
+            '',
             false
         );
     });
