@@ -139,14 +139,18 @@ function toPlainUser(user, privacyMode, stores = {}) {
             ref.username ||
             ref.id ||
             user.id,
-        userIcon: ref.userIcon || user.userIcon || '',
-        currentAvatarThumbnailImageUrl:
-            ref.currentAvatarThumbnailImageUrl ||
-            user.currentAvatarThumbnailImageUrl ||
-            '',
+        // In privacy mode the avatar URLs are stripped: loading an image from
+        // the VRChat CDN would itself leak a friend's online state.
+        userIcon: privacyMode ? '' : ref.userIcon || user.userIcon || '',
+        currentAvatarThumbnailImageUrl: privacyMode
+            ? ''
+            : ref.currentAvatarThumbnailImageUrl ||
+              user.currentAvatarThumbnailImageUrl ||
+              '',
         userColour: ref.$userColour || user.$userColour || '',
-        profilePicOverride:
-            ref.profilePicOverride || user.profilePicOverride || '',
+        profilePicOverride: privacyMode
+            ? ''
+            : ref.profilePicOverride || user.profilePicOverride || '',
         status: ref.status || user.status || '',
         statusDescription: privacyMode
             ? ''
@@ -156,12 +160,14 @@ function toPlainUser(user, privacyMode, stores = {}) {
         locationName: privacyMode ? '' : locationName,
         worldName: privacyMode ? '' : locationName,
         travelingToLocation,
-        onlineFor: ref.$online_for || user.$online_for || null,
-        activeFor: ref.$active_for || user.$active_for || null,
-        offlineFor: ref.$offline_for || user.$offline_for || null,
-        locationAt: ref.$location_at || user.$location_at || null,
-        travelingToTime:
-            ref.$travelingToTime || user.$travelingToTime || null,
+        // Session durations reveal presence; hide them with the location.
+        onlineFor: privacyMode ? null : ref.$online_for || user.$online_for || null,
+        activeFor: privacyMode ? null : ref.$active_for || user.$active_for || null,
+        offlineFor: privacyMode ? null : ref.$offline_for || user.$offline_for || null,
+        locationAt: privacyMode ? null : ref.$location_at || user.$location_at || null,
+        travelingToTime: privacyMode
+            ? null
+            : ref.$travelingToTime || user.$travelingToTime || null,
         pendingOffline: Boolean(user.pendingOffline || ref.pendingOffline),
         isFriend: Boolean(user.isFriend || user.$isFriend),
         isFavorite: Boolean(user.$isFavorite)

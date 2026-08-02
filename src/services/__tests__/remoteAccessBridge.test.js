@@ -341,10 +341,18 @@ describe('remoteAccessBridge', () => {
 
         expect(snapshot.currentUser.statusDescription).toBe('');
         expect(snapshot.currentUser.location).toBe('');
+        expect(snapshot.currentUser.userIcon).toBe('');
+        expect(snapshot.currentUser.currentAvatarThumbnailImageUrl).toBe('');
+        expect(snapshot.currentUser.onlineFor).toBeNull();
+        expect(snapshot.currentUser.activeFor).toBeNull();
+        expect(snapshot.currentUser.locationAt).toBeNull();
         expect(snapshot.notifications[0].senderUsername).toBe('Hidden');
         expect(snapshot.notifications[0].message).toBe('');
         expect(snapshot.notifications[0].details).toBeNull();
         expect(snapshot.notifications[0].responses).toEqual([]);
+        // Friend entries are redacted the same way as the current user.
+        expect(snapshot.friends[0].currentAvatarThumbnailImageUrl).toBe('');
+        expect(snapshot.friends[0].onlineFor).toBeNull();
     });
 
     it('builds friend snapshots from friend context refs', async () => {
