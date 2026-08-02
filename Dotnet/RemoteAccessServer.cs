@@ -22,7 +22,7 @@ public class RemoteAccessServer
 
     private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
     private readonly ConcurrentDictionary<string, DateTime> _tokens = new();
-    private readonly ConcurrentDictionary<WebSocket, byte> _sockets = new();
+    private readonly ConcurrentDictionary<WebSocket, SemaphoreSlim> _sockets = new();
     private readonly ConcurrentDictionary<string, LoginFailure> _loginFailures = new();
     private HttpListener? _listener;
     private TcpListener? _lanProxyListener;
@@ -98,6 +98,8 @@ public class RemoteAccessServer
             foreach (var socket in _sockets.Keys)
             {
                 try { socket.Abort(); } catch { }
+                if (_sockets.TryRemove(socket, out var gate))
+                    gate.Dispose();
             }
             _sockets.Clear();
         }
@@ -286,10 +288,21 @@ public class RemoteAccessServer
 
         var wsContext = await context.AcceptWebSocketAsync(null);
         var socket = wsContext.WebSocket;
-        _sockets.TryAdd(socket, 0);
+        _sockets.TryAdd(socket, new SemaphoreSlim(1, 1));
         try
         {
-            await SendSocketRaw(socket, WrapSnapshot(await GetSnapshot()));
+            if (_sockets.TryGetValue(socket, out var gate))
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    await SendSocketRaw(socket, Encoding.UTF8.GetBytes(WrapSnapshot(await GetSnapshot())));
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
             var buffer = new byte[1024];
             while (socket.State == WebSocketState.Open)
             {
@@ -300,7 +313,8 @@ public class RemoteAccessServer
         }
         finally
         {
-            _sockets.TryRemove(socket, out _);
+            if (_sockets.TryRemove(socket, out var gate))
+                gate.Dispose();
             socket.Dispose();
         }
     }
@@ -312,8 +326,12 @@ public class RemoteAccessServer
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), token);
-                if (!_sockets.IsEmpty)
-                    BroadcastSnapshot();
+                if (_sockets.IsEmpty)
+                    continue;
+                var dirty = await EvalJson("window.$remoteBridge?.isSnapshotDirty() ?? true");
+                if (dirty != "true")
+                    continue;
+                BroadcastSnapshot();
             }
             catch (TaskCanceledException)
             {
@@ -369,10 +387,40 @@ public class RemoteAccessServer
 
     private async Task BroadcastRawMessage(string message)
     {
-        foreach (var socket in _sockets.Keys)
+        var bytes = Encoding.UTF8.GetBytes(message);
+        foreach (var pair in _sockets)
         {
-            if (socket.State == WebSocketState.Open)
-                await SendSocketRaw(socket, message);
+            var socket = pair.Key;
+            var gate = pair.Value;
+            if (socket.State != WebSocketState.Open)
+            {
+                if (_sockets.TryRemove(socket, out _))
+                {
+                    gate.Dispose();
+                    try { socket.Dispose(); } catch { }
+                }
+                continue;
+            }
+            try
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    await SendSocketRaw(socket, bytes);
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+            catch
+            {
+                if (_sockets.TryRemove(socket, out _))
+                {
+                    gate.Dispose();
+                    try { socket.Dispose(); } catch { }
+                }
+            }
         }
     }
 
@@ -504,9 +552,8 @@ public class RemoteAccessServer
         context.Response.Close();
     }
 
-    private static async Task SendSocketRaw(WebSocket socket, string json)
+    private static async Task SendSocketRaw(WebSocket socket, byte[] bytes)
     {
-        var bytes = Encoding.UTF8.GetBytes(json);
         await socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
     }
 
