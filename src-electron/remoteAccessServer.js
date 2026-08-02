@@ -205,15 +205,26 @@ class RemoteAccessServer {
                 this.error = '';
             });
             this.broadcastTimer = setInterval(() => {
-                if (this.sockets.size > 0) {
-                    this.broadcastSnapshot();
+                if (this.sockets.size === 0) {
+                    return;
                 }
+                this.broadcastTick().catch((err) => {
+                    this.error = err?.message || String(err);
+                });
             }, 2000);
         } catch (err) {
             this.error = err.message;
             this.server = null;
         }
         return this.status();
+    }
+
+    async broadcastTick() {
+        const dirty = await this.isSnapshotDirty();
+        if (dirty !== 'true') {
+            return;
+        }
+        await this.broadcastSnapshot();
     }
 
     stop() {
@@ -332,7 +343,9 @@ class RemoteAccessServer {
                 if (body.requestId) {
                     this.broadcastActionResult(body.requestId, result);
                 }
-                this.broadcastSnapshot();
+                this.broadcastSnapshot().catch((err) => {
+                    this.error = err?.message || String(err);
+                });
                 return;
             }
             sendJson(res, 404, { error: 'Not found' });
@@ -375,7 +388,9 @@ class RemoteAccessServer {
                 socket.destroy();
             }
         });
-        this.sendSnapshot(socket);
+        this.sendSnapshot(socket).catch(() => {
+            socket.destroy();
+        });
     }
 
     async sendSnapshot(socket) {
@@ -384,11 +399,23 @@ class RemoteAccessServer {
     }
 
     async broadcastSnapshot() {
+        // Evaluate the snapshot exactly once per tick; per-socket evaluation
+        // would multiply renderer blocking by the number of connected clients.
+        const snapshot = await this.snapshot();
+        const frame = createWsFrame(`{"type":"snapshot","data":${snapshot}}`);
         for (const socket of [...this.sockets]) {
             if (!socket.destroyed) {
-                await this.sendSnapshot(socket);
+                try {
+                    socket.write(frame);
+                } catch {
+                    socket.destroy();
+                }
             }
         }
+    }
+
+    async isSnapshotDirty() {
+        return this.evaluate('window.$remoteBridge?.isSnapshotDirty() ?? true');
     }
 
     broadcastActionResult(requestId, resultJson) {

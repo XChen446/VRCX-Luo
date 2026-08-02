@@ -15,6 +15,15 @@ const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
 
+// Unhandled rejections would otherwise terminate the main process (Node >= 15).
+// Log them instead so a single failing async path cannot take down the app.
+process.on('unhandledRejection', (reason) => {
+    console.error('[main] unhandledRejection:', reason);
+});
+process.on('uncaughtException', (error) => {
+    console.error('[main] uncaughtException:', error);
+});
+
 //app.disableHardwareAcceleration();
 
 const bundledDotNetPath = path.join(process.resourcesPath, 'dotnet-runtime');
