@@ -4,8 +4,7 @@ import { photonEmojis } from '../shared/constants/photon.js';
 import {
     buildVisibleFriendSections,
     clampFriendSectionHeight,
-    friendDisplayModel,
-    friendStateTone
+    friendDisplayModel
 } from './remoteFriendSections.js';
 import {
     canRequestBrowserNotificationPermission,
@@ -257,10 +256,6 @@ function renderAvatar(user, className = 'avatar') {
             );
         }
     });
-}
-
-function actionAllowed(snap, type) {
-    return !snap?.capabilities || snap.capabilities.includes(type);
 }
 
 async function api(path, options = {}) {
@@ -1142,23 +1137,6 @@ function filterFeedRows(rows) {
             .toLowerCase()
             .includes(query);
     });
-}
-
-function renderNowPlaying(snap) {
-    const np = snap?.gameLog?.nowPlaying || {};
-    return el('article', { class: 'panel' }, [
-        el('div', { class: 'panel-heading' }, [
-            el('h2', { text: '当前视频' }),
-            renderBadge(np.playing ? '播放中' : '无')
-        ]),
-        el('p', { text: np.name || '未检测到正在播放的视频' }),
-        el('div', { class: 'progress' }, [
-            el('span', {
-                style: `width:${Math.max(0, Math.min(100, np.percentage || 0))}%`
-            })
-        ]),
-        el('small', { text: np.remainingText || '' })
-    ]);
 }
 
 function renderEntryTable(rows) {

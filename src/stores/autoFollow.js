@@ -43,10 +43,6 @@ function getFollowTarget(friendRef) {
     };
 }
 
-function getFollowLocation(friendRef) {
-    return getFollowTarget(friendRef).location;
-}
-
 function sameInstance(a, b) {
     if (!isRealInstance(a) || !isRealInstance(b)) {
         return false;
