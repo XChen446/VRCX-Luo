@@ -218,7 +218,8 @@ public class RemoteAccessServer
         catch (Exception e)
         {
             Logger.Error(e);
-            await SendJson(context, new { error = e.Message }, 500);
+            // Do not echo internal exception details to unauthenticated peers.
+            await SendJson(context, new { error = "Internal server error" }, 500);
         }
     }
 
@@ -462,10 +463,17 @@ public class RemoteAccessServer
         return "";
     }
 
+    private const int MaxRequestBodyBytes = 64 * 1024;
+
     private static async Task<string> ReadBody(HttpListenerRequest request)
     {
+        if (request.ContentLength64 > MaxRequestBodyBytes)
+            throw new HttpListenerException(413, "Request body too large");
         using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
-        return await reader.ReadToEndAsync();
+        var body = await reader.ReadToEndAsync();
+        if (body.Length > MaxRequestBodyBytes)
+            throw new HttpListenerException(413, "Request body too large");
+        return body;
     }
 
     private static bool IsAuthorized(HttpListenerRequest request)
@@ -533,6 +541,7 @@ public class RemoteAccessServer
             var bytes = await File.ReadAllBytesAsync(fullPath);
             context.Response.ContentType = contentType;
             context.Response.ContentLength64 = bytes.Length;
+            ApplySecurityHeaders(context.Response);
             await context.Response.OutputStream.WriteAsync(bytes);
             context.Response.Close();
         }
@@ -540,6 +549,14 @@ public class RemoteAccessServer
         {
             await SendJson(context, new { error = "Not found" }, 404);
         }
+    }
+
+    private static void ApplySecurityHeaders(HttpListenerResponse response)
+    {
+        response.Headers["X-Frame-Options"] = "DENY";
+        response.Headers["X-Content-Type-Options"] = "nosniff";
+        response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:";
     }
 
     private static string GetContentType(string path)
@@ -758,6 +775,8 @@ public class RemoteAccessServer
 
     private bool IsLoginRateLimited(string clientKey)
     {
+        if (IsGloballyRateLimited())
+            return true;
         if (!_loginFailures.TryGetValue(clientKey, out var failure))
             return false;
         if (DateTime.UtcNow - failure.WindowStartedAt > TimeSpan.FromMinutes(1))
@@ -786,6 +805,24 @@ public class RemoteAccessServer
                 }
                 return failure;
             });
+        Interlocked.Increment(ref _globalFailureCount);
+    }
+
+    // Global sliding window: bounds distributed brute force and the LAN-proxy
+    // case where every LAN client shares the 127.0.0.1 source address.
+    private int _globalFailureCount;
+    private DateTime _globalWindowStartedAt = DateTime.UtcNow;
+
+    private bool IsGloballyRateLimited()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _globalWindowStartedAt > TimeSpan.FromMinutes(1))
+        {
+            _globalWindowStartedAt = now;
+            Interlocked.Exchange(ref _globalFailureCount, 0);
+            return false;
+        }
+        return Volatile.Read(ref _globalFailureCount) >= 30;
     }
 
     private static string GetLanAddress()
@@ -857,8 +894,10 @@ public class RemoteAccessServer
     {
         try
         {
+            // Restrict the inbound rule to the local subnet so the port is not
+            // opened to the WAN when the host has a public address.
             var args =
-                $"advfirewall firewall add rule name=\"VRCX-Luo Remote Access {port}\" dir=in action=allow protocol=TCP localport={port}";
+                $"advfirewall firewall add rule name=\"VRCX-Luo Remote Access {port}\" dir=in action=allow protocol=TCP localport={port} remoteip=localsubnet";
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "netsh",

@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const GLOBAL_LOGIN_FAILURE_LIMIT = 30;
 
 function getLanAddress() {
     const nets = os.networkInterfaces();
@@ -37,7 +39,14 @@ function isPathInside(root, target) {
 function readJson(req) {
     return new Promise((resolve, reject) => {
         let data = '';
+        let size = 0;
         req.on('data', (chunk) => {
+            size += chunk.length;
+            if (size > MAX_REQUEST_BODY_BYTES) {
+                reject(Object.assign(new Error('Request body too large'), { statusCode: 413 }));
+                req.destroy();
+                return;
+            }
             data += chunk;
         });
         req.on('end', () => {
@@ -122,6 +131,8 @@ class RemoteAccessServer {
         this.tokens = new Map();
         this.sockets = new Set();
         this.loginFailures = new Map();
+        this.globalFailureCount = 0;
+        this.globalWindowStartedAt = Date.now();
         this.broadcastTimer = null;
     }
 
@@ -176,7 +187,10 @@ class RemoteAccessServer {
             'dir=in',
             'action=allow',
             'protocol=TCP',
-            `localport=${port}`
+            `localport=${port}`,
+            // Restrict the inbound rule to the local subnet so the port is not
+            // opened to the WAN when the host has a public address.
+            'remoteip=localsubnet'
         ];
         if (!elevated) {
             return spawnSync('netsh', args).status === 0;
@@ -366,7 +380,11 @@ class RemoteAccessServer {
             }
             sendJson(res, 404, { error: 'Not found' });
         } catch (err) {
-            sendJson(res, 500, { error: err.message });
+            // Do not echo internal exception details to unauthenticated peers.
+            const status = err?.statusCode === 413 ? 413 : 500;
+            sendJson(res, status, {
+                error: status === 413 ? 'Request body too large' : 'Internal server error'
+            });
         }
     }
 
@@ -377,7 +395,13 @@ class RemoteAccessServer {
             sendJson(res, 404, { error: 'Not found' });
             return;
         }
-        res.writeHead(200, { 'Content-Type': contentType(fullPath) });
+        res.writeHead(200, {
+            'Content-Type': contentType(fullPath),
+            'X-Frame-Options': 'DENY',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy':
+                "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
+        });
         fs.createReadStream(fullPath).pipe(res);
     }
 
@@ -461,6 +485,9 @@ class RemoteAccessServer {
     }
 
     isLoginRateLimited(clientKey) {
+        if (this.isGloballyRateLimited()) {
+            return true;
+        }
         const failure = this.loginFailures.get(clientKey);
         if (!failure) {
             return false;
@@ -472,6 +499,16 @@ class RemoteAccessServer {
         return failure.count >= 6;
     }
 
+    isGloballyRateLimited() {
+        const now = Date.now();
+        if (now - this.globalWindowStartedAt > 60 * 1000) {
+            this.globalWindowStartedAt = now;
+            this.globalFailureCount = 0;
+            return false;
+        }
+        return this.globalFailureCount >= GLOBAL_LOGIN_FAILURE_LIMIT;
+    }
+
     registerLoginFailure(clientKey) {
         const now = Date.now();
         const failure = this.loginFailures.get(clientKey);
@@ -480,9 +517,10 @@ class RemoteAccessServer {
                 count: 1,
                 windowStartedAt: now
             });
-            return;
+        } else {
+            failure.count += 1;
         }
-        failure.count += 1;
+        this.globalFailureCount += 1;
     }
 }
 
