@@ -352,6 +352,27 @@ describe('useAutoFollowStore', () => {
         expect(mocks.launchGame).toHaveBeenCalledWith('wrld_other:8', null, true);
     });
 
+    it('joins the same world in a fresh instance (new nonce) during the cooldown', async () => {
+        const target = reactive(friend('wrld_target:2'));
+        mocks.friends.set(target.id, { ref: target });
+        const store = useAutoFollowStore();
+
+        await store.startFollow(target, { confirm: false, initialJoin: true });
+        mocks.launchGame.mockClear();
+        // Same world, new public instance nonce: these are two different
+        // instances, so the cooldown must not block the follow.
+        target.location = 'wrld_target:2~region(us)~a1b2c3';
+        await nextTick();
+        await flushPromises();
+
+        expect(mocks.launchGame).toHaveBeenCalledWith(
+            'wrld_target:2~region(us)~a1b2c3',
+            null,
+            true
+        );
+        expect(store.statusText).not.toContain('冷却');
+    });
+
     it('clamps and saves the join cooldown setting', async () => {
         const store = useAutoFollowStore();
 

@@ -102,7 +102,14 @@ export const useAutoFollowStore = defineStore('AutoFollow', () => {
             return '';
         }
         const parsed = parseLocation(location);
-        return `${parsed.worldId}:${parsed.instanceName || parsed.instanceId}`;
+        // Keep the full instance id minus the region segment: the nonce is
+        // part of the instance identity, so a friend re-entering the same
+        // world in a fresh instance must not be mistaken for the same
+        // instance during the cooldown.
+        const segments = (parsed.instanceId || parsed.instanceName || '')
+            .split('~')
+            .filter((segment) => !segment.startsWith('region('));
+        return `${parsed.worldId}:${segments.join('~')}`;
     }
 
     function canJoinNow(location) {
