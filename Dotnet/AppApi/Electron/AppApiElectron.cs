@@ -137,9 +137,11 @@ namespace VRCX
         {
         }
 
-        public override bool RestartAsAdministrator()
+        public override Task<string> LaunchMemoryCleanupHelper(bool deep)
         {
-            return false;
+            // Linux/macOS: the cleanup logic is Windows-only (psapi/ntdll),
+            // and no elevation flow exists on this platform.
+            return Task.FromResult<string>(null);
         }
     }
 }

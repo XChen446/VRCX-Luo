@@ -218,6 +218,20 @@ namespace VRCX
             var args = Environment.GetCommandLineArgs();
             StartupArgs.ArgsCheck(args);
             SetProgramDirectories();
+
+            // One-shot memory cleanup helper: run the cleanup logic in this
+            // lightweight process, write the result file, then exit. No CEF,
+            // database, storage or UI initialization is needed. The parent
+            // instance reads the result file after this process exits.
+            if (StartupArgs.LaunchArguments.IsMemoryCleanupHelper)
+            {
+                ConfigureLogger();
+                GetVersion();
+                Environment.ExitCode = AppApi.RunMemoryCleanupHelper(
+                    StartupArgs.LaunchArguments.IsMemoryCleanupDeep);
+                Environment.Exit(Environment.ExitCode);
+            }
+
             VRCXStorage.Instance.Load();
             ConfigureLogger();
             GetVersion();

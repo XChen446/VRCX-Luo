@@ -26,9 +26,15 @@ namespace VRCX
         public abstract void FlashWindow();
         public abstract void SetUserAgent();
         public abstract void OpenCalendarFile(string icsContent);
-        public abstract bool RestartAsAdministrator();
         public string GetMemoryCleanupSnapshot() => GetMemoryCleanupSnapshotInternal();
-        public string CleanupMemory(bool deep) => CleanupMemoryInternal(deep);
+
+        /// <summary>
+        /// Launch the one-shot memory cleanup helper process. The helper runs
+        /// the same cleanup logic in a separate lightweight process; deep
+        /// cleanup requests elevation (UAC) via runas, normal cleanup does not.
+        /// Returns the helper's result JSON, or null on failure/cancel.
+        /// </summary>
+        public abstract Task<string> LaunchMemoryCleanupHelper(bool deep);
 
         // Folders
         public abstract string GetVRChatAppDataLocation();

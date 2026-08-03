@@ -207,9 +207,8 @@ declare global {
         SetUserAgent(): Promise<void>;
         SetTrayIconNotification(notify: boolean): Promise<void>;
         OpenCalendarFile(icsContent: string): Promise<void>;
-        RestartAsAdministrator(): Promise<boolean>;
         GetMemoryCleanupSnapshot(): Promise<string>;
-        CleanupMemory(deep: boolean): Promise<string>;
+        LaunchMemoryCleanupHelper(deep: boolean): Promise<string | null>;
         HandleClosePromptChoice(
             action: 'tray' | 'exit',
             dontAskAgain: boolean
