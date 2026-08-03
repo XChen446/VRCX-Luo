@@ -10,7 +10,9 @@
                 </div>
             </div>
 
-            <div class="flex flex-col gap-0.5 px-1 py-1 cursor-pointer" @click="openExternalLink('https://github.com/yixijun/VRCX-Luo/releases')">
+            <div
+                class="flex flex-col gap-0.5 px-1 py-1 cursor-pointer"
+                @click="openExternalLink('https://github.com/yixijun/VRCX-Luo/releases')">
                 <div class="flex-1">
                     <span class="block truncate font-medium text-sm leading-[18px]">{{
                         t('view.settings.general.general.latest_app_version')
@@ -31,7 +33,6 @@
                     <span v-once class="block truncate text-xs text-muted-foreground">{{ links.github }}</span>
                 </div>
             </div>
-
         </SettingsGroup>
 
         <SettingsGroup :title="t('view.settings.general.vrcx_updater.header')">
@@ -39,9 +40,13 @@
                 <Button size="sm" variant="outline" @click="showChangeLogDialog">{{
                     t('view.settings.general.vrcx_updater.change_log')
                 }}</Button>
-                <Button v-if="!noUpdater" size="sm" variant="outline" @click="openExternalLink('https://github.com/yixijun/VRCX-Luo/releases')">{{
-                    t('view.settings.general.vrcx_updater.change_build')
-                }}</Button>
+                <Button
+                    v-if="!noUpdater"
+                    size="sm"
+                    variant="outline"
+                    @click="openExternalLink('https://github.com/yixijun/VRCX-Luo/releases')"
+                    >{{ t('view.settings.general.vrcx_updater.change_build') }}</Button
+                >
             </div>
 
             <template v-if="!noUpdater">
@@ -82,10 +87,6 @@
                 :label="t('view.settings.general.application.minimized')"
                 :description="t('view.settings.general.application.startup_linux')">
                 <Switch :model-value="isStartAsMinimizedState" @update:modelValue="setIsStartAsMinimizedState" />
-            </SettingsItem>
-
-            <SettingsItem v-if="!isMacOS" :label="t('view.settings.general.application.tray')">
-                <Switch :model-value="isCloseToTray" @update:modelValue="setIsCloseToTray" />
             </SettingsItem>
 
             <SettingsItem
@@ -169,7 +170,6 @@
     const {
         isStartAtWindowsStartup,
         isStartAsMinimizedState,
-        isCloseToTray,
         disableGpuAcceleration,
         disableVrOverlayGpuAcceleration
     } = storeToRefs(generalSettingsStore);
@@ -177,7 +177,6 @@
     const {
         setIsStartAtWindowsStartup,
         setIsStartAsMinimizedState,
-        setIsCloseToTray,
         setDisableGpuAcceleration,
         setDisableVrOverlayGpuAcceleration,
         promptProxySettings
@@ -188,10 +187,6 @@
 
     const ossDialog = ref(false);
     const isLinux = computed(() => LINUX);
-    const isMacOS = computed(() => {
-        return navigator.platform.indexOf('Mac') > -1;
-    });
-
     const OpenSourceSoftwareNoticeDialog = defineAsyncComponent(
         () => import('../../dialogs/OpenSourceSoftwareNoticeDialog.vue')
     );

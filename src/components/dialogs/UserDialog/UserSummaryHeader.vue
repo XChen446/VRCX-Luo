@@ -1,6 +1,9 @@
 <template>
-    <div style="display: flex">
-        <div style="flex: none; height: 120px; width: 160px">
+    <div data-testid="user-summary-header" class="flex min-w-0 flex-wrap items-start gap-4">
+        <div
+            data-testid="user-summary-media"
+            class="shrink-0 overflow-hidden rounded-xl"
+            style="height: 120px; width: 160px">
             <img
                 v-if="
                     !userDialog.loading &&
@@ -9,7 +12,7 @@
                 "
                 class="cursor-pointer"
                 :src="userDialog.ref.profilePicOverrideThumbnail || userDialog.ref.profilePicOverride"
-                style="height: 120px; width: 213.33px; border-radius: var(--radius-xl); object-fit: cover"
+                style="height: 120px; width: 160px; border-radius: var(--radius-xl); object-fit: cover"
                 @click="showFullscreenImageDialog(userDialog.ref.profilePicOverride)"
                 @error="profileImageError = true"
                 loading="lazy" />
@@ -28,9 +31,9 @@
                 <Image class="size-8 text-muted-foreground" />
             </div>
         </div>
-        <div class="ml-4" style="flex: 1; display: flex; align-items: flex-start">
-            <div style="flex: 1">
-                <div>
+        <div data-testid="user-summary-body" class="flex min-w-0 flex-1 flex-wrap items-start gap-3">
+            <div data-testid="user-summary-details" class="min-w-0 flex-1 basis-72">
+                <div class="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1">
                     <TooltipWrapper v-if="userDialog.ref.status" side="top">
                         <template #content>
                             <span>{{ getUserStateText(userDialog.ref) }}</span>
@@ -55,8 +58,7 @@
                         </TooltipWrapper>
                     </template>
                     <span
-                        class="font-bold"
-                        style="margin-left: 6px; margin-right: 6px; cursor: pointer"
+                        class="mx-1 min-w-0 cursor-pointer break-words font-bold"
                         v-text="userDialog.ref.displayName"
                         @click="copyUserDisplayName(userDialog.ref.displayName)"></span>
                     <TooltipWrapper v-if="userDialog.ref.pronouns" side="top" :content="t('dialog.user.pronouns')">
@@ -75,7 +77,6 @@
                             style="display: inline-block; margin-right: 6px"></span>
                     </TooltipWrapper>
                     <template v-if="userDialog.ref.id === currentUser.id">
-                        <br />
                         <span
                             class="x-grey font-mono text-xs"
                             style="margin-right: 8px; cursor: pointer"
@@ -83,12 +84,74 @@
                             @click="copyUserDisplayName(currentUser.username)"></span>
                     </template>
                 </div>
-                <div class="mt-2 flex items-center gap-1" v-show="!userDialog.loading">
-                    <TooltipWrapper side="top" :content="t('dialog.user.tags.trust_level')">
-                        <Badge variant="outline" class="name" :class="userDialog.ref.$trustClass">
-                            <Shield class="h-4 w-4" /> {{ userDialog.ref.$trustLevel }}
-                        </Badge>
-                    </TooltipWrapper>
+                <div
+                    data-testid="user-summary-tags"
+                    class="mt-2 flex flex-wrap items-center gap-1"
+                    v-show="!userDialog.loading">
+                    <Popover @update:open="handleTrustHistoryOpen">
+                        <PopoverTrigger asChild>
+                            <Badge
+                                as="button"
+                                type="button"
+                                variant="outline"
+                                class="name cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                :class="userDialog.ref.$trustClass"
+                                :title="t('dialog.user.tags.trust_level')">
+                                <Shield class="h-4 w-4" /> {{ userDialog.ref.$trustLevel }}
+                            </Badge>
+                        </PopoverTrigger>
+                        <PopoverContent side="bottom" align="start" class="w-82 p-0 overflow-hidden">
+                            <div class="border-b px-4 py-3">
+                                <div class="text-sm font-semibold">等级时间</div>
+                                <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span>当前等级</span>
+                                    <Badge variant="outline" class="name" :class="userDialog.ref.$trustClass">
+                                        {{ userDialog.ref.$trustLevel }}
+                                    </Badge>
+                                </div>
+                            </div>
+                            <div class="max-h-72 overflow-y-auto p-2">
+                                <div
+                                    v-if="trustHistoryLoading"
+                                    class="px-2 py-6 text-center text-sm text-muted-foreground">
+                                    加载中...
+                                </div>
+                                <div v-else-if="trustHistoryTimeline.length" class="space-y-1">
+                                    <div
+                                        v-for="item in trustHistoryTimeline"
+                                        :key="item.id"
+                                        class="rounded-md px-2 py-2 hover:bg-accent/50">
+                                        <div class="flex items-center gap-2">
+                                            <span
+                                                class="inline-flex h-9 min-w-20 items-center justify-center gap-1 rounded-md border bg-background/70 px-2 text-xs font-semibold shadow-xs"
+                                                :class="item.fromMeta.className"
+                                                :title="item.from || '-'">
+                                                <Shield class="size-3.5" />
+                                                {{ item.fromMeta.shortLabel }}
+                                            </span>
+                                            <span class="text-xs text-muted-foreground">→</span>
+                                            <span
+                                                class="inline-flex h-9 min-w-20 items-center justify-center gap-1 rounded-md border bg-background/70 px-2 text-xs font-semibold shadow-xs"
+                                                :class="item.toMeta.className"
+                                                :title="item.to || '-'">
+                                                <Shield class="size-3.5" />
+                                                {{ item.toMeta.shortLabel }}
+                                            </span>
+                                        </div>
+                                        <div class="mt-0.5 text-xs text-muted-foreground">
+                                            {{ formatDateFilter(item.createdAt, 'long') }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else class="px-2 py-5 text-sm text-muted-foreground">
+                                    暂无本地等级变更记录。
+                                </div>
+                            </div>
+                            <div class="border-t px-4 py-2 text-xs text-muted-foreground">
+                                只显示 VRCX 本地记录到的好友等级变化。
+                            </div>
+                        </PopoverContent>
+                    </Popover>
                     <TooltipWrapper
                         v-if="userDialog.ref.ageVerified && userDialog.ref.ageVerificationStatus"
                         side="top"
@@ -172,7 +235,7 @@
                         >{{ userDialog.ref.$customTag }}</Badge
                     >
                 </div>
-                <div class="mt-1">
+                <div data-testid="user-summary-badges" class="mt-1 flex flex-wrap items-center gap-1">
                     <TooltipWrapper v-for="badge in userDialog.ref.badges" :key="badge.badgeId" side="top">
                         <template #content>
                             <span>{{ badge.badgeName }}</span>
@@ -234,12 +297,12 @@
                         </div>
                     </TooltipWrapper>
                 </div>
-                <div>
-                    <span class="text-xs" v-text="userDialog.ref.statusDescription"></span>
+                <div class="mt-1 min-w-0">
+                    <span class="break-words text-xs" v-text="userDialog.ref.statusDescription"></span>
                 </div>
             </div>
 
-            <div v-if="userDialog.ref.userIcon" style="flex: none; margin-right: 8px">
+            <div v-if="userDialog.ref.userIcon" class="shrink-0">
                 <img
                     v-if="!userIconError"
                     class="cursor-pointer"
@@ -256,7 +319,7 @@
                 </div>
             </div>
 
-            <div class="ml-2 mt-12 flex items-center">
+            <div data-testid="user-summary-actions" class="ml-auto flex shrink-0 items-center gap-2 self-start">
                 <TooltipWrapper v-if="canShowAutoFollow" side="top" :content="autoFollowTooltip">
                     <Button
                         class="rounded-full"
@@ -266,7 +329,7 @@
                         <Navigation class="size-5" />
                     </Button>
                 </TooltipWrapper>
-                <UserActionDropdown :class="{ 'ml-2': canShowAutoFollow }" :user-dialog-command="userDialogCommand" />
+                <UserActionDropdown :user-dialog-command="userDialogCommand" />
             </div>
         </div>
     </div>
@@ -293,11 +356,13 @@
     import { useUserDisplay } from '../../../composables/useUserDisplay';
     import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
     import { useAutoFollowStore, useGalleryStore, useUserStore } from '../../../stores';
+    import { database } from '../../../services/database';
     import { Badge } from '../../ui/badge';
     import { Button } from '../../ui/button';
     import { Checkbox } from '../../ui/checkbox';
 
     import UserActionDropdown from './UserActionDropdown.vue';
+    import { buildTrustLevelTimeline } from './trustLevelHistory';
 
     const props = defineProps({
         getUserStateText: {
@@ -333,6 +398,9 @@
 
     const profileImageError = ref(false);
     const userIconError = ref(false);
+    const trustHistoryLoading = ref(false);
+    const trustHistoryRows = ref([]);
+    const trustHistoryLoadedUserId = ref('');
 
     const isCurrentUserAutoFollowTarget = computed(
         () => autoFollowStore.isActive && autoFollowStore.targetFriendId === userDialog.value.id
@@ -344,6 +412,7 @@
             isFriendOnline(userDialog.value.friend) &&
             isRealInstance(userDialog.value.ref?.travelingToLocation || userDialog.value.ref?.location)
     );
+    const trustHistoryTimeline = computed(() => buildTrustLevelTimeline(trustHistoryRows.value));
     const autoFollowTooltip = computed(() =>
         isCurrentUserAutoFollowTarget.value ? autoFollowStore.statusText || '跟随中' : '自动跟随'
     );
@@ -353,6 +422,8 @@
         () => {
             profileImageError.value = false;
             userIconError.value = false;
+            trustHistoryRows.value = [];
+            trustHistoryLoadedUserId.value = '';
         }
     );
 
@@ -364,5 +435,32 @@
 
     async function toggleAutoFollow() {
         await autoFollowStore.toggleFollow(userDialog.value.ref);
+    }
+
+    async function handleTrustHistoryOpen(open) {
+        if (!open) {
+            return;
+        }
+
+        const userId = userDialog.value?.id || userDialog.value?.ref?.id;
+        if (!userId || trustHistoryLoadedUserId.value === userId) {
+            return;
+        }
+
+        trustHistoryLoading.value = true;
+        try {
+            const rows = await database.getFriendLogHistoryForUserId(userId, ['TrustLevel']);
+            if ((userDialog.value?.id || userDialog.value?.ref?.id) !== userId) {
+                return;
+            }
+            trustHistoryRows.value = Array.isArray(rows) ? rows : [];
+            trustHistoryLoadedUserId.value = userId;
+        } catch (error) {
+            console.error(error);
+            trustHistoryRows.value = [];
+            trustHistoryLoadedUserId.value = userId;
+        } finally {
+            trustHistoryLoading.value = false;
+        }
     }
 </script>

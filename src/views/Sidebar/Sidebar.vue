@@ -280,6 +280,7 @@
             </div>
         </div>
         <TabsUnderline
+            v-model="activeSidebarTab"
             default-value="friends"
             :items="sidebarTabs"
             :unmount-on-hide="false"
@@ -305,12 +306,12 @@
             </template>
             <template #friends>
                 <div class="h-full overflow-hidden">
-                    <FriendsSidebar />
+                    <FriendsSidebar :active="activeSidebarTab === 'friends'" />
                 </div>
             </template>
             <template #groups>
                 <div class="h-full overflow-hidden">
-                    <GroupsSidebar />
+                    <GroupsSidebar :active="activeSidebarTab === 'groups'" />
                 </div>
             </template>
             <template #tracked>
@@ -345,7 +346,7 @@
     import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
     import { Field, FieldContent, FieldLabel } from '@/components/ui/field';
     import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-    import { computed, ref } from 'vue';
+    import { computed, ref, watch } from 'vue';
     import { useMagicKeys, whenever } from '@vueuse/core';
     import { Button } from '@/components/ui/button';
     import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -463,6 +464,7 @@
     });
 
     const CLEAR_VALUE = '__clear__';
+    const activeSidebarTab = ref('friends');
     const isGroupOrderDialogOpen = ref(false);
     const isSettingsPopoverOpen = ref(false);
     const isAdvancedOpen = ref(false);
@@ -490,6 +492,16 @@
         }
         return tabs;
     });
+
+    watch(
+        sidebarTabs,
+        (tabs) => {
+            if (!tabs.some((tab) => tab.value === activeSidebarTab.value)) {
+                activeSidebarTab.value = 'friends';
+            }
+        },
+        { immediate: true }
+    );
 </script>
 
 <style scoped>

@@ -113,6 +113,16 @@
             "save": "保存"
         }
     },
+    "quick_launch": {
+        "tooltip": "快速启动",
+        "header": "快速启动",
+        "vrchat_desktop": "启动 VRChat 桌面模式",
+        "vrchat_vr": "启动 VRChat VR 模式",
+        "steamvr": "启动 SteamVR",
+        "steamvr_running": "SteamVR 已在运行",
+        "steamvr_started": "SteamVR 已启动",
+        "steamvr_failed": "SteamVR 启动失败"
+    },
     "dashboard": {
         "default_name": "仪表板",
         "new_dashboard": "新建仪表板",
@@ -902,6 +912,18 @@
                 },
                 "lists_tables": {
                     "header": "列表与表格"
+                },
+                "window_behavior": {
+                    "header": "窗口行为",
+                    "close_button": "点击关闭按钮时",
+                    "close_button_description": "选择点击主窗口右上角关闭按钮后的操作。",
+                    "ask": "每次询问",
+                    "tray": "最小化到系统托盘",
+                    "exit": "直接退出",
+                    "dialog_title": "关闭 VRCX-Luo",
+                    "dialog_description": "最小化后 VRCX-Luo 会继续在后台运行，您可以随时从托盘图标重新打开。",
+                    "dont_ask_again": "以后不再提示",
+                    "cancel": "取消"
                 }
             },
             "integrations": {
@@ -948,6 +970,8 @@
                     "startup": "在 Windows 启动时自动启动",
                     "minimized": "以最小化的形式启动",
                     "tray": "最小化到系统托盘",
+                    "close_to_tray_prompt": "关闭时询问是否最小化到托盘",
+                    "close_to_tray_prompt_tooltip": "开启后，点击关闭按钮时会询问是否隐藏到托盘；也可以在提示中选择不再提示。",
                     "disable_gpu_acceleration": "禁用 GPU 加速",
                     "disable_gpu_acceleration_tooltip": "仅在你“知道自己在做什么”时才应更改此选项，这可能会导致 SteamVR 叠加界面出现问题。但如果你遇到 UI 显示问题，那么可以尝试关闭此选项，重启 VRCX 生效",
                     "disable_vr_overlay_gpu_acceleration": "禁用 VR 叠加界面的GPU加速",
@@ -2073,7 +2097,9 @@
             "steamvr_not_running_warning": "SteamVR 当前未运行。是否先打开 SteamVR，再以 VR 模式启动 VRChat？",
             "open_steamvr": "打开 SteamVR",
             "confirm_yes": "是，确认启动",
-            "confirm_no": "否，我再想想"
+            "confirm_no": "仍然启动",
+            "game_running_confirm": "仍然启动",
+            "cancel_launch": "取消启动"
         },
         "launch_options": {
             "header": "启动选项",
@@ -3383,6 +3409,28 @@
                 "support": "支持 VRCX"
             },
             "releases": {
+                "2026_07_16": {
+                    "title": "窗口与侧栏体验优化",
+                    "subtitle": "本次更新集中修正关闭行为、浮动按钮和玩家列表显示。",
+                    "items": {
+                        "close_button_behavior": {
+                            "title": "关闭按钮行为可配置",
+                            "description": "设置的界面页面新增窗口行为选项，可选择每次询问、最小化到托盘或直接退出。"
+                        },
+                        "close_to_tray_prompt": {
+                            "title": "关闭确认弹窗",
+                            "description": "点击右上角关闭按钮时会弹出与应用风格一致的确认窗口，并支持取消和以后不再提示。"
+                        },
+                        "sidebar_floating_controls": {
+                            "title": "侧栏浮动按钮修正",
+                            "description": "好友和群组侧栏的快速启动与返回顶部按钮只在当前页面显示，避免出现两个启动按钮或遮挡。"
+                        },
+                        "player_list_layout": {
+                            "title": "玩家列表布局修正",
+                            "description": "优化实例信息与玩家列表区域的滚动布局，减少缩放或内容较多时的信息遮挡。"
+                        }
+                    }
+                },
                 "2026_04_05": {
                     "title": "探索新功能",
                     "subtitle": "一些你可能不会注意到的实用功能",

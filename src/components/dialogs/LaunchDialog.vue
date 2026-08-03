@@ -91,15 +91,23 @@
                     @click="selfInvite(launchDialog.location, launchDialog.shortName)">
                     {{ t('dialog.launch.self_invite') }}
                 </Button>
-                <ButtonGroup>
+                <ButtonGroup class="w-auto flex-none cursor-default">
                     <Button
+                        data-testid="launch-default-button"
+                        class="w-auto flex-none"
                         :disabled="!launchDialog.secureOrShortName"
                         @click="handleLaunchDefault(launchDialog.location, launchDialog.shortName)">
                         {{ launchModeLabel }}
                     </Button>
                     <DropdownMenu>
                         <DropdownMenuTrigger as-child>
-                            <Button size="icon" :disabled="!launchDialog.secureOrShortName" aria-label="More options">
+                            <Button
+                                data-testid="launch-more-button"
+                                class="flex-none"
+                                size="icon"
+                                :disabled="!launchDialog.secureOrShortName"
+                                aria-label="More options"
+                                @click.stop>
                                 <MoreHorizontal class="size-4" />
                             </Button>
                         </DropdownMenuTrigger>
@@ -317,7 +325,7 @@
                 cancelText: t('dialog.launch.confirm_no')
             });
             if (!ok) {
-                return false;
+                return true;
             }
 
             const started = await AppApi.StartSteamVR();
@@ -349,8 +357,8 @@
                 .confirm({
                     description: t('dialog.launch.game_running_warning'),
                     title: t('dialog.launch.header'),
-                    confirmText: t('dialog.launch.confirm_yes'),
-                    cancelText: t('dialog.launch.confirm_no')
+                    confirmText: t('dialog.launch.game_running_confirm'),
+                    cancelText: t('dialog.launch.cancel_launch')
                 })
                 .then(({ ok }) => {
                     if (!ok) return;

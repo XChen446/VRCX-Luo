@@ -14,6 +14,7 @@ const {
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
+const { resolveClosePromptResponse } = require('./closeToTrayDecision.cjs');
 
 //app.disableHardwareAcceleration();
 
@@ -47,6 +48,7 @@ if (!isDotNetInstalled()) {
 const VRCX_URI_PREFIX = 'vrcx';
 let isOverlayActive = false;
 let appIsQuitting = false;
+let closePromptInProgress = false;
 const rootDir = app.getAppPath();
 
 let tray = null;
@@ -144,12 +146,35 @@ function getCloseToTray() {
     return VRCXStorage.Get('VRCX_CloseToTray') === 'true';
 }
 
+function shouldPromptCloseToTray() {
+    return (
+        process.platform !== 'darwin' &&
+        VRCXStorage.Get('VRCX_CloseToTrayPrompt') !== 'false'
+    );
+}
+
 function areDesktopNotificationsEnabled() {
     return VRCXStorage.Get('VRCX_desktopNotificationsEnabled') !== 'false';
 }
 
 function notifyDesktopNotificationsChanged(enabled) {
     mainWindow?.webContents?.send('desktop-notifications-updated', enabled);
+}
+
+function isTraySilentModeEnabled() {
+    return VRCXStorage.Get('VRCX_traySilentMode') === 'true';
+}
+
+function notifyTraySilentModeChanged(enabled) {
+    mainWindow?.webContents?.send('tray-silent-mode-updated', enabled);
+}
+
+function isVSleepModeEnabled() {
+    return VRCXStorage.Get('VRCX_vSleepMode') === 'true';
+}
+
+function notifyVSleepModeChanged(enabled) {
+    mainWindow?.webContents?.send('v-sleep-mode-updated', enabled);
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -304,6 +329,22 @@ ipcMain.handle('app:setDesktopNotificationsEnabled', (event, enabled) => {
     createTray();
 });
 
+ipcMain.handle('app:setTraySilentMode', (event, enabled) => {
+    const next = !!enabled;
+    VRCXStorage.Set('VRCX_traySilentMode', String(next));
+    notifyTraySilentModeChanged(next);
+    destroyTray();
+    createTray();
+});
+
+ipcMain.handle('app:setVSleepMode', (event, enabled) => {
+    const next = !!enabled;
+    VRCXStorage.Set('VRCX_vSleepMode', String(next));
+    notifyVSleepModeChanged(next);
+    destroyTray();
+    createTray();
+});
+
 function tryRelaunchWithArgs(args) {
     if (
         process.platform !== 'linux' ||
@@ -412,12 +453,68 @@ function createWindow() {
     });
     mainWindow.webContents.setVisualZoomLevelLimits(1, 5);
 
-    mainWindow.on('close', (event) => {
-        if (getCloseToTray() && !appIsQuitting) {
+    mainWindow.on('close', async (event) => {
+        if (appIsQuitting) {
+            return;
+        }
+
+        if (getCloseToTray()) {
             event.preventDefault();
             mainWindow.hide();
-        } else {
-            app.quit();
+            return;
+        }
+
+        if (!shouldPromptCloseToTray()) {
+            return;
+        }
+
+        event.preventDefault();
+        if (closePromptInProgress) {
+            return;
+        }
+
+        closePromptInProgress = true;
+        try {
+            const { response, checkboxChecked } = await dialog.showMessageBox(
+                mainWindow,
+                {
+                    type: 'question',
+                    title: '关闭 VRCX-Luo',
+                    message: '是否最小化到系统托盘？',
+                    detail: '最小化后 VRCX-Luo 会继续在后台运行，可从托盘图标重新打开。',
+                    buttons: ['最小化到托盘', '直接退出', '取消'],
+                    defaultId: 0,
+                    cancelId: 2,
+                    checkboxLabel: '以后不再提示',
+                    checkboxChecked: false,
+                    noLink: true
+                }
+            );
+
+            const decision = resolveClosePromptResponse(
+                response,
+                checkboxChecked
+            );
+            if (decision.action === 'cancel') {
+                return;
+            }
+
+            if (decision.persistPreference) {
+                VRCXStorage.Set('VRCX_CloseToTrayPrompt', 'false');
+                VRCXStorage.Set(
+                    'VRCX_CloseToTray',
+                    String(decision.closeToTrayEnabled)
+                );
+            }
+
+            if (decision.action === 'minimize') {
+                mainWindow.hide();
+            } else {
+                appIsQuitting = true;
+                app.quit();
+            }
+        } finally {
+            closePromptInProgress = false;
         }
     });
 
@@ -556,6 +653,8 @@ function createTray() {
     }
     tray = new Tray(trayIcon);
     const desktopNotificationsEnabled = areDesktopNotificationsEnabled();
+    const traySilentModeEnabled = isTraySilentModeEnabled();
+    const vSleepModeEnabled = isVSleepModeEnabled();
     const contextMenu = Menu.buildFromTemplate([
         {
             label: '打开 VRCX-Luo',
@@ -577,6 +676,30 @@ function createTray() {
                     String(enabled)
                 );
                 notifyDesktopNotificationsChanged(enabled);
+                destroyTray();
+                createTray();
+            }
+        },
+        {
+            label: '静音模式',
+            type: 'checkbox',
+            checked: traySilentModeEnabled,
+            click: function () {
+                const enabled = !isTraySilentModeEnabled();
+                VRCXStorage.Set('VRCX_traySilentMode', String(enabled));
+                notifyTraySilentModeChanged(enabled);
+                destroyTray();
+                createTray();
+            }
+        },
+        {
+            label: 'V睡模式',
+            type: 'checkbox',
+            checked: vSleepModeEnabled,
+            click: function () {
+                const enabled = !isVSleepModeEnabled();
+                VRCXStorage.Set('VRCX_vSleepMode', String(enabled));
+                notifyVSleepModeChanged(enabled);
                 destroyTray();
                 createTray();
             }

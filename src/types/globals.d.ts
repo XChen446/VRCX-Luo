@@ -41,6 +41,18 @@ declare global {
             getClipboardText: () => Promise<string>;
             getNoUpdater: () => Promise<boolean>;
             setTrayIconNotification: (notify: boolean) => Promise<void>;
+            setDesktopNotificationsEnabled: (enabled: boolean) => Promise<void>;
+            setTraySilentMode: (enabled: boolean) => Promise<void>;
+            setVSleepMode: (enabled: boolean) => Promise<void>;
+            onDesktopNotificationsUpdated: (
+                callback: (enabled: boolean) => void
+            ) => () => void;
+            onTraySilentModeUpdated: (
+                callback: (enabled: boolean) => void
+            ) => () => void;
+            onVSleepModeUpdated: (
+                callback: (enabled: boolean) => void
+            ) => () => void;
             openFileDialog: (
                 filters?: Array<{ name: string; extensions: string[] }>
             ) => Promise<string>;
@@ -198,6 +210,10 @@ declare global {
         RestartAsAdministrator(): Promise<boolean>;
         GetMemoryCleanupSnapshot(): Promise<string>;
         CleanupMemory(deep: boolean): Promise<string>;
+        HandleClosePromptChoice(
+            action: 'tray' | 'exit',
+            dontAskAgain: boolean
+        ): Promise<void>;
 
         // Common Functions
         GetColourFromUserID(userId: string): Promise<number>;

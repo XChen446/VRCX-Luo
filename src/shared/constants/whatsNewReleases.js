@@ -1,4 +1,24 @@
 const whatsNewReleases = Object.freeze({
+    '2026.07.16': {
+        items: [
+            {
+                key: 'close_button_behavior',
+                icon: 'panel-top-close'
+            },
+            {
+                key: 'close_to_tray_prompt',
+                icon: 'message-square-warning'
+            },
+            {
+                key: 'sidebar_floating_controls',
+                icon: 'panel-right'
+            },
+            {
+                key: 'player_list_layout',
+                icon: 'list'
+            }
+        ]
+    },
     '2026.04.05': {
         items: [
             {

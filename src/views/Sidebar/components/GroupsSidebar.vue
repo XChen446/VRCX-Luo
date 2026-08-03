@@ -80,7 +80,8 @@
                 </div>
             </div>
         </div>
-        <BackToTop :virtualizer="virtualizer" :target="scrollViewportRef" :tooltip="false" />
+        <QuickLaunchButton v-if="active" :target="scrollViewportRef" :teleport="false" />
+        <BackToTop v-if="active" :virtualizer="virtualizer" :target="scrollViewportRef" :tooltip="false" :teleport="false" />
     </div>
 </template>
 
@@ -107,7 +108,12 @@
     import { instanceRequest } from '../../../api';
 
     import BackToTop from '../../../components/BackToTop.vue';
+    import QuickLaunchButton from '../../../components/QuickLaunchButton.vue';
     import Location from '../../../components/Location.vue';
+
+    defineProps({
+        active: { type: Boolean, default: true }
+    });
 
     const { t } = useI18n();
 
