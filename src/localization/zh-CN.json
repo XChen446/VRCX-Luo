@@ -840,7 +840,7 @@
                 "memory_cleanup_operation_systemFileCache": "系统文件缓存",
                 "memory_cleanup_operation_ok": "成功",
                 "memory_cleanup_operation_failed": "失败",
-                "memory_cleanup_done": "内存整理完成",
+                "memory_cleanup_done": "内存整理完成（已清理 {freed}/{total} MB）",
                 "memory_cleanup_failed": "内存整理失败"
             },
             "other": {

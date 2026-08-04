@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { toast } from 'vue-sonner';
 
 import MemoryCleanupDialog from '../MemoryCleanupDialog.vue';
 
@@ -28,7 +29,7 @@ const translations = {
     'view.tools.system_tools.memory_cleanup_operation_systemFileCache': 'System file cache',
     'view.tools.system_tools.memory_cleanup_operation_ok': 'OK',
     'view.tools.system_tools.memory_cleanup_operation_failed': 'Failed',
-    'view.tools.system_tools.memory_cleanup_done': 'Memory cleanup completed',
+    'view.tools.system_tools.memory_cleanup_done': 'Memory cleanup completed ({freed}/{total} MB)',
     'view.tools.system_tools.memory_cleanup_failed': 'Memory cleanup failed',
     'common.actions.refresh': 'Refresh'
 };
@@ -101,9 +102,9 @@ function mockSnapshot() {
         ),
         LaunchMemoryCleanupHelper: vi.fn().mockResolvedValue(
             JSON.stringify({
-                FreedBytes: 100,
+                FreedBytes: 100 * 1024 * 1024,
                 Before: {
-                    TargetProcessWorkingSetBytes: 100,
+                    TargetProcessWorkingSetBytes: 100 * 1024 * 1024,
                     TotalAvailableMemoryBytes: 1000,
                     MemoryLoadBytes: 400,
                     Processes: []
@@ -132,6 +133,10 @@ function mockSnapshot() {
 }
 
 describe('MemoryCleanupDialog', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
     test('renders localized actions and memory progress bars', async () => {
         mockSnapshot();
 
@@ -164,6 +169,8 @@ describe('MemoryCleanupDialog', () => {
         await flushPromises();
 
         expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(false);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).toHaveBeenCalledWith('Memory cleanup completed (100/100 MB)');
         expect(wrapper.text()).toContain('Standby list');
         expect(wrapper.text()).toContain('OK');
     });
@@ -184,6 +191,8 @@ describe('MemoryCleanupDialog', () => {
         await flushPromises();
 
         expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(true);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).toHaveBeenCalledWith('Memory cleanup completed (100/100 MB)');
         expect(wrapper.text()).toContain('Standby list');
         expect(wrapper.text()).toContain('OK');
     });
@@ -205,6 +214,8 @@ describe('MemoryCleanupDialog', () => {
         await flushPromises();
 
         expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(true);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).not.toHaveBeenCalled();
         expect(wrapper.text()).not.toContain('Standby list');
     });
 });

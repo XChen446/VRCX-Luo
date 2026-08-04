@@ -832,7 +832,7 @@
                 "memory_cleanup_operation_systemFileCache": "System file cache",
                 "memory_cleanup_operation_ok": "OK",
                 "memory_cleanup_operation_failed": "Failed",
-                "memory_cleanup_done": "Memory cleanup completed",
+                "memory_cleanup_done": "Memory cleanup completed ({freed}/{total} MB)",
                 "memory_cleanup_failed": "Memory cleanup failed"
             },
             "other": {

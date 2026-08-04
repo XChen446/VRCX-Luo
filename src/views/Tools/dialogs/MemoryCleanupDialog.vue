@@ -171,6 +171,8 @@
     const freedMemoryPercent = computed(() =>
         percent(result.value?.FreedBytes, result.value?.Before?.TargetProcessWorkingSetBytes)
     );
+    const freedMemoryMb = computed(() => toMb(result.value?.FreedBytes));
+    const beforeMemoryMb = computed(() => toMb(result.value?.Before?.TargetProcessWorkingSetBytes));
     const deepCleanupTitle = computed(() =>
         t('view.tools.system_tools.memory_cleanup_deep_tooltip')
     );
@@ -190,6 +192,10 @@
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
         const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
         return `${(bytes / 1024 ** index).toFixed(index < 2 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function toMb(value) {
+        return Math.round(Number(value || 0) / 1024 / 1024);
     }
 
     function percent(value, total) {
@@ -234,7 +240,12 @@
             }
             result.value = parseApiJson(resultJson);
             snapshot.value = result.value?.After || snapshot.value;
-            toast.success(t('view.tools.system_tools.memory_cleanup_done'));
+            toast.success(
+                t('view.tools.system_tools.memory_cleanup_done', {
+                    freed: freedMemoryMb.value,
+                    total: beforeMemoryMb.value
+                })
+            );
         } catch (err) {
             console.error(err);
             toast.error(t('view.tools.system_tools.memory_cleanup_failed'));
