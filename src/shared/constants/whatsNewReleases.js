@@ -19,7 +19,7 @@ const whatsNewReleases = Object.freeze({
             }
         ]
     },
-    '2026.04.05': {
+    '2026.05.03': {
         items: [
             {
                 key: 'quick_search',
