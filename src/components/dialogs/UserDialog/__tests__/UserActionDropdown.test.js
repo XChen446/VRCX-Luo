@@ -26,7 +26,10 @@ vi.mock('../../../../stores', () => ({
     useTrackedNonFriendsStore: () => ({})
 }));
 vi.mock('../../../../stores/trackedNonFriends', () => ({
-    useTrackedNonFriendsStore: () => ({ isTracked: vi.fn().mockReturnValue(false) })
+    useTrackedNonFriendsStore: () => ({
+        isTracked: vi.fn().mockReturnValue(false),
+        toggleTrackedNonFriend: vi.fn()
+    })
 }));
 
 vi.mock('../../../../composables/useInviteChecks', () => ({
@@ -57,12 +60,33 @@ vi.mock('@/components/ui/button', () => ({
 vi.mock('../../../ui/tooltip', () => ({
     TooltipWrapper: { template: '<div><slot /></div>' }
 }));
-vi.mock('lucide-vue-next', () => {
-    const iconMock = { template: '<i />' };
-    const iconMap = {};
-    ['Check', 'CheckCircle', 'Clock', 'ExternalLink', 'Flag', 'LineChart', 'Mail', 'MessageCircle', 'MessageSquare', 'Mic', 'MoreHorizontal', 'MousePointer', 'Pencil', 'Plus', 'RefreshCw', 'Settings', 'Share2', 'Star', 'Trash2', 'User', 'UserPlus', 'VolumeX', 'X', 'XCircle'].forEach((name) => { iconMap[name] = iconMock; });
-    return iconMap;
-});
+vi.mock('lucide-vue-next', () => ({
+    Check: { template: '<i />' },
+    CheckCircle: { template: '<i />' },
+    Clock: { template: '<i />' },
+    ExternalLink: { template: '<i />' },
+    Flag: { template: '<i />' },
+    LineChart: { template: '<i />' },
+    Mail: { template: '<i />' },
+    MessageCircle: { template: '<i />' },
+    MessageSquare: { template: '<i />' },
+    Mic: { template: '<i />' },
+    MoreHorizontal: { template: '<i />' },
+    MousePointer: { template: '<i />' },
+    Pencil: { template: '<i />' },
+    Plus: { template: '<i />' },
+    RefreshCw: { template: '<i />' },
+    Settings: { template: '<i />' },
+    Share2: { template: '<i />' },
+    Star: { template: '<i />' },
+    Trash2: { template: '<i />' },
+    User: { template: '<i />' },
+    UserMinus: { template: '<i />' },
+    UserPlus: { template: '<i />' },
+    VolumeX: { template: '<i />' },
+    X: { template: '<i />' },
+    XCircle: { template: '<i />' }
+}));
 
 import UserActionDropdown from '../UserActionDropdown.vue';
 

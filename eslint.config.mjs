@@ -45,6 +45,7 @@ export default defineConfig([
             '**/webpack.*.js',
             '**/jest.config.js',
             'src-electron/*.js',
+            'src-electron/*.cjs',
             'src/localization/*.js',
             'src/shared/utils/localizationHelperCLI.js'
         ],

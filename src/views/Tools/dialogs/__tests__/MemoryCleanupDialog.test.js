@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { toast } from 'vue-sonner';
 
 import MemoryCleanupDialog from '../MemoryCleanupDialog.vue';
 
@@ -15,13 +16,11 @@ const translations = {
     'view.tools.system_tools.memory_cleanup_working_set': 'Working set',
     'view.tools.system_tools.memory_cleanup_private': 'Private memory',
     'view.tools.system_tools.memory_cleanup_empty': 'No target process is running.',
-    'view.tools.system_tools.memory_cleanup_notice': 'Normal cleanup only trims related processes.',
+    'view.tools.system_tools.memory_cleanup_notice': 'Normal cleanup trims VRCX, VRChat and CEF working sets. Deep cleanup runs in a separate elevated helper process.',
     'view.tools.system_tools.memory_cleanup_run': 'Clean Related Processes',
     'view.tools.system_tools.memory_cleanup_deep_run': 'Deep Cleanup',
-    'view.tools.system_tools.memory_cleanup_deep_tooltip': 'Purge system memory lists.',
-    'view.tools.system_tools.memory_cleanup_request_admin': 'Request Admin',
-    'view.tools.system_tools.memory_cleanup_request_admin_tooltip': 'Restart through UAC.',
-    'view.tools.system_tools.memory_cleanup_admin_failed': 'Failed to request administrator rights',
+    'view.tools.system_tools.memory_cleanup_deep_tooltip': 'Purge system memory lists. A UAC prompt will appear for the helper process.',
+    'view.tools.system_tools.memory_cleanup_admin_failed': 'Deep cleanup was cancelled or failed',
     'view.tools.system_tools.memory_cleanup_operation_SeProfileSingleProcessPrivilege': 'Enable profile privilege',
     'view.tools.system_tools.memory_cleanup_operation_SeIncreaseQuotaPrivilege': 'Enable quota privilege',
     'view.tools.system_tools.memory_cleanup_operation_modifiedPageList': 'Modified page list',
@@ -30,7 +29,7 @@ const translations = {
     'view.tools.system_tools.memory_cleanup_operation_systemFileCache': 'System file cache',
     'view.tools.system_tools.memory_cleanup_operation_ok': 'OK',
     'view.tools.system_tools.memory_cleanup_operation_failed': 'Failed',
-    'view.tools.system_tools.memory_cleanup_done': 'Memory cleanup completed',
+    'view.tools.system_tools.memory_cleanup_done': 'Memory cleanup completed ({freed}/{total} MB)',
     'view.tools.system_tools.memory_cleanup_failed': 'Memory cleanup failed',
     'common.actions.refresh': 'Refresh'
 };
@@ -84,13 +83,12 @@ vi.mock('@/components/ui/tooltip', () => ({
     }
 }));
 
-function mockSnapshot(isAdministrator = false) {
+function mockSnapshot() {
     globalThis.AppApi = {
         GetMemoryCleanupSnapshot: vi.fn().mockResolvedValue(
             JSON.stringify({
                 TotalAvailableMemoryBytes: 1000,
                 MemoryLoadBytes: 400,
-                IsAdministrator: isAdministrator,
                 TargetProcessWorkingSetBytes: 100,
                 Processes: [
                     {
@@ -102,12 +100,11 @@ function mockSnapshot(isAdministrator = false) {
                 ]
             })
         ),
-        RestartAsAdministrator: vi.fn().mockResolvedValue(true),
-        CleanupMemory: vi.fn().mockResolvedValue(
+        LaunchMemoryCleanupHelper: vi.fn().mockResolvedValue(
             JSON.stringify({
-                FreedBytes: 100,
+                FreedBytes: 100 * 1024 * 1024,
                 Before: {
-                    TargetProcessWorkingSetBytes: 100,
+                    TargetProcessWorkingSetBytes: 100 * 1024 * 1024,
                     TotalAvailableMemoryBytes: 1000,
                     MemoryLoadBytes: 400,
                     Processes: []
@@ -136,8 +133,12 @@ function mockSnapshot(isAdministrator = false) {
 }
 
 describe('MemoryCleanupDialog', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
     test('renders localized actions and memory progress bars', async () => {
-        mockSnapshot(false);
+        mockSnapshot();
 
         const wrapper = mount(MemoryCleanupDialog, {
             props: { visible: true }
@@ -148,47 +149,34 @@ describe('MemoryCleanupDialog', () => {
         expect(wrapper.text()).toContain('!');
         expect(wrapper.text()).not.toContain('common.refresh');
         expect(wrapper.findAll('[data-testid="progress"]')).toHaveLength(3);
-
-        const adminButton = wrapper
-            .findAll('button')
-            .find((button) => button.text().includes('Request Admin'));
-
-        expect(adminButton.exists()).toBe(true);
-        expect(adminButton.attributes('disabled')).toBeUndefined();
-        expect(adminButton.attributes('title')).toBe('Restart through UAC.');
-    });
-
-    test('requests administrator restart when deep cleanup is clicked without elevation', async () => {
-        mockSnapshot(false);
-
-        const wrapper = mount(MemoryCleanupDialog, {
-            props: { visible: true }
-        });
-        await flushPromises();
-
-        const adminButton = wrapper
-            .findAll('button')
-            .find((button) => button.text().includes('Request Admin'));
-
-        await adminButton.trigger('click');
-
-        expect(globalThis.AppApi.RestartAsAdministrator).toHaveBeenCalledTimes(1);
-    });
-
-    test('shows deep cleanup action when already elevated', async () => {
-        mockSnapshot(true);
-
-        const wrapper = mount(MemoryCleanupDialog, {
-            props: { visible: true }
-        });
-        await flushPromises();
-
+        expect(wrapper.text()).toContain('Clean Related Processes');
         expect(wrapper.text()).toContain('Deep Cleanup');
-        expect(wrapper.text()).not.toContain('Request Admin');
     });
 
-    test('runs deep cleanup and shows operation results when already elevated', async () => {
-        mockSnapshot(true);
+    test('runs normal cleanup via helper process', async () => {
+        mockSnapshot();
+
+        const wrapper = mount(MemoryCleanupDialog, {
+            props: { visible: true }
+        });
+        await flushPromises();
+
+        const runButton = wrapper
+            .findAll('button')
+            .find((button) => button.text().includes('Clean Related Processes'));
+
+        await runButton.trigger('click');
+        await flushPromises();
+
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(false);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).toHaveBeenCalledWith('Memory cleanup completed (100/100 MB)');
+        expect(wrapper.text()).toContain('Standby list');
+        expect(wrapper.text()).toContain('OK');
+    });
+
+    test('runs deep cleanup via elevated helper process', async () => {
+        mockSnapshot();
 
         const wrapper = mount(MemoryCleanupDialog, {
             props: { visible: true }
@@ -202,8 +190,32 @@ describe('MemoryCleanupDialog', () => {
         await deepButton.trigger('click');
         await flushPromises();
 
-        expect(globalThis.AppApi.CleanupMemory).toHaveBeenCalledWith(true);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(true);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).toHaveBeenCalledWith('Memory cleanup completed (100/100 MB)');
         expect(wrapper.text()).toContain('Standby list');
         expect(wrapper.text()).toContain('OK');
+    });
+
+    test('shows error when helper is cancelled or fails', async () => {
+        mockSnapshot();
+        globalThis.AppApi.LaunchMemoryCleanupHelper.mockResolvedValueOnce(null);
+
+        const wrapper = mount(MemoryCleanupDialog, {
+            props: { visible: true }
+        });
+        await flushPromises();
+
+        const deepButton = wrapper
+            .findAll('button')
+            .find((button) => button.text().includes('Deep Cleanup'));
+
+        await deepButton.trigger('click');
+        await flushPromises();
+
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledWith(true);
+        expect(globalThis.AppApi.LaunchMemoryCleanupHelper).toHaveBeenCalledTimes(1);
+        expect(toast.success).not.toHaveBeenCalled();
+        expect(wrapper.text()).not.toContain('Standby list');
     });
 });

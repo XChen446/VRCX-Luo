@@ -38,6 +38,27 @@ export const useVrStore = defineStore('Vr', () => {
         { flush: 'sync' }
     );
 
+    // vSleepMode is owned by the notifications settings store; refresh the
+    // overlay when it changes (front-end switch, CEF tray menu and Electron
+    // tray IPC all converge here instead of calling updateOpenVR directly).
+    watch(
+        () => notificationsSettingsStore.vSleepMode,
+        () => updateOpenVR(),
+        { flush: 'sync', immediate: true }
+    );
+
+    // The notifications store pushes config changes into these refs; the VR
+    // overlay config is consumed here, so watch instead of reverse-importing
+    // the vr store from the settings store (avoids a module cycle).
+    watch(
+        () => [
+            notificationsSettingsStore.notificationPosition,
+            notificationsSettingsStore.notificationTimeout
+        ],
+        () => updateVRConfigVars(),
+        { flush: 'sync' }
+    );
+
     // also runs from CEF C# on overlay browser startup
     function vrInit() {
         updateVRConfigVars();
@@ -157,10 +178,11 @@ export const useVrStore = defineStore('Vr', () => {
         ) {
             let hmdOverlay = false;
             if (
-                notificationsSettingsStore.overlayNotifications ||
-                advancedSettingsStore.progressPie ||
-                photonStore.photonEventOverlay ||
-                photonStore.timeoutHudOverlay
+                !notificationsSettingsStore.vSleepMode &&
+                (notificationsSettingsStore.overlayNotifications ||
+                    advancedSettingsStore.progressPie ||
+                    photonStore.photonEventOverlay ||
+                    photonStore.timeoutHudOverlay)
             ) {
                 hmdOverlay = true;
             }

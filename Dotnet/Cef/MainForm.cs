@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.IO;
@@ -23,6 +23,10 @@ namespace VRCX
         private int LastLocationY;
         private int LastSizeWidth;
         private int LastSizeHeight;
+        private bool _allowClose;
+        private bool _closePromptInProgress;
+        private Timer _closePromptTimeoutTimer;
+        private CloseToTrayPrompt _closeToTrayPrompt;
         private FormWindowState LastWindowStateToRestore = FormWindowState.Normal;
 
         public MainForm()
@@ -30,8 +34,8 @@ namespace VRCX
             Instance = this;
             InitializeComponent();
             nativeWindow = NativeWindow.FromHandle(this.Handle);
-            UpdateDesktopNotificationsTrayMenu();
-            TrayMenu.Opening += (_, _) => UpdateDesktopNotificationsTrayMenu();
+            UpdateTraySettingsMenu();
+            TrayMenu.Opening += (_, _) => UpdateTraySettingsMenu();
 
             // adding a 5s delay here to avoid excessive writes to disk
             _saveTimer = new Timer();
@@ -188,12 +192,143 @@ namespace VRCX
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (e.CloseReason == CloseReason.UserClosing &&
-                "true".Equals(VRCXStorage.Instance.Get("VRCX_CloseToTray")))
+            if (e.CloseReason != CloseReason.UserClosing || _allowClose)
             {
-                e.Cancel = true;
-                Hide();
+                return;
             }
+
+            if (IsCloseToTrayEnabled())
+            {
+                HideToTray(e);
+                return;
+            }
+
+            if (!ShouldPromptCloseToTray())
+            {
+                return;
+            }
+
+            e.Cancel = true;
+            if (!Visible || _closePromptInProgress)
+            {
+                return;
+            }
+
+            ShowCloseToTrayPrompt();
+        }
+
+        private void ShowCloseToTrayPrompt()
+        {
+            if (
+                Browser != null &&
+                Browser.CanExecuteJavascriptInMainFrame
+            )
+            {
+                // The JS dialog clears the flag when the user submits or
+                // cancels via HandleClosePromptChoice; the timeout is a
+                // fallback so a lost event (startup, CEF reload) can never
+                // permanently block closing.
+                _closePromptInProgress = true;
+                _closePromptTimeoutTimer?.Stop();
+                _closePromptTimeoutTimer?.Dispose();
+                _closePromptTimeoutTimer = new Timer();
+                _closePromptTimeoutTimer.Interval = 5000;
+                _closePromptTimeoutTimer.Tick += (_, _) =>
+                    HandleClosePromptChoice("cancel", false);
+                _closePromptTimeoutTimer.Start();
+                Browser.ExecuteScriptAsync(
+                    "window.dispatchEvent(new CustomEvent('vrcx-close-requested'));"
+                );
+                return;
+            }
+
+            if (_closeToTrayPrompt != null && !_closeToTrayPrompt.IsDisposed)
+            {
+                _closeToTrayPrompt.Activate();
+                return;
+            }
+
+            var prompt = new CloseToTrayPrompt();
+            _closeToTrayPrompt = prompt;
+            prompt.FormClosed += (_, _) =>
+            {
+                if (ReferenceEquals(_closeToTrayPrompt, prompt))
+                {
+                    _closeToTrayPrompt = null;
+                }
+                _closePromptInProgress = false;
+            };
+            prompt.ChoiceSelected += ApplyCloseToTrayChoice;
+            prompt.Show(this);
+            prompt.Activate();
+        }
+
+        public void HandleClosePromptChoice(string action, bool dontAskAgain)
+        {
+            _closePromptTimeoutTimer?.Stop();
+            _closePromptTimeoutTimer?.Dispose();
+            _closePromptTimeoutTimer = null;
+
+            var result = action switch
+            {
+                "tray" => CloseToTrayPromptResult.MinimizeToTray,
+                "exit" => CloseToTrayPromptResult.Exit,
+                _ => CloseToTrayPromptResult.Cancel
+            };
+
+            if (result == CloseToTrayPromptResult.Cancel)
+            {
+                _closePromptInProgress = false;
+                return;
+            }
+
+            ApplyCloseToTrayChoice(result, dontAskAgain);
+        }
+
+        private void ApplyCloseToTrayChoice(
+            CloseToTrayPromptResult promptResult,
+            bool dontAskAgain
+        )
+        {
+            _closePromptInProgress = false;
+            var decision = CloseToTrayDecision.Resolve(
+                promptResult,
+                dontAskAgain
+            );
+
+            if (decision.ShouldPersistPreference)
+            {
+                VRCXStorage.Instance.Set("VRCX_CloseToTrayPrompt", "false");
+                VRCXStorage.Instance.Set(
+                    "VRCX_CloseToTray",
+                    decision.CloseToTrayEnabled.ToString().ToLowerInvariant()
+                );
+            }
+
+            if (decision.MinimizeToTray)
+            {
+                Hide();
+                return;
+            }
+
+            _allowClose = true;
+            Close();
+        }
+
+        private static bool IsCloseToTrayEnabled()
+        {
+            return VRCXStorage.Instance.Get("VRCX_CloseToTray") == "true";
+        }
+
+        private static bool ShouldPromptCloseToTray()
+        {
+            return VRCXStorage.Instance.Get("VRCX_CloseToTrayPrompt") != "false";
+        }
+
+        private void HideToTray(FormClosingEventArgs e)
+        {
+            e.Cancel = true;
+            Hide();
         }
 
         private void SaveWindowState()
@@ -229,11 +364,25 @@ namespace VRCX
             return VRCXStorage.Instance.Get("VRCX_desktopNotificationsEnabled") != "false";
         }
 
-        private void UpdateDesktopNotificationsTrayMenu()
+        private bool IsTraySilentModeEnabled()
         {
-            var enabled = AreDesktopNotificationsEnabled();
-            TrayMenu_DesktopNotifications.Checked = enabled;
-            TrayMenu_DesktopNotifications.Text = enabled ? "关闭桌面通知" : "启用桌面通知";
+            return VRCXStorage.Instance.Get("VRCX_traySilentMode") == "true";
+        }
+
+        private bool IsVSleepModeEnabled()
+        {
+            return VRCXStorage.Instance.Get("VRCX_vSleepMode") == "true";
+        }
+
+        private void UpdateTraySettingsMenu()
+        {
+            var desktopNotificationsEnabled = AreDesktopNotificationsEnabled();
+            TrayMenu_DesktopNotifications.Checked = desktopNotificationsEnabled;
+            TrayMenu_DesktopNotifications.Text = desktopNotificationsEnabled ? "关闭桌面通知" : "启用桌面通知";
+
+
+            TrayMenu_SilentMode.Checked = IsTraySilentModeEnabled();
+            TrayMenu_VSleepMode.Checked = IsVSleepModeEnabled();
         }
 
         private void TrayMenu_DesktopNotifications_Click(object sender, System.EventArgs e)
@@ -241,9 +390,35 @@ namespace VRCX
             var enabled = !AreDesktopNotificationsEnabled();
             VRCXStorage.Instance.Set("VRCX_desktopNotificationsEnabled", enabled.ToString().ToLowerInvariant());
             VRCXStorage.Instance.Save();
-            UpdateDesktopNotificationsTrayMenu();
+            UpdateTraySettingsMenu();
             Browser?.ExecuteScriptAsync(
                 "window.dispatchEvent(new CustomEvent('vrcx-desktop-notifications-updated', { detail: { enabled: " +
+                enabled.ToString().ToLowerInvariant() +
+                " } }));"
+            );
+        }
+
+        private void TrayMenu_SilentMode_Click(object sender, System.EventArgs e)
+        {
+            var enabled = !IsTraySilentModeEnabled();
+            VRCXStorage.Instance.Set("VRCX_traySilentMode", enabled.ToString().ToLowerInvariant());
+            VRCXStorage.Instance.Save();
+            UpdateTraySettingsMenu();
+            Browser?.ExecuteScriptAsync(
+                "window.dispatchEvent(new CustomEvent('vrcx-tray-silent-mode-updated', { detail: { enabled: " +
+                enabled.ToString().ToLowerInvariant() +
+                " } }));"
+            );
+        }
+
+        private void TrayMenu_VSleepMode_Click(object sender, System.EventArgs e)
+        {
+            var enabled = !IsVSleepModeEnabled();
+            VRCXStorage.Instance.Set("VRCX_vSleepMode", enabled.ToString().ToLowerInvariant());
+            VRCXStorage.Instance.Save();
+            UpdateTraySettingsMenu();
+            Browser?.ExecuteScriptAsync(
+                "window.dispatchEvent(new CustomEvent('vrcx-v-sleep-mode-updated', { detail: { enabled: " +
                 enabled.ToString().ToLowerInvariant() +
                 " } }));"
             );
@@ -280,5 +455,6 @@ namespace VRCX
         {
             TrayIcon.Icon = notify ? _appIconNoty : _appIcon;
         }
+
     }
 }

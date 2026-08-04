@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
+using NLog;
 
 namespace VRCX
 {
@@ -46,6 +48,33 @@ namespace VRCX
             "VRChat",
             "CefSharp.BrowserSubprocess"
         };
+
+        /// <summary>
+        /// Result file written by the one-shot cleanup helper process and read
+        /// back by the main instance after the helper exits.
+        /// </summary>
+        public const string MemoryCleanupResultFileName = "memory-cleanup-result.json";
+        public static string MemoryCleanupResultFilePath => Path.Join(Program.AppDataDirectory, MemoryCleanupResultFileName);
+
+        /// <summary>
+        /// Entry point for the --memory-cleanup-helper process. Runs the same
+        /// cleanup logic as the in-process path, writes the result to
+        /// MemoryCleanupResultFilePath and returns the process exit code.
+        /// </summary>
+        public static int RunMemoryCleanupHelper(bool deep)
+        {
+            try
+            {
+                var json = CleanupMemoryInternal(deep);
+                File.WriteAllText(MemoryCleanupResultFilePath, json);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                LogManager.GetCurrentClassLogger().Error(ex, "Memory cleanup helper failed");
+                return 1;
+            }
+        }
 
         private static string GetMemoryCleanupSnapshotInternal()
         {
@@ -281,6 +310,7 @@ namespace VRCX
             if (!OperatingSystem.IsWindows())
                 return Enumerable.Empty<Process>();
 
+            var currentProcessId = Environment.ProcessId;
             return MemoryCleanupProcessNames
                 .SelectMany(processName =>
                 {
@@ -292,7 +322,8 @@ namespace VRCX
                     {
                         return Array.Empty<Process>();
                     }
-                });
+                })
+                .Where(process => process.Id != currentProcessId);
         }
 
         private static bool IsAdministrator()

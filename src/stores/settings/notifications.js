@@ -4,14 +4,12 @@ import { useI18n } from 'vue-i18n';
 
 import { sharedFeedFiltersDefaults } from '../../shared/constants';
 import { useModalStore } from '../modal';
-import { useVrStore } from '../vr';
 
 import configRepository from '../../services/config';
 
 export const useNotificationsSettingsStore = defineStore(
     'NotificationsSettings',
     () => {
-        const vrStore = useVrStore();
         const modalStore = useModalStore();
 
         const { t } = useI18n();
@@ -24,6 +22,8 @@ export const useNotificationsSettingsStore = defineStore(
         const ovrtWristNotifications = ref(false);
         const imageNotifications = ref(true);
         const desktopNotificationsEnabled = ref(true);
+        const traySilentMode = ref(false);
+        const vSleepMode = ref(false);
         const desktopToast = ref('Never');
         const afkDesktopToast = ref(false);
         const customNotificationSoundEnabled = ref(false);
@@ -136,6 +136,8 @@ export const useNotificationsSettingsStore = defineStore(
                 ovrtWristNotificationsConfig,
                 imageNotificationsConfig,
                 desktopNotificationsEnabledConfig,
+                traySilentModeConfig,
+                vSleepModeConfig,
                 desktopToastConfig,
                 afkDesktopToastConfig,
                 customNotificationSoundEnabledConfig,
@@ -156,6 +158,8 @@ export const useNotificationsSettingsStore = defineStore(
                 configRepository.getBool('VRCX_ovrtWristNotifications', false),
                 configRepository.getBool('VRCX_imageNotifications', true),
                 VRCXStorage.Get('VRCX_desktopNotificationsEnabled'),
+                VRCXStorage.Get('VRCX_traySilentMode'),
+                VRCXStorage.Get('VRCX_vSleepMode'),
                 configRepository.getString('VRCX_desktopToast', 'Never'),
                 configRepository.getBool('VRCX_afkDesktopToast', false),
                 configRepository.getBool(
@@ -193,6 +197,8 @@ export const useNotificationsSettingsStore = defineStore(
             imageNotifications.value = imageNotificationsConfig;
             desktopNotificationsEnabled.value =
                 desktopNotificationsEnabledConfig !== 'false';
+            traySilentMode.value = traySilentModeConfig === 'true';
+            vSleepMode.value = vSleepModeConfig === 'true';
             desktopToast.value = desktopToastConfig;
             afkDesktopToast.value = afkDesktopToastConfig;
             customNotificationSoundEnabled.value =
@@ -223,6 +229,20 @@ export const useNotificationsSettingsStore = defineStore(
                 );
                 window.electron?.onDesktopNotificationsUpdated?.((enabled) => {
                     desktopNotificationsEnabled.value = enabled !== false;
+                });
+                window.addEventListener(
+                    'vrcx-tray-silent-mode-updated',
+                    handleTraySilentModeUpdated
+                );
+                window.electron?.onTraySilentModeUpdated?.((enabled) => {
+                    traySilentMode.value = enabled === true;
+                });
+                window.addEventListener(
+                    'vrcx-v-sleep-mode-updated',
+                    handleVSleepModeUpdated
+                );
+                window.electron?.onVSleepModeUpdated?.((enabled) => {
+                    vSleepMode.value = enabled === true;
                 });
             }
         }
@@ -289,13 +309,36 @@ export const useNotificationsSettingsStore = defineStore(
             desktopNotificationsEnabled.value = event.detail?.enabled !== false;
         }
 
+        function setTraySilentMode(value = null) {
+            traySilentMode.value =
+                value === null ? !traySilentMode.value : !!value;
+            VRCXStorage.Set(
+                'VRCX_traySilentMode',
+                traySilentMode.value.toString()
+            );
+            window.electron?.setTraySilentMode?.(traySilentMode.value);
+        }
+
+        function handleTraySilentModeUpdated(event) {
+            traySilentMode.value = event.detail?.enabled === true;
+        }
+
+        function setVSleepMode(value = null) {
+            vSleepMode.value = value === null ? !vSleepMode.value : !!value;
+            VRCXStorage.Set('VRCX_vSleepMode', vSleepMode.value.toString());
+            window.electron?.setVSleepMode?.(vSleepMode.value);
+        }
+
+        function handleVSleepModeUpdated(event) {
+            vSleepMode.value = event.detail?.enabled === true;
+        }
+
         function changeNotificationPosition(value) {
             notificationPosition.value = value;
             configRepository.setString(
                 'VRCX_notificationPosition',
                 notificationPosition.value
             );
-            vrStore.updateVRConfigVars();
         }
         /**
          * @param {string} value
@@ -382,6 +425,7 @@ export const useNotificationsSettingsStore = defineStore(
 
         function shouldPlayCustomNotificationSound() {
             return (
+                !traySilentMode.value &&
                 customNotificationSoundEnabled.value &&
                 !!customNotificationSoundPath.value
             );
@@ -565,7 +609,6 @@ export const useNotificationsSettingsStore = defineStore(
                 'VRCX_notificationTimeout',
                 ms.toString()
             );
-            vrStore.updateVRConfigVars();
         }
 
         /**
@@ -597,7 +640,6 @@ export const useNotificationsSettingsStore = defineStore(
                             'VRCX_notificationTimeout',
                             notificationTimeout.value.toString()
                         );
-                        vrStore.updateVRConfigVars();
                     }
                 })
                 .catch(() => {});
@@ -612,6 +654,8 @@ export const useNotificationsSettingsStore = defineStore(
             ovrtWristNotifications,
             imageNotifications,
             desktopNotificationsEnabled,
+            traySilentMode,
+            vSleepMode,
             desktopToast,
             afkDesktopToast,
             customNotificationSoundEnabled,
@@ -635,6 +679,8 @@ export const useNotificationsSettingsStore = defineStore(
             setOvrtWristNotifications,
             setImageNotifications,
             setDesktopNotificationsEnabled,
+            setTraySilentMode,
+            setVSleepMode,
             setDesktopToast,
             setAfkDesktopToast,
             setCustomNotificationSoundEnabled,

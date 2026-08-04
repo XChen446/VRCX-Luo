@@ -355,8 +355,8 @@
                                             <NumberFieldInput
                                                 ref="zoomInputRef"
                                                 class="h-[18px] text-[11px] px-0.5 text-center"
-                                                @blur="zoomEditing = false"
-                                                @keydown.enter="zoomEditing = false"
+                                                @blur="commitZoomEdit"
+                                                @keydown.enter="commitZoomEdit"
                                                 @keydown.escape="zoomEditing = false" />
                                             <NumberFieldIncrement />
                                         </NumberFieldContent>
@@ -609,7 +609,9 @@
         normalizeOrder,
         normalizeClock,
         normalizeUtcHour,
-        parseClockOffset
+        parseClockOffset,
+        zoomLevelToPercent,
+        zoomPercentToLevel
     } from './statusBarUtils';
 
     import configRepository from '../services/config';
@@ -1283,7 +1285,7 @@
     function updateZoomLevel(level) {
         const value = Number(level);
         if (Number.isFinite(value)) {
-            const nextZoomLevel = Number(((value + 10) * 10).toFixed(2));
+            const nextZoomLevel = zoomLevelToPercent(value);
             if (nextZoomLevel !== zoomLevel.value) {
                 zoomLevel.value = nextZoomLevel;
             }
@@ -1306,11 +1308,35 @@
      */
     function setZoomLevel() {
         try {
-            zoomLevel.value = Number(Number(zoomLevel.value || 0).toFixed(2));
-            AppApi.SetZoom(zoomLevel.value / 10 - 10);
+            zoomLevel.value = normalizeZoomPercent(zoomLevel.value);
+            AppApi.SetZoom(zoomPercentToLevel(zoomLevel.value));
         } catch {
             // AppApi not available
         }
+    }
+
+    /**
+     *
+     * @param value
+     */
+    function normalizeZoomPercent(value) {
+        const next = Number(value);
+        if (!Number.isFinite(next)) {
+            return 100;
+        }
+        return Math.min(500, Math.max(25, Number(next.toFixed(2))));
+    }
+
+    /**
+     *
+     */
+    function commitZoomEdit() {
+        const inputValue = zoomInputRef.value?.$el?.value ?? zoomInputRef.value?.value;
+        if (inputValue !== undefined && inputValue !== '') {
+            zoomLevel.value = inputValue;
+        }
+        setZoomLevel();
+        zoomEditing.value = false;
     }
 
     /**

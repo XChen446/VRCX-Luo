@@ -126,8 +126,8 @@
                     variant="destructive"
                     :disabled="loading"
                     :title="deepCleanupTitle"
-                    @click="handleDeepCleanup">
-                    {{ deepCleanupLabel }}
+                    @click="cleanup(true)">
+                    {{ t('view.tools.system_tools.memory_cleanup_deep_run') }}
                 </Button>
             </DialogFooter>
         </DialogContent>
@@ -171,16 +171,10 @@
     const freedMemoryPercent = computed(() =>
         percent(result.value?.FreedBytes, result.value?.Before?.TargetProcessWorkingSetBytes)
     );
-    const isAdministrator = computed(() => Boolean(snapshot.value?.IsAdministrator));
-    const deepCleanupLabel = computed(() =>
-        isAdministrator.value
-            ? t('view.tools.system_tools.memory_cleanup_deep_run')
-            : t('view.tools.system_tools.memory_cleanup_request_admin')
-    );
+    const freedMemoryMb = computed(() => toMb(result.value?.FreedBytes));
+    const beforeMemoryMb = computed(() => toMb(result.value?.Before?.TargetProcessWorkingSetBytes));
     const deepCleanupTitle = computed(() =>
-        isAdministrator.value
-            ? t('view.tools.system_tools.memory_cleanup_deep_tooltip')
-            : t('view.tools.system_tools.memory_cleanup_request_admin_tooltip')
+        t('view.tools.system_tools.memory_cleanup_deep_tooltip')
     );
 
     function parseApiJson(value) {
@@ -198,6 +192,10 @@
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
         const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
         return `${(bytes / 1024 ** index).toFixed(index < 2 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function toMb(value) {
+        return Math.round(Number(value || 0) / 1024 / 1024);
     }
 
     function percent(value, total) {
@@ -228,32 +226,29 @@
     async function cleanup(deep) {
         loading.value = true;
         try {
-            result.value = parseApiJson(await AppApi.CleanupMemory(deep));
+            // Both modes run in the one-shot helper process. Deep cleanup
+            // triggers a UAC elevation prompt for the helper; the main
+            // instance itself never elevates.
+            const resultJson = await AppApi.LaunchMemoryCleanupHelper(deep);
+            if (!resultJson) {
+                toast.error(
+                    deep
+                        ? t('view.tools.system_tools.memory_cleanup_admin_failed')
+                        : t('view.tools.system_tools.memory_cleanup_failed')
+                );
+                return;
+            }
+            result.value = parseApiJson(resultJson);
             snapshot.value = result.value?.After || snapshot.value;
-            toast.success(t('view.tools.system_tools.memory_cleanup_done'));
+            toast.success(
+                t('view.tools.system_tools.memory_cleanup_done', {
+                    freed: freedMemoryMb.value,
+                    total: beforeMemoryMb.value
+                })
+            );
         } catch (err) {
             console.error(err);
             toast.error(t('view.tools.system_tools.memory_cleanup_failed'));
-        } finally {
-            loading.value = false;
-        }
-    }
-
-    async function handleDeepCleanup() {
-        if (isAdministrator.value) {
-            await cleanup(true);
-            return;
-        }
-
-        loading.value = true;
-        try {
-            const ok = await AppApi.RestartAsAdministrator();
-            if (!ok) {
-                toast.error(t('view.tools.system_tools.memory_cleanup_admin_failed'));
-            }
-        } catch (err) {
-            console.error(err);
-            toast.error(t('view.tools.system_tools.memory_cleanup_admin_failed'));
         } finally {
             loading.value = false;
         }

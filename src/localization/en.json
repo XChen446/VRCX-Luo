@@ -106,6 +106,16 @@
             "restore_default_confirm": "Restore navigation to its default order?"
         }
     },
+    "quick_launch": {
+        "tooltip": "Quick Launch",
+        "header": "Quick Launch",
+        "vrchat_desktop": "Start VRChat Desktop",
+        "vrchat_vr": "Start VRChat VR",
+        "steamvr": "Start SteamVR",
+        "steamvr_running": "SteamVR is already running",
+        "steamvr_started": "SteamVR started",
+        "steamvr_failed": "Failed to start SteamVR"
+    },
     "dashboard": {
         "default_name": "Dashboard",
         "new_dashboard": "New Dashboard",
@@ -487,7 +497,8 @@
                     "transfer": "Group Transfer",
                     "queueReady": "Queue Ready",
                     "event": {
-                        "created": "Group Event Created"
+                        "created": "Group Event Created",
+                        "starting": "Group Event Starting"
                     }
                 },
                 "moderation": {
@@ -809,13 +820,11 @@
                 "memory_cleanup_working_set": "Working set",
                 "memory_cleanup_private": "Private memory",
                 "memory_cleanup_empty": "No target process is running.",
-                "memory_cleanup_notice": "Normal cleanup trims only VRCX, VRChat and CEF working sets. Deep cleanup requires an elevated helper and will not run silently.",
+                "memory_cleanup_notice": "Normal cleanup trims VRCX, VRChat and CEF working sets. Deep cleanup runs in a separate elevated helper process.",
                 "memory_cleanup_run": "Clean Related Processes",
                 "memory_cleanup_deep_run": "Deep Cleanup",
-                "memory_cleanup_deep_tooltip": "Purge standby lists, modified page list and system file cache. Requires administrator rights.",
-                "memory_cleanup_request_admin": "Request Admin",
-                "memory_cleanup_request_admin_tooltip": "Restart VRCX-Luo as administrator through UAC.",
-                "memory_cleanup_admin_failed": "Failed to request administrator rights",
+                "memory_cleanup_deep_tooltip": "Purge standby lists, modified page list and system file cache. A UAC prompt will appear for the helper process.",
+                "memory_cleanup_admin_failed": "Deep cleanup was cancelled or failed",
                 "memory_cleanup_operation_SeProfileSingleProcessPrivilege": "Enable profile privilege",
                 "memory_cleanup_operation_SeIncreaseQuotaPrivilege": "Enable quota privilege",
                 "memory_cleanup_operation_modifiedPageList": "Modified page list",
@@ -824,7 +833,7 @@
                 "memory_cleanup_operation_systemFileCache": "System file cache",
                 "memory_cleanup_operation_ok": "OK",
                 "memory_cleanup_operation_failed": "Failed",
-                "memory_cleanup_done": "Memory cleanup completed",
+                "memory_cleanup_done": "Memory cleanup completed ({freed}/{total} MB)",
                 "memory_cleanup_failed": "Memory cleanup failed"
             },
             "other": {
@@ -894,6 +903,18 @@
                 },
                 "lists_tables": {
                     "header": "Lists & Tables"
+                },
+                "window_behavior": {
+                    "header": "Window Behavior",
+                    "close_button": "When Clicking the Close Button",
+                    "close_button_description": "Choose what happens when the main window close button is clicked.",
+                    "ask": "Ask Every Time",
+                    "tray": "Minimize to System Tray",
+                    "exit": "Exit Immediately",
+                    "dialog_title": "Close VRCX-Luo",
+                    "dialog_description": "When minimized, VRCX-Luo keeps running in the background and can be reopened from the system tray.",
+                    "dont_ask_again": "Don't ask again",
+                    "cancel": "Cancel"
                 }
             },
             "integrations": {
@@ -943,6 +964,8 @@
                     "startup": "Start at Windows Startup",
                     "minimized": "Start Minimized at System Startup",
                     "tray": "Minimize to Tray When Closing",
+                    "close_to_tray_prompt": "Ask Whether to Minimize to Tray When Closing",
+                    "close_to_tray_prompt_tooltip": "When enabled, closing VRCX asks whether to minimize to the tray. You can also disable the prompt directly from the confirmation window.",
                     "disable_gpu_acceleration": "Disable GPU Acceleration",
                     "disable_gpu_acceleration_tooltip": "Only change this option if you know what you're doing, may fix issues with UI, requires restarting VRCX",
                     "disable_vr_overlay_gpu_acceleration": "Disable VR Overlay GPU Acceleration",
@@ -2102,7 +2125,9 @@
             "steamvr_not_running_warning": "SteamVR is not running. Open SteamVR before launching VRChat in VR mode?",
             "open_steamvr": "Open SteamVR",
             "confirm_yes": "Yes",
-            "confirm_no": "No"
+            "confirm_no": "Launch Anyway",
+            "game_running_confirm": "Launch Anyway",
+            "cancel_launch": "Cancel Launch"
         },
         "launch_options": {
             "header": "VRChat Launch Options",
@@ -3372,7 +3397,29 @@
                 "support": "Support VRCX"
             },
             "releases": {
-                "2026_04_05": {
+                "2026_07_16": {
+                    "title": "Window and Sidebar Improvements",
+                    "subtitle": "This update focuses on close behavior, floating controls, and player list layout.",
+                    "items": {
+                        "close_button_behavior": {
+                            "title": "Configurable Close Button",
+                            "description": "The Interface settings page now lets you choose whether closing asks first, minimizes to tray, or exits immediately."
+                        },
+                        "close_to_tray_prompt": {
+                            "title": "Close Confirmation Dialog",
+                            "description": "Clicking the top-right close button can now show an app-styled confirmation dialog with cancel and don't ask again options."
+                        },
+                        "sidebar_floating_controls": {
+                            "title": "Sidebar Floating Controls",
+                            "description": "Quick launch and back-to-top controls now only render for the active friends or groups sidebar tab."
+                        },
+                        "player_list_layout": {
+                            "title": "Player List Layout",
+                            "description": "Adjusted the instance details and player list scroll layout to reduce hidden content at larger zoom levels."
+                        }
+                    }
+                },
+                "2026_05_03": {
                     "title": "Explore New Features",
                     "subtitle": "A few useful features you might not notice",
                     "items": {

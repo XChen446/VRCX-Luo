@@ -397,7 +397,7 @@ describe('StatusBar.vue - Servers indicator', () => {
         await new Promise((resolve) => setTimeout(resolve, 80));
         await nextTick();
 
-        expect(wrapper.text()).toContain('112.50%');
+        expect(wrapper.text()).toContain('125.60%');
     });
 
     test('refreshes zoom value when Electron reports zoom change', async () => {
@@ -409,6 +409,24 @@ describe('StatusBar.vue - Servers indicator', () => {
         zoomLevelChangedCallback?.({}, 1.25);
         await nextTick();
 
-        expect(wrapper.text()).toContain('112.50%');
+        expect(wrapper.text()).toContain('125.60%');
+    });
+
+    test('applies zoom when typing a number and pressing Enter', async () => {
+        const wrapper = mountStatusBar();
+        await nextTick();
+
+        const zoomItem = wrapper
+            .findAll('.cursor-pointer')
+            .find((item) => item.text().includes('Zoom') && item.text().includes('100.00%'));
+        await zoomItem.trigger('click');
+        await nextTick();
+
+        const input = wrapper.find('input');
+        input.element.value = '120';
+        await input.trigger('keydown.enter');
+
+        expect(AppApi.SetZoom).toHaveBeenCalledWith(1);
+        expect(wrapper.text()).toContain('120.00%');
     });
 });

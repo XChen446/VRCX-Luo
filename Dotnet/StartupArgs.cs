@@ -49,6 +49,7 @@ namespace VRCX
 
 #if !LINUX
             var disableClosing = LaunchArguments.IsUpgrade || // we're upgrading, allow it
+                                        LaunchArguments.IsMemoryCleanupHelper || // we're a one-shot cleanup helper
                                         !string.IsNullOrEmpty(CommandLineArgsParser.GetArgumentValue(args, CefSharpArguments.SubProcessTypeArgument)); // we're launching a subprocess, allow it
 
             if (!disableClosing && IsDuplicateProcessRunning(LaunchArguments))
@@ -70,6 +71,12 @@ namespace VRCX
 
                 if (arg == VrcxLaunchArguments.IsUpgradePrefix)
                     arguments.IsUpgrade = true;
+
+                if (arg == VrcxLaunchArguments.MemoryCleanupHelperPrefix)
+                    arguments.IsMemoryCleanupHelper = true;
+
+                if (arg == VrcxLaunchArguments.MemoryCleanupDeepPrefix)
+                    arguments.IsMemoryCleanupDeep = true;
 
                 if (arg.StartsWith(VrcxLaunchArguments.IsDebugPrefix))
                     arguments.IsDebug = true;
@@ -99,6 +106,12 @@ namespace VRCX
 
             public const string IsUpgradePrefix = "/Upgrade";
             public bool IsUpgrade { get; set; } = false;
+
+            public const string MemoryCleanupHelperPrefix = "--memory-cleanup-helper";
+            public bool IsMemoryCleanupHelper { get; set; } = false;
+
+            public const string MemoryCleanupDeepPrefix = "--memory-cleanup-deep";
+            public bool IsMemoryCleanupDeep { get; set; } = false;
 
             public const string IsDebugPrefix = "--debug";
             public bool IsDebug { get; set; } = false;

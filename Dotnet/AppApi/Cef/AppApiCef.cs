@@ -30,6 +30,18 @@ namespace VRCX
             MainForm.Instance.Browser.ShowDevTools();
         }
 
+        public void HandleClosePromptChoice(string action, bool dontAskAgain)
+        {
+            MainForm.Instance.BeginInvoke(
+                new Action(() =>
+                    MainForm.Instance.HandleClosePromptChoice(
+                        action,
+                        dontAskAgain
+                    )
+                )
+            );
+        }
+
         public override void SetVR(bool active, bool hmdOverlay, bool wristOverlay, bool menuButton, int overlayHand)
         {
             var updateVars = new OverlayVars
@@ -254,12 +266,14 @@ namespace VRCX
             }
         }
 
-        public override bool RestartAsAdministrator()
+        public override async Task<string> LaunchMemoryCleanupHelper(bool deep)
         {
             if (!OperatingSystem.IsWindows())
-                return false;
+                return null;
 
-            var args = new List<string> { StartupArgs.VrcxLaunchArguments.IsUpgradePrefix };
+            var args = new List<string> { StartupArgs.VrcxLaunchArguments.MemoryCleanupHelperPrefix };
+            if (deep)
+                args.Add(StartupArgs.VrcxLaunchArguments.MemoryCleanupDeepPrefix);
 
             if (StartupArgs.LaunchArguments.IsDebug)
                 args.Add(StartupArgs.VrcxLaunchArguments.IsDebugPrefix);
@@ -270,24 +284,75 @@ namespace VRCX
             if (!string.IsNullOrWhiteSpace(StartupArgs.LaunchArguments.ProxyUrl))
                 args.Add($"{StartupArgs.VrcxLaunchArguments.ProxyUrlPrefix}=\"{StartupArgs.LaunchArguments.ProxyUrl}\"");
 
+            // Remove any stale result file before starting the helper so we
+            // never mistake a previous run's output for the current one.
             try
             {
-                Process.Start(new ProcessStartInfo
+                if (File.Exists(AppApi.MemoryCleanupResultFilePath))
+                    File.Delete(AppApi.MemoryCleanupResultFilePath);
+            }
+            catch (Exception ex)
+            {
+                logger.Warn(ex, "Failed to delete stale memory cleanup result file");
+            }
+
+            try
+            {
+                using var helperProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = Application.ExecutablePath,
                     Arguments = string.Join(' ', args),
                     UseShellExecute = true,
-                    Verb = "runas",
+                    Verb = deep ? "runas" : null,
                     WorkingDirectory = Program.BaseDirectory
-                })?.Dispose();
+                });
+                if (helperProcess == null)
+                    return null;
 
-                Environment.Exit(0);
-                return true;
+                // Poll for the helper process to exit instead of blocking the
+                // CEF render thread on WaitForExitAsync: the UI must stay
+                // responsive while the (potentially slow) cleanup runs. The
+                // helper is a separate process that never touches the main
+                // instance, so waiting here is safe.
+                //
+                // Waiting on the process (rather than on the result file)
+                // avoids ever misreading a previous run's file: the helper
+                // writes its result file synchronously before it exits, so a
+                // helper that has exited with code 0 has necessarily replaced
+                // any stale file with the fresh result.
+                var timeout = TimeSpan.FromSeconds(120);
+                var watch = Stopwatch.StartNew();
+                while (!helperProcess.HasExited)
+                {
+                    if (watch.Elapsed >= timeout)
+                    {
+                        // Leave the helper running; it will finish on its own
+                        // and a stale result file is cleared on the next run.
+                        logger.Warn("Timed out after {0} waiting for memory cleanup helper", timeout);
+                        return null;
+                    }
+                    await Task.Delay(250);
+                }
+
+                if (helperProcess.ExitCode != 0)
+                {
+                    logger.Warn("Memory cleanup helper exited with code {0}", helperProcess.ExitCode);
+                    return null;
+                }
+
+                if (!File.Exists(AppApi.MemoryCleanupResultFilePath))
+                {
+                    logger.Warn("Memory cleanup helper finished without a result file");
+                    return null;
+                }
+
+                return await File.ReadAllTextAsync(AppApi.MemoryCleanupResultFilePath);
             }
             catch (Exception ex)
             {
-                logger.Warn(ex, "Failed to restart VRCX as administrator");
-                return false;
+                // UAC cancel (Win32Exception ERROR_CANCELLED) lands here.
+                logger.Warn(ex, "Failed to launch memory cleanup helper");
+                return null;
             }
         }
     }

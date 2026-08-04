@@ -198,7 +198,17 @@ vi.mock('../../../../components/ui/context-menu', () => ({
 }));
 
 vi.mock('../../../../components/BackToTop.vue', () => ({
-    default: { template: '<div data-testid="back-to-top" />' }
+    default: {
+        props: ['teleport'],
+        template: '<div data-testid="back-to-top" :data-teleport="String(teleport)" />'
+    }
+}));
+
+vi.mock('../../../../components/QuickLaunchButton.vue', () => ({
+    default: {
+        props: ['teleport'],
+        template: '<div data-testid="quick-launch-button" :data-teleport="String(teleport)" />'
+    }
 }));
 
 vi.mock('../../../../components/Location.vue', () => ({
@@ -283,6 +293,26 @@ describe('FriendsSidebar.vue', () => {
         expect(wrapper.text()).toContain('side_panel.online');
         expect(wrapper.findAll('[data-testid="friend-item"]').length).toBe(1);
         expect(wrapper.text()).toContain('usr_online');
+    });
+
+    test('keeps floating controls inside the visible sidebar tab', async () => {
+        const wrapper = mount(FriendsSidebar);
+        await flushPromises();
+        await nextTick();
+
+        expect(wrapper.get('[data-testid="quick-launch-button"]').attributes('data-teleport')).toBe('false');
+        expect(wrapper.get('[data-testid="back-to-top"]').attributes('data-teleport')).toBe('false');
+    });
+
+    test('does not render floating controls while the tab is inactive', async () => {
+        const wrapper = mount(FriendsSidebar, {
+            props: { active: false }
+        });
+        await flushPromises();
+        await nextTick();
+
+        expect(wrapper.find('[data-testid="quick-launch-button"]').exists()).toBe(false);
+        expect(wrapper.find('[data-testid="back-to-top"]').exists()).toBe(false);
     });
 
     test('clicking online header collapses online rows and persists state', async () => {

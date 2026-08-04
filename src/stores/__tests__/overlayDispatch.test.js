@@ -146,7 +146,9 @@ describe('displayDesktopToast', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         globalThis.WINDOWS = true;
-        globalThis.AppApi = { DesktopNotification: vi.fn() };
+        globalThis.AppApi = {
+            DesktopNotification: vi.fn()
+        };
         deps = makeDeps();
         dispatch = createOverlayDispatch(deps);
     });
@@ -190,6 +192,30 @@ describe('displayDesktopToast', () => {
         ).toHaveBeenCalledTimes(1);
     });
 
+    test('mutes system notification and skips custom sound in tray silent mode', () => {
+        deps.notificationsSettingsStore.traySilentMode = true;
+        deps.notificationsSettingsStore.shouldPlayCustomNotificationSound.mockReturnValue(
+            false
+        );
+        dispatch = createOverlayDispatch(deps);
+        getNotificationMessage.mockReturnValue({
+            title: 'Friend Online',
+            body: 'Alice is online'
+        });
+
+        dispatch.displayDesktopToast({}, 'some message', 'img.jpg');
+
+        expect(AppApi.DesktopNotification).toHaveBeenCalledWith(
+            'Friend Online',
+            'Alice is online',
+            'img.jpg',
+            true
+        );
+        expect(
+            deps.notificationsSettingsStore.playCustomNotificationSound
+        ).not.toHaveBeenCalled();
+    });
+
     test('does nothing when getNotificationMessage returns null', () => {
         getNotificationMessage.mockReturnValue(null);
 
@@ -229,6 +255,7 @@ describe('displayDesktopToast', () => {
             deps.notificationsSettingsStore.playCustomNotificationSound
         ).not.toHaveBeenCalled();
     });
+
 });
 
 // ─── notySaveImage ───────────────────────────────────────────────────

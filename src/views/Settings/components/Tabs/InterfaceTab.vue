@@ -107,6 +107,23 @@
             </SettingsItem>
         </SettingsGroup>
 
+        <SettingsGroup v-if="!isMacOS" :title="t('view.settings.interface.window_behavior.header')">
+            <SettingsItem
+                :label="t('view.settings.interface.window_behavior.close_button')"
+                :description="t('view.settings.interface.window_behavior.close_button_description')">
+                <Select :model-value="closeButtonAction" @update:modelValue="setCloseButtonAction">
+                    <SelectTrigger size="sm" class="w-48">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="ask">{{ t('view.settings.interface.window_behavior.ask') }}</SelectItem>
+                        <SelectItem value="tray">{{ t('view.settings.interface.window_behavior.tray') }}</SelectItem>
+                        <SelectItem value="exit">{{ t('view.settings.interface.window_behavior.exit') }}</SelectItem>
+                    </SelectContent>
+                </Select>
+            </SettingsItem>
+        </SettingsGroup>
+
         <SettingsGroup :title="t('view.settings.appearance.display.header')">
             <SettingsItem :label="t('view.settings.appearance.appearance.show_instance_id')">
                 <Switch :model-value="showInstanceIdInLocation" @update:modelValue="setShowInstanceIdInLocation" />
@@ -407,15 +424,16 @@
     import { Input } from '@/components/ui/input';
     import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
-    import { computed, onBeforeUnmount, ref, watch } from 'vue';
+    import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
     import { CheckIcon, ChevronDown } from 'lucide-vue-next';
-    import { useAppearanceSettingsStore, useVrStore } from '@/stores';
+    import { useAppearanceSettingsStore, useGeneralSettingsStore, useVrStore } from '@/stores';
 
     import { Switch } from '@/components/ui/switch';
     import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
     import { getLanguageName, languageCodes } from '@/localization';
     import { APP_CJK_FONT_PACKS, APP_FONT_CONFIG, APP_FONT_DEFAULT_KEY, APP_FONT_FAMILIES } from '@/shared/constants';
     import { Button } from '@/components/ui/button';
+    import { zoomLevelToPercent, zoomPercentToLevel } from '@/components/statusBarUtils';
     import { storeToRefs } from 'pinia';
     import { toast } from 'vue-sonner';
     import { useI18n } from 'vue-i18n';
@@ -430,6 +448,7 @@
     const { t } = useI18n();
 
     const appearanceSettingsStore = useAppearanceSettingsStore();
+    const generalSettingsStore = useGeneralSettingsStore();
     const { saveOpenVROption, updateVRConfigVars } = useVrStore();
 
     const {
@@ -459,6 +478,7 @@
         useOfficialStatusColors,
         showNewDashboardButton
     } = storeToRefs(appearanceSettingsStore);
+    const { closeButtonAction } = storeToRefs(generalSettingsStore);
 
     const appLanguageDisplayName = computed(() => getLanguageName(String(appLanguage.value)));
 
@@ -488,6 +508,7 @@
         setCustomFontFamily,
         setAppCjkFontPack
     } = appearanceSettingsStore;
+    const { refreshCloseButtonAction, setCloseButtonAction } = generalSettingsStore;
 
     const trustColorEntries = [
         {
@@ -605,9 +626,16 @@
 
     const zoomLevel = ref(100);
     const isLinux = computed(() => LINUX);
+    const isMacOS = computed(() => navigator.platform.indexOf('Mac') > -1);
     let cleanupWheel = null;
 
+    onMounted(() => {
+        refreshCloseButtonAction();
+        window.addEventListener('focus', refreshCloseButtonAction);
+    });
+
     onBeforeUnmount(() => {
+        window.removeEventListener('focus', refreshCloseButtonAction);
         if (cleanupWheel) {
             cleanupWheel();
         }
@@ -715,7 +743,7 @@
      *
      */
     async function getZoomLevel() {
-        zoomLevel.value = Number((((await AppApi.GetZoom()) + 10) * 10).toFixed(2));
+        zoomLevel.value = zoomLevelToPercent(await AppApi.GetZoom());
     }
 
     /**
@@ -723,6 +751,6 @@
      */
     function setZoomLevel() {
         zoomLevel.value = Number(Number(zoomLevel.value || 0).toFixed(2));
-        AppApi.SetZoom(zoomLevel.value / 10 - 10);
+        AppApi.SetZoom(zoomPercentToLevel(zoomLevel.value));
     }
 </script>
