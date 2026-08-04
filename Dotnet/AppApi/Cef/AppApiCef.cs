@@ -309,9 +309,31 @@ namespace VRCX
                 if (helperProcess == null)
                     return null;
 
-                // Wait for the helper to finish. The helper never touches the
-                // main instance (no CEF, no UI), so blocking here is safe.
-                await helperProcess.WaitForExitAsync();
+                // Poll for the helper process to exit instead of blocking the
+                // CEF render thread on WaitForExitAsync: the UI must stay
+                // responsive while the (potentially slow) cleanup runs. The
+                // helper is a separate process that never touches the main
+                // instance, so waiting here is safe.
+                //
+                // Waiting on the process (rather than on the result file)
+                // avoids ever misreading a previous run's file: the helper
+                // writes its result file synchronously before it exits, so a
+                // helper that has exited with code 0 has necessarily replaced
+                // any stale file with the fresh result.
+                var timeout = TimeSpan.FromSeconds(120);
+                var watch = Stopwatch.StartNew();
+                while (!helperProcess.HasExited)
+                {
+                    if (watch.Elapsed >= timeout)
+                    {
+                        // Leave the helper running; it will finish on its own
+                        // and a stale result file is cleared on the next run.
+                        logger.Warn("Timed out after {0} waiting for memory cleanup helper", timeout);
+                        return null;
+                    }
+                    await Task.Delay(250);
+                }
+
                 if (helperProcess.ExitCode != 0)
                 {
                     logger.Warn("Memory cleanup helper exited with code {0}", helperProcess.ExitCode);
