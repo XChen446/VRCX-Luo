@@ -611,7 +611,10 @@ async function copyTable(
     // 基类协同改造(目前 bulkInsert 返回 Promise<void>),应在增量/合并
     // 功能落地时一并实施。
     const dstCount = await dstAdapter.countWhere(dstTable);
-    if (dstCount !== totalCopied) {
+    // 目标表允许已有行(例如 configs 里引擎已写入的 schema_version 检查点,
+    // 复制时用 INSERT IGNORE 保留),因此只校验是否有数据丢失
+    // (dst < 源侧实际读数),不再要求两者严格相等。
+    if (dstCount < totalCopied) {
         throw new Error(
             `row count mismatch after copy: copied=${totalCopied} dst=${dstCount}`
         );
