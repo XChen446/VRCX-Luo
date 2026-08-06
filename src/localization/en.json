@@ -777,7 +777,7 @@
                 "header": "Pictures",
                 "screenshot": "Screenshot Manager",
                 "screenshot_description": "View and manage screenshot metadata",
-                "gallery": "Image Manager",
+                "gallery": "Inventory",
                 "gallery_description": "Manage images and inventory"
             },
             "shortcuts": {
@@ -1630,6 +1630,7 @@
                 "instance_age_restricted_tooltip": "In an age-restricted instance",
                 "close_instance": "Close Instance",
                 "instance_age_gated": "Age Gated",
+                "instance_role_restricted": "Role Restricted",
                 "open_previous_instance": "Open Previous Instances",
                 "show_mutual_friends": "Show Mutual Friends",
                 "show_discord_connections": "Show Discord Connections",
@@ -1962,7 +1963,9 @@
                 "moderation_tools": "Moderation Tools",
                 "leave": "Leave Group",
                 "block": "Block Group",
-                "unblock": "Unblock Group"
+                "unblock": "Unblock Group",
+                "unsubscribe_event": "Unsubscribe From Event Announcements",
+                "subscribe_event": "Subscribe To Event Announcements"
             },
             "info": {
                 "header": "Info",
@@ -2078,11 +2081,12 @@
             "region_jp": "Japan",
             "content_emoji": "Emoji",
             "content_stickers": "Stickers",
-            "content_pedestals": "Pedestals",
+            "content_pedestals": "Sharing Pedestals",
             "content_prints": "Prints",
             "content_drones": "Drones",
             "content_items": "Items",
             "content_third_person": "Third Person",
+            "content_prop_movement": "Props that Modify Player Movement",
             "world_id": "World ID",
             "instance_id": "Instance ID",
             "instance_id_placeholder": "Random",
@@ -2584,7 +2588,8 @@
                 "description": "Description",
                 "export_to_calendar": "Export to Calendar",
                 "download_ics": "Download .ics",
-                "copied_event_link": "Calendar event URL copied to clipboard"
+                "copied_event_link": "Calendar event URL copied to clipboard",
+                "repeating_event_tooltip": "Repeating Event"
             },
             "featured_events": "Featured Events"
         },
@@ -2980,7 +2985,8 @@
             "join_request_sent": "Group join request sent",
             "visibility_updated": "Group visibility updated",
             "subscription_updated": "Group subscription updated",
-            "invite_not_allowed": "You are not allowed to invite to this group"
+            "invite_not_allowed": "You are not allowed to invite to this group",
+            "event_announcement_updated": "Group event announcements updated"
         },
         "invite": {
             "self_sent": "Self invite sent",
@@ -3116,6 +3122,8 @@
         "trust_level": "Trust level is now {trustLevel}",
         "display_name": "changed their name to {displayName}",
         "group_announcement_title": "Group Announcement",
+        "group_event_created_title": "Group Event Created",
+        "group_event_starting_title": "Group Event Starting",
         "group_informative_title": "Group Informative",
         "group_invite_title": "Group Invite",
         "group_join_request_title": "Group Join Request",

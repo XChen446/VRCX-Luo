@@ -45,6 +45,8 @@ async function saveUserMemo(id, memo) {
         } else {
             ref.$nickName = '';
         }
+    }
+    if (userStore.userDialog.id === id) {
         userStore.setUserDialogMemo(memo);
     }
 }

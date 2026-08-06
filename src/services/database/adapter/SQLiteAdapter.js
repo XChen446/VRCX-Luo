@@ -58,7 +58,7 @@ class SQLiteAdapter extends EngineAdapter {
 
     /** @private */
     async handleSQLiteError(e) {
-        if (typeof e.message !== 'string') throw e;
+        if (typeof e.message !== 'string' || window.isVrOverlay) throw e;
         const msg = e.message;
         const isMalformed = msg.includes('database disk image is malformed');
         const isFull = msg.includes('database or disk is full');

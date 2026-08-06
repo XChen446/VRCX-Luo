@@ -71,12 +71,13 @@
 
     onMounted(async () => {
         // PRE-LOGIN GATE: wait for DB/config init before any write-capable operation
-        await store.vrcx.waitForDatabaseInit();
+        if (await store.vrcx.waitForDatabaseInit()) {
+            getGameLogTable();
+            await store.auth.migrateStoredUsers();
+            store.auth.autoLoginAfterMounted();
+            store.vrcx.checkAutoBackupRestoreVrcRegistry();
+        }
 
-        getGameLogTable();
-        await store.auth.migrateStoredUsers();
-        store.auth.autoLoginAfterMounted();
-        store.vrcx.checkAutoBackupRestoreVrcRegistry();
         runCheckVRChatDebugLoggingFlow();
     });
 </script>

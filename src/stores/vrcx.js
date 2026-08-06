@@ -307,8 +307,10 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             );
             console.log('数据库升级完成。');
             state.databaseVersion = targetVersion;
+            databaseUpgradeState.value.visible = false;
         } catch (err) {
             console.error(err);
+            databaseUpgradeState.value.visible = false;
             await modalStore.alert({
                 title: t('message.database.upgrade_failed_title'),
                 description: t(

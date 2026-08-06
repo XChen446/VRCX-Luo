@@ -21,6 +21,7 @@ vi.mock('../../../stores', () => ({
         friends: mocks.friends
     }),
     useUserStore: () => ({
+        userDialog: { id: 'usr_1' },
         setUserDialogMemo: (...args) => mocks.setUserDialogMemo(...args)
     })
 }));

@@ -348,8 +348,7 @@
                                         :step="0.01"
                                         :format-options="{ minimumFractionDigits: 0, maximumFractionDigits: 2 }"
                                         class="w-20"
-                                        @click.stop
-                                        @update:modelValue="setZoomLevel">
+                                        @click.stop>
                                         <NumberFieldContent>
                                             <NumberFieldDecrement />
                                             <NumberFieldInput

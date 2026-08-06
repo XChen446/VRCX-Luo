@@ -7,6 +7,7 @@
                         class="rounded-full w-6 h-6 text-xs text-muted-foreground hover:text-foreground"
                         size="icon-sm"
                         variant="outline"
+                        :ariaLabel="t('dialog.user.info.launch_invite_tooltip')"
                         @click="confirmLaunch">
                         <LogIn />
                     </Button>
@@ -21,6 +22,7 @@
                         class="rounded-full h-6 w-6 text-xs text-muted-foreground hover:text-foreground"
                         size="icon-sm"
                         variant="outline"
+                        :ariaLabel="t('dialog.user.info.self_invite_tooltip')"
                         @click="confirmInvite">
                         <Mail class="h-4 w-4" />
                     </Button>
@@ -30,6 +32,7 @@
                         class="rounded-full h-6 w-6 text-xs text-muted-foreground hover:text-foreground"
                         size="icon-sm"
                         variant="outline"
+                        :ariaLabel="t('dialog.user.info.open_in_vrchat_tooltip')"
                         :aria-busy="isOpeningInstance"
                         :class="{ 'cursor-wait': isOpeningInstance }"
                         @click="openInstance">
@@ -43,6 +46,7 @@
                     class="rounded-full w-6 h-6 text-xs text-muted-foreground hover:text-foreground"
                     size="icon"
                     variant="outline"
+                    :ariaLabel="t('common.actions.refresh')"
                     @click="handleRefresh">
                     <RefreshCw class="h-4 w-4" />
                 </Button>
@@ -52,6 +56,7 @@
                     class="rounded-full w-6 h-6 text-xs text-muted-foreground hover:text-foreground"
                     size="icon-sm"
                     variant="outline"
+                    :ariaLabel="t('dialog.social_status.history')"
                     @click="handleHistory">
                     <History class="h-4 w-4" />
                 </Button>
@@ -98,6 +103,7 @@
                                 class="w-12 h-6 text-xs hover:text-muted-foreground"
                                 size="icon-sm"
                                 variant="destructive"
+                                :ariaLabel="t('dialog.user.info.close_instance')"
                                 @click="closeInstance(resolvedInstanceLocation)">
                                 <PowerIcon class="h-4 w-4" />
                             </Button>
@@ -145,6 +151,11 @@
                     <IdCard class="h-4 w-4" />
                 </span>
             </TooltipWrapper>
+            <TooltipWrapper side="top" :content="t('dialog.user.info.instance_role_restricted')">
+                <span v-if="instanceInfoState.isRoleRestricted" class="flex items-center gap-0.5 text-red-500">
+                    <UserLock class="h-4 w-4" />
+                </span>
+            </TooltipWrapper>
             <TooltipWrapper
                 v-if="instance?.minimumAvatarPerformance && instance.minimumAvatarPerformance !== 'None'"
                 side="top"
@@ -169,6 +180,7 @@
         UsersRound,
         SquareStack,
         IdCard,
+        UserLock,
         UserPlus2
     } from 'lucide-vue-next';
     import { computed, reactive, ref, watch } from 'vue';
@@ -306,6 +318,7 @@
         return !!(
             props.instance.value?.queueSize ||
             instanceInfoState.isAgeGated ||
+            instanceInfoState.isRoleRestricted ||
             (props.instance.minimumAvatarPerformance && props.instance.minimumAvatarPerformance !== 'None')
         );
     });
@@ -320,6 +333,7 @@
         isValidInstance: false,
         canCloseInstance: false,
         isAgeGated: false,
+        isRoleRestricted: false,
         disabledContentSettings: ''
     });
 
@@ -378,6 +392,7 @@
             isValidInstance: false,
             canCloseInstance: false,
             isAgeGated: false,
+            isRoleRestricted: false,
             disabledContentSettings: ''
         });
 
@@ -392,6 +407,7 @@
         }
         instanceInfoState.isAgeGated = props.instance.ageGate === true;
         if (resolvedInstanceLocation.value?.includes('~ageGate')) instanceInfoState.isAgeGated = true;
+        instanceInfoState.isRoleRestricted = props.instance.roleRestricted === true;
         if (props.instance.$disabledContentSettings?.length) {
             instanceInfoState.disabledContentSettings = props.instance.$disabledContentSettings.join(', ');
         }

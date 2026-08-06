@@ -6,7 +6,6 @@
             </DialogHeader>
             <div class="changelog-dialog">
                 <h2 v-text="changeLogDialog.buildName"></h2>
-                <span>{{ t('dialog.change_log.description') }}</span>
                 <VueShowdown
                     class="changelog-markdown mt-2"
                     :markdown="changeLogDialog.changeLog"

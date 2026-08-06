@@ -20,6 +20,12 @@ vi.mock('lucide-vue-next', () => ({
     ArrowUp: { template: '<i />' }
 }));
 
+vi.mock('vue-i18n', () => ({
+    useI18n: () => ({
+        t: (key) => key
+    })
+}));
+
 import BackToTop from '../BackToTop.vue';
 
 function setScrollY(value) {
