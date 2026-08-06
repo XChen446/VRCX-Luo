@@ -550,6 +550,10 @@ async function copyTable(
     let lastPk = null;
     let offset = 0;
     let totalCopied = 0;
+    // 复制前快照目标行数:目标可能预存引擎写入的行(如 configs 的
+    // schema_version 检查点),这些计入 dstBefore,严格相等校验得以保留。
+    const dstBefore = await dstAdapter.countWhere(dstTable);
+    let actualInserted = 0;
     while (true) {
         const batch = [];
         let sql;
@@ -583,7 +587,9 @@ async function copyTable(
             params
         );
         if (batch.length === 0) break;
-        await dstAdapter.bulkInsert(dstTable, batch, 'ignore');
+        // bulkInsert 透传 executeNonQuery 的 affected rows(INSERT IGNORE
+        // 跳过的冲突行不计入),累加真实写入量供循环后严格校验。
+        actualInserted += await dstAdapter.bulkInsert(dstTable, batch, 'ignore');
         totalCopied += batch.length;
         if (useCursor) {
             // 更新游标:取本批最后一行的 PK 值
@@ -596,27 +602,16 @@ async function copyTable(
         if (batch.length < batchSize) break;
     }
 
-    // Row-count verification: totalCopied 是源侧实际读到的行数(游标
-    // 或 OFFSET 分页累加),等价于 srcCount 但无需全表 COUNT 扫描。
-    // 只需校验 dstCount == totalCopied,省掉一次 O(N) 全表 COUNT。
-    // 注意:bulkInsert('ignore') 在 PK 冲突时跳过行,但 push/pull 目标
-    // 是空表或新 schema,无冲突;若未来有冲突场景,dstCount < totalCopied
-    // 仍能正确检测到数据丢失。
-    // TODO(review #7):当 push/pull 支持增量/合并场景时,目标可能已有
-    // 数据,bulkInsert('ignore') 遇 PK 冲突跳过行,导致 dstCount <
-    // totalCopied。此时本校验无法区分"源读丢失"(真 bug)与"目标冲突
-    // 跳过"(正常)。需要让 bulkInsert 返回实际写入行数(affected rows),
-    // 在 copyTable 中累加 actualInserted,用 actualInserted 替代
-    // totalCopied 与 dstCount 比较。这需要 C# 三引擎 + JS 三 adapter +
-    // 基类协同改造(目前 bulkInsert 返回 Promise<void>),应在增量/合并
-    // 功能落地时一并实施。
+    // Row-count verification:严格相等校验,但把目标预存行(dstBefore)与
+    // 实际写入行(actualInserted)分开计算——configs 的 schema_version
+    // 检查点等预存行计入 dstBefore,不再误报;而批量写失败被吞、
+    // IGNORE 跳过超预期这类真实丢数据仍会被 dstCount != 期望值抓住。
+    // 代价:每表多一次 COUNT(dstBefore);推送目标通常无并发写,可接受。
     const dstCount = await dstAdapter.countWhere(dstTable);
-    // 目标表允许已有行(例如 configs 里引擎已写入的 schema_version 检查点,
-    // 复制时用 INSERT IGNORE 保留),因此只校验是否有数据丢失
-    // (dst < 源侧实际读数),不再要求两者严格相等。
-    if (dstCount < totalCopied) {
+    if (dstCount !== dstBefore + actualInserted) {
         throw new Error(
-            `row count mismatch after copy: copied=${totalCopied} dst=${dstCount}`
+            `row count mismatch after copy: copied=${totalCopied} ` +
+                `dst=${dstCount} dstBefore=${dstBefore} actualInserted=${actualInserted}`
         );
     }
 
