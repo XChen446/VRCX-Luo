@@ -47,7 +47,7 @@ export async function runLogoutFlow() {
     authStore.loginForm.lastUserLoggedIn = '';
     await configRepository.remove('lastUserLoggedIn');
     authStore.setAttemptingAutoLogin(false);
-    authStore.state.autoLoginAttempts.clear();
+    authStore.autoLoginAttempts.clear();
     closeWebSocket();
     const { router } = await import('../plugins/router');
     if (router.currentRoute.value.name !== 'login') {

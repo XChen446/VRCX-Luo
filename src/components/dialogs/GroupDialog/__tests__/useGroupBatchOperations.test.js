@@ -11,22 +11,24 @@ import { useGroupBatchOperations } from '../useGroupBatchOperations';
  */
 function createDeps(overrides = {}) {
     return {
-        selectedUsersArray: ref([
-            {
-                userId: 'usr_1',
-                displayName: 'Alice',
-                roleIds: ['role_1'],
-                managerNotes: ''
-            },
-            {
-                userId: 'usr_2',
-                displayName: 'Bob',
-                roleIds: ['role_1'],
-                managerNotes: ''
-            }
-        ]),
         currentUser: ref({ id: 'usr_self' }),
-        groupMemberModeration: ref({ id: 'grp_test' }),
+        groupMemberModeration: ref({
+            id: 'grp_test',
+            selectedUsersArray: [
+                {
+                    userId: 'usr_1',
+                    displayName: 'Alice',
+                    roleIds: ['role_1'],
+                    managerNotes: ''
+                },
+                {
+                    userId: 'usr_2',
+                    displayName: 'Bob',
+                    roleIds: ['role_1'],
+                    managerNotes: ''
+                }
+            ]
+        }),
         deselectedUsers: vi.fn(),
         groupRequest: {
             banGroupMember: vi.fn().mockResolvedValue(undefined),
@@ -68,20 +70,23 @@ describe('useGroupBatchOperations', () => {
 
         test('skips self user', async () => {
             const deps = createDeps({
-                selectedUsersArray: ref([
-                    {
-                        userId: 'usr_self',
-                        displayName: 'Self',
-                        roleIds: [],
-                        managerNotes: ''
-                    },
-                    {
-                        userId: 'usr_1',
-                        displayName: 'Alice',
-                        roleIds: [],
-                        managerNotes: ''
-                    }
-                ])
+                groupMemberModeration: ref({
+                    id: 'grp_test',
+                    selectedUsersArray: [
+                        {
+                            userId: 'usr_self',
+                            displayName: 'Self',
+                            roleIds: [],
+                            managerNotes: ''
+                        },
+                        {
+                            userId: 'usr_1',
+                            displayName: 'Alice',
+                            roleIds: [],
+                            managerNotes: ''
+                        }
+                    ]
+                })
             });
             const { groupMembersBan } = useGroupBatchOperations(deps);
 

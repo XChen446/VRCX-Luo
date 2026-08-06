@@ -17,6 +17,7 @@ import { tryLoadPlayerList } from '../../coordinators/gameLogCoordinator';
 import { useAdvancedSettingsStore } from '../settings/advanced';
 import { useFriendStore } from '../friend';
 import { useNotificationStore } from '../notification';
+import { useDashboardStore } from '../dashboard';
 import { useUiStore } from '../ui';
 import { useUserStore } from '../user';
 import { useVrStore } from '../vr';
@@ -46,6 +47,7 @@ export const useGameLogStore = defineStore('GameLog', () => {
     const uiStore = useUiStore();
     const vrcxStore = useVrcxStore();
     const advancedSettingsStore = useAdvancedSettingsStore();
+    const dashboardStore = useDashboardStore();
 
     const router = useRouter();
 
@@ -138,7 +140,7 @@ export const useGameLogStore = defineStore('GameLog', () => {
                     if (sessionsViewMode.value === 'sessions') {
                         loadSessionsSegments();
                     } else {
-                        initGameLogTable();
+                        gameLogTableLookup();
                     }
                 }
             }
@@ -146,14 +148,17 @@ export const useGameLogStore = defineStore('GameLog', () => {
     );
 
     watch(
-        router.currentRoute,
-        async (value) => {
+        [router.currentRoute, () => dashboardStore.dashboards],
+        async ([value]) => {
             await initPromise;
-            if (value.name === 'game-log') {
+            const isDashboardPanel =
+                value.name === 'dashboard' &&
+                dashboardStore.getDashboard(value.params.id, 'game-log');
+            if (value.name === 'game-log' || isDashboardPanel) {
                 if (sessionsViewMode.value === 'sessions') {
                     loadSessionsSegments();
                 } else {
-                    initGameLogTable();
+                    gameLogTableLookup();
                 }
             } else {
                 gameLogTableData.value = [];
@@ -164,7 +169,7 @@ export const useGameLogStore = defineStore('GameLog', () => {
                 sessionsHasMore.value = true;
             }
         },
-        { immediate: true }
+        { immediate: true, deep: true }
     );
 
     watch(
@@ -516,23 +521,6 @@ export const useGameLogStore = defineStore('GameLog', () => {
         if (j > vrcxStore.maxTableSize + 50) {
             gameLogTableData.value = gameLogTableData.value.slice(0, -50);
         }
-    }
-
-    /**
-     *
-     */
-    async function initGameLogTable() {
-        gameLogTable.value.loading = true;
-        const rows = await database.lookupGameLogDatabase(
-            gameLogTable.value.filter,
-            []
-        );
-        for (const row of rows) {
-            row.isFriend = gameLogIsFriend(row);
-            row.isFavorite = gameLogIsFavorite(row);
-        }
-        gameLogTableData.value = rows;
-        gameLogTable.value.loading = false;
     }
 
     /**
@@ -1287,10 +1275,10 @@ export const useGameLogStore = defineStore('GameLog', () => {
         sessionsViewMode.value = mode;
         await configRepository.setString('VRCX_gameLogViewMode', mode);
         if (mode === 'table') {
-            initGameLogTable();
+            await gameLogTableLookup();
         } else {
             gameLogTableData.value = [];
-            loadSessionsSegments();
+            await loadSessionsSegments();
         }
     }
 

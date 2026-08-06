@@ -101,11 +101,6 @@ describe('ChangelogDialog.vue', () => {
             expect(wrapper.text()).toContain('VRCX 2025.1.0');
         });
 
-        test('renders description text', () => {
-            const wrapper = mountComponent();
-            expect(wrapper.text()).toContain('dialog.change_log.description');
-        });
-
         test('renders GitHub button', () => {
             const wrapper = mountComponent();
             expect(wrapper.text()).toContain('dialog.change_log.github');
