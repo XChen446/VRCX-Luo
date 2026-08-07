@@ -452,7 +452,7 @@ namespace VRCX
         /// Executes a SELECT/PRAGMA-like statement and returns the result set
         /// serialised as a JSON string. Used by the Linux/Electron JS bridge.
         /// </summary>
-        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public string ExecuteJson(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
             var result = Execute(sql, args, connId);
             return JsonSerializer.Serialize(result);
@@ -464,11 +464,12 @@ namespace VRCX
         /// query runs on the pinned transaction connection + resets the
         /// sliding idle timer.
         /// </summary>
-        public object[][] Execute(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public object[][] Execute(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return ExecutePinned(connId.Value, sql, args);
+                return ExecutePinned(nId.Value, sql, args);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -515,11 +516,12 @@ namespace VRCX
         /// affected. When <paramref name="connId"/> is present the statement
         /// runs on the pinned transaction connection + resets the timer.
         /// </summary>
-        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, long? connId = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object>? args = null, object? connId = null)
         {
-            if (connId.HasValue)
+            var nId = NormalizeConnId(connId);
+            if (nId.HasValue)
             {
-                return ExecuteNonQueryPinned(connId.Value, sql, args);
+                return ExecuteNonQueryPinned(nId.Value, sql, args);
             }
             EnsureInitialized();
             Interlocked.Increment(ref _totalBorrowed);
@@ -693,6 +695,65 @@ namespace VRCX
         }
 
         /// <summary>
+        /// MySqlConnector 2.6.x 在同一个连接上同步连发命令时,偶发抛
+        /// "This MySqlConnection is already in use"(前一条命令的异步
+        /// 清理尚未完成,连接仍标记为 in-use)。这是驱动的已知行为。
+        /// 解决办法:同一 pinned 连接上的 SQL 用 <paramref name="h"/>
+        /// 串行化(锁可重入),并对该瞬时错误做短暂重试。
+        /// </summary>
+        private static object[][] ExecutePinnedWithRetry(TxHolder h, string sql, IDictionary<string, object>? args)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    lock (h)
+                    {
+                        using var command = CreateTxCommand(h, sql, args);
+                        using var reader = command.ExecuteReader();
+                        var result = new List<object[]>();
+                        while (reader.Read())
+                        {
+                            var values = new object[reader.FieldCount];
+                            for (var i = 0; i < reader.FieldCount; i++)
+                            {
+                                values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                            }
+                            result.Add(values);
+                        }
+                        RecordChange(h, ExtractTable(sql), -1);
+                        return result.ToArray();
+                    }
+                }
+                catch (MySqlConnector.MySqlException ex) when (
+                    ex.Message.Contains("already in use") && attempt < 3)
+                {
+                    Thread.Sleep(30);
+                }
+            }
+        }
+
+        private static int ExecuteNonQueryPinnedWithRetry(TxHolder h, string sql, IDictionary<string, object>? args)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    lock (h)
+                    {
+                        using var command = CreateTxCommand(h, sql, args);
+                        return command.ExecuteNonQuery();
+                    }
+                }
+                catch (MySqlConnector.MySqlException ex) when (
+                    ex.Message.Contains("already in use") && attempt < 3)
+                {
+                    Thread.Sleep(30);
+                }
+            }
+        }
+
+        /// <summary>
         /// 回滚并释放一条已超时的事务连接。调用方必须持有 _txLock 且
         /// 已从 _pinned 中 TryRemove 出 holder。Timer 由调用方 Dispose。
         /// </summary>
@@ -729,20 +790,7 @@ namespace VRCX
             }
             try
             {
-                using var command = CreateTxCommand(h, sql, args);
-                using var reader = command.ExecuteReader();
-                var result = new List<object[]>();
-                while (reader.Read())
-                {
-                    var values = new object[reader.FieldCount];
-                    for (var i = 0; i < reader.FieldCount; i++)
-                    {
-                        values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                    }
-                    result.Add(values);
-                }
-                RecordChange(h, ExtractTable(sql), -1);
-                return result.ToArray();
+                return ExecutePinnedWithRetry(h, sql, args);
             }
             finally
             {
@@ -781,8 +829,7 @@ namespace VRCX
             }
             try
             {
-                using var command = CreateTxCommand(h, sql, args);
-                var affected = command.ExecuteNonQuery();
+                var affected = ExecuteNonQueryPinnedWithRetry(h, sql, args);
                 RecordChange(h, ExtractTable(sql), affected);
                 return affected;
             }
