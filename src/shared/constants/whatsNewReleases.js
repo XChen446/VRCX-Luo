@@ -47,7 +47,7 @@ const whatsNewReleases = Object.freeze({
  */
 function normalizeReleaseVersion(version) {
     const versionMatch = String(version || '')
-        .replace(/^VRCX(?:-Luo)?(?:\s+Nightly)?\s+/, '')
+        .replace(/^VRCX(?:-K)?(?:\s+Nightly)?\s+/, '')
         .match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/);
     if (!versionMatch) {
         return '';

@@ -3,8 +3,8 @@ import { describe, expect, test } from 'vitest';
 import { normalizeReleaseVersion } from '../whatsNewReleases';
 
 describe('normalizeReleaseVersion', () => {
-    test('normalizes VRCX-Luo app versions', () => {
-        expect(normalizeReleaseVersion('VRCX-Luo 2026.6.15')).toBe(
+    test('normalizes VRCX-K app versions', () => {
+        expect(normalizeReleaseVersion('VRCX-K 2026.6.15')).toBe(
             '2026.06.15'
         );
     });

@@ -240,7 +240,7 @@
             "remove_tooltip": "Remove from tracking",
             "add_button": "Add +",
             "add_dialog_title": "Track a User",
-            "add_dialog_hint": "Enter the user ID manually (usr_xxx...), or open any user's profile in VRCX-Luo and use the \"⋯\" → \"Track\" option.",
+            "add_dialog_hint": "Enter the user ID manually (usr_xxx...), or open any user's profile in VRCX-K and use the \"⋯\" → \"Track\" option.",
             "add_input_placeholder": "usr_xxx...",
             "add_verify_error": "Could not retrieve user data. Please check the ID and try again.",
             "add_confirm_question": "Is this user \"{name}\"?",
@@ -911,8 +911,8 @@
                     "ask": "Ask Every Time",
                     "tray": "Minimize to System Tray",
                     "exit": "Exit Immediately",
-                    "dialog_title": "Close VRCX-Luo",
-                    "dialog_description": "When minimized, VRCX-Luo keeps running in the background and can be reopened from the system tray.",
+                    "dialog_title": "Close VRCX-K",
+                    "dialog_description": "When minimized, VRCX-K keeps running in the background and can be reopened from the system tray.",
                     "dont_ask_again": "Don't ask again",
                     "cancel": "Cancel"
                 }
@@ -2627,7 +2627,7 @@
         },
         "change_log": {
             "header": "Change Log",
-            "description": "This changelog is loaded from the VRCX-Luo GitHub release.",
+            "description": "This changelog is loaded from the VRCX-K GitHub release.",
             "close": "Close",
             "donate": "Donate",
             "github": "View Release",

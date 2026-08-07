@@ -93,7 +93,7 @@ function mockSnapshot() {
                 Processes: [
                     {
                         Id: 1,
-                        Name: 'VRCX-Luo',
+                        Name: 'VRCX-K',
                         WorkingSetBytes: 100,
                         PrivateMemoryBytes: 200
                     }

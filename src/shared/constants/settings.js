@@ -1,7 +1,8 @@
-const REPOSITORY = 'yixijun/VRCX-Luo';
-const GITHU_API_URL = 'https://api.github.com/repos/yixijun/VRCX-Luo';
+const REPOSITORY = 'VRChatCN-Kipfel/VRCX-K';
+const GITHU_API_URL =
+    'https://api.github.com/repos/VRChatCN-Kipfel/VRCX-K';
 const GITHUB_RELEASES_URL =
-    'https://github.com/yixijun/VRCX-Luo/releases/latest';
+    'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/latest';
 
 const VRChatScreenshotResolutions = [
     { name: '1280x720 (720p)', width: 1280, height: 720 },

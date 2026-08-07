@@ -583,6 +583,410 @@ digraph{
         <tr><td> </td><td align="left">color</td></tr>
     </table>
 >]
+  26 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >TRACKED_NONFRIEND (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">user_id</td></tr>
+        <tr><td> </td><td align="left">display_name</td></tr>
+        <tr><td> </td><td align="left">added_at</td></tr>
+    </table>
+>]
+  27 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >MANUAL_RELATION (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">user_id_a</td></tr>
+        <tr><td> </td><td align="left">user_id_b</td></tr>
+        <tr><td> </td><td align="left">relation_type</td></tr>
+        <tr><td> </td><td align="left">added_at</td></tr>
+    </table>
+>]
+  28 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >RELATED</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">relation_type</td></tr>
+    </table>
+>]
+  29 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >MUTUAL_GRAPH_META (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">friend_id</td></tr>
+        <tr><td> </td><td align="left">last_fetched_at</td></tr>
+        <tr><td> </td><td align="left">opted_out</td></tr>
+    </table>
+>]
+  30 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >NOTIFICATION_V2 (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">updated_at</td></tr>
+        <tr><td> </td><td align="left">expires_at</td></tr>
+        <tr><td> </td><td align="left">type</td></tr>
+        <tr><td> </td><td align="left">link</td></tr>
+        <tr><td> </td><td align="left">link_text</td></tr>
+        <tr><td> </td><td align="left">message</td></tr>
+        <tr><td> </td><td align="left">title</td></tr>
+        <tr><td> </td><td align="left">image_url</td></tr>
+        <tr><td> </td><td align="left">seen</td></tr>
+        <tr><td> </td><td align="left">sender_user_id</td></tr>
+        <tr><td> </td><td align="left">sender_username</td></tr>
+        <tr><td> </td><td align="left">data</td></tr>
+        <tr><td> </td><td align="left">responses</td></tr>
+        <tr><td> </td><td align="left">details</td></tr>
+    </table>
+>]
+  31 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >ACTIVITY_SYNC_STATE_V2 (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">updated_at</td></tr>
+        <tr><td> </td><td align="left">is_self</td></tr>
+        <tr><td> </td><td align="left">source_last_created_at</td></tr>
+        <tr><td> </td><td align="left">pending_session_start_at</td></tr>
+        <tr><td> </td><td align="left">cached_range_days</td></tr>
+    </table>
+>]
+  32 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >ACTIVITY_BUCKET_CACHE_V2 (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">target_user_id</td></tr>
+        <tr><td> </td><td align="left">range_days</td></tr>
+        <tr><td> </td><td align="left">view_kind</td></tr>
+        <tr><td> </td><td align="left">exclude_key</td></tr>
+        <tr><td> </td><td align="left">summary_json</td></tr>
+        <tr><td> </td><td align="left">built_at</td></tr>
+    </table>
+>]
+  33 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >FRIEND_LOG_CURRENT (pri)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">display_name</td></tr>
+        <tr><td> </td><td align="left">trust_level</td></tr>
+        <tr><td> </td><td align="left">friend_number</td></tr>
+    </table>
+>]
+  34 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >GAMELOG_PORTAL_SPAWN (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">display_name</td></tr>
+        <tr><td> </td><td align="left">location</td></tr>
+        <tr><td> </td><td align="left">user_id</td></tr>
+        <tr><td> </td><td align="left">instance_id</td></tr>
+        <tr><td> </td><td align="left">world_name</td></tr>
+    </table>
+>]
+  35 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >GAMELOG_VIDEO_PLAY (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">video_url</td></tr>
+        <tr><td> </td><td align="left">video_name</td></tr>
+        <tr><td> </td><td align="left">video_id</td></tr>
+        <tr><td> </td><td align="left">location</td></tr>
+        <tr><td> </td><td align="left">display_name</td></tr>
+        <tr><td> </td><td align="left">user_id</td></tr>
+    </table>
+>]
+  36 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >GAMELOG_RESOURCE_LOAD (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">resource_url</td></tr>
+        <tr><td> </td><td align="left">resource_type</td></tr>
+        <tr><td> </td><td align="left">location</td></tr>
+    </table>
+>]
+  37 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >GAMELOG_EVENT (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">data</td></tr>
+    </table>
+>]
+  38 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >GAMELOG_EXTERNAL (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">message</td></tr>
+        <tr><td> </td><td align="left">display_name</td></tr>
+        <tr><td> </td><td align="left">user_id</td></tr>
+        <tr><td> </td><td align="left">location</td></tr>
+    </table>
+>]
+  39 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >CACHE_AVATAR (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">added_at</td></tr>
+        <tr><td> </td><td align="left">author_id</td></tr>
+        <tr><td> </td><td align="left">author_name</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">description</td></tr>
+        <tr><td> </td><td align="left">image_url</td></tr>
+        <tr><td> </td><td align="left">name</td></tr>
+        <tr><td> </td><td align="left">release_status</td></tr>
+        <tr><td> </td><td align="left">thumbnail_image_url</td></tr>
+        <tr><td> </td><td align="left">updated_at</td></tr>
+        <tr><td> </td><td align="left">version</td></tr>
+    </table>
+>]
+  40 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >CACHE_WORLD (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">id</td></tr>
+        <tr><td> </td><td align="left">added_at</td></tr>
+        <tr><td> </td><td align="left">author_id</td></tr>
+        <tr><td> </td><td align="left">author_name</td></tr>
+        <tr><td> </td><td align="left">created_at</td></tr>
+        <tr><td> </td><td align="left">description</td></tr>
+        <tr><td> </td><td align="left">image_url</td></tr>
+        <tr><td> </td><td align="left">name</td></tr>
+        <tr><td> </td><td align="left">release_status</td></tr>
+        <tr><td> </td><td align="left">thumbnail_image_url</td></tr>
+        <tr><td> </td><td align="left">updated_at</td></tr>
+        <tr><td> </td><td align="left">version</td></tr>
+    </table>
+>]
+  41 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >COOKIE (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">key</td></tr>
+        <tr><td> </td><td align="left">value</td></tr>
+    </table>
+>]
+  42 [label=<<table
+        border="0"
+        cellborder="1"
+        cellspacing="0"
+        bgcolor="#FFFFFF"
+        color="#000000"
+        cellpadding="4"
+    >
+        <tr>
+            <td bgcolor="#FFFFFF" colspan="2">
+                <font
+                    color="#000000"
+                    point-size="14"
+                >CONFIG (pub)</font>
+            </td>
+        </tr>
+        <tr><td>PK</td><td align="left">key</td></tr>
+        <tr><td> </td><td align="left">value</td></tr>
+    </table>
+>]
 
   // Edges
   edge [
@@ -616,4 +1020,12 @@ digraph{
   23 -> 22 [arrowhead="teetee" arrowtail="crowtee" label="DF" style=dotted]
   24 -> 20 [arrowhead="crowodot" arrowtail="teetee" label="FAV_AVATAR_OF"]
   24 -> 25 [arrowhead="crowtee" arrowtail="crowodot" label="TAGGED"]
+  8 -> 26 [arrowhead="crowtee" arrowtail="crowodot" label="TRACKED_BY"]
+  28 -> 8 [arrowhead="teetee" arrowtail="crowtee" label="DF" style=dotted]
+  28 -> 8 [arrowhead="teetee" arrowtail="crowtee" label="DF" style=dotted]
+  29 -> 19 [arrowhead="teetee" arrowtail="crowodot" label="META_FOR"]
+  8 -> 30 [arrowhead="crowtee" arrowtail="crowodot" label="NOTIF_V2_FOR"]
+  31 -> 8 [arrowhead="teetee" arrowtail="crowodot" label="STATE_FOR"]
+  32 -> 8 [arrowhead="crowtee" arrowtail="crowodot" label="BUCKET_FOR"]
+  33 -> 8 [arrowhead="teetee" arrowtail="crowodot" label="CUR_LOG_FOR"]
 }

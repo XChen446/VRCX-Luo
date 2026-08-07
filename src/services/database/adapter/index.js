@@ -129,7 +129,7 @@ const _engineSpec = {
 // Electron: SetChangeCallback)负载 { conn, table, count, ts, dv },
 // 按 conn 路由:conn="default" → 单例 adapter;conn=connectionString →
 // createAdapter 创建的实例(外部迁移文件的写无对应实例,直接丢弃)。
-// 详见 docs/CHANGE_NOTIFICATION_API.md。
+// 详见 docs/architecture/ADAPTER_API.md §9。
 
 /** @type {Map<string, import('./EngineAdapter.js').EngineAdapter>} connectionString → 实例 */
 const _changeInstances = new Map();

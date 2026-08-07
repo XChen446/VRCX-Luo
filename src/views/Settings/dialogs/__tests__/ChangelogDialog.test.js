@@ -8,7 +8,7 @@ const changeLogDialog = ref({
     visible: true,
     buildName: 'VRCX 2025.1.0',
     changeLog: '## New Features\n- Feature A\n- Feature B',
-    releaseUrl: 'https://github.com/yixijun/VRCX-Luo/releases/tag/2025.1.0'
+    releaseUrl: 'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/tag/2025.1.0'
 });
 
 const openExternalLinkFn = vi.fn();
@@ -85,7 +85,7 @@ describe('ChangelogDialog.vue', () => {
             buildName: 'VRCX 2025.1.0',
             changeLog: '## New Features\n- Feature A\n- Feature B',
             releaseUrl:
-                'https://github.com/yixijun/VRCX-Luo/releases/tag/2025.1.0'
+                'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/tag/2025.1.0'
         };
         vi.clearAllMocks();
     });
@@ -142,7 +142,7 @@ describe('ChangelogDialog.vue', () => {
 
             await githubBtn.trigger('click');
             expect(openExternalLinkFn).toHaveBeenCalledWith(
-                'https://github.com/yixijun/VRCX-Luo/releases'
+                'https://github.com/VRChatCN-Kipfel/VRCX-K/releases'
             );
         });
 
@@ -156,7 +156,7 @@ describe('ChangelogDialog.vue', () => {
 
             await githubBtn.trigger('click');
             expect(openExternalLinkFn).toHaveBeenCalledWith(
-                'https://github.com/yixijun/VRCX-Luo/releases/tag/2025.1.0'
+                'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/tag/2025.1.0'
             );
         });
     });

@@ -57,16 +57,6 @@ namespace VRCX
                 tmp.Remove("VRCX_DatabaseLocation");
             }
 
-            // ── Migration: 旧 VRCX_Database.location → VRCX_Database.name ──
-            if (tmp.TryGetValue("VRCX_Database.location", out var oldNestedLocation))
-            {
-                if (!tmp.ContainsKey("VRCX_Database.name"))
-                {
-                    tmp["VRCX_Database.name"] = oldNestedLocation;
-                }
-                tmp.Remove("VRCX_Database.location");
-            }
-
             // ── First-run bootstrap: 确保命名空间存在，避免 Set() dot-path guard 报错 ──
             if (!tmp.Keys.Any(k => k.StartsWith("VRCX_Database.")))
             {

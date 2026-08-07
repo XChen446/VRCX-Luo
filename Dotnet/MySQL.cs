@@ -31,7 +31,7 @@ namespace VRCX
     /// holds it in a TxHolder across multiple Execute/ExecuteNonQuery calls so
     /// that BEGIN ... INSERT ... COMMIT run on the SAME physical connection.
     /// A sliding idle timer (TX_IDLE_MS) auto-rolls-back if JS forgets to
-    /// commit. See docs/TRANSACTION_DESIGN.md.
+    /// commit. See docs/architecture/TRANSACTION_DESIGN.md.
     /// </summary>
     public class MySQL : IAuthStore
     {
@@ -42,7 +42,7 @@ namespace VRCX
         /// `{ conn, table, count, ts, dv }`(dv 读自服务端 performance_schema
         /// 计数器,任意连接视角一致,无需观察连接)。检测语义:事件只是失效
         /// 提示,不是数据管道——漏事件由计数器兜底轮询补上。详见
-        /// docs/CHANGE_NOTIFICATION_API.md。
+        /// docs/architecture/ADAPTER_API.md §9。
         /// </summary>
         public event Action<string>? DatabaseChanged;
 

@@ -1,6 +1,8 @@
 # 栈式事务上下文 + 统一池化设计
 
-## 背景
+> 状态：**已实现**（2026-08 随 database-refactor 并入 main，PR #17 后）。本文档为设计稿，实现与设计逐条对应；实现侧新增 `BeginTransactionOnConnection(connectionString)`（pullEngine dstAdapter 桥接）与池监控扩展（`getPoolStats` 6 字段 + `clearIdleConnections`，见 ADAPTER_API.md）。
+
+## 背景（改造前问题，已修复）
 
 VRCX-Luo 的 PostgreSQL C# 层(`Dotnet/PostgreSQL.cs`)之前每次 `ExecuteNonQuery` 都 `_dataSource.OpenConnection()` 借新连接 + `using` 还池,导致 `BEGIN` 在连接 A、`INSERT` 在连接 B、`COMMIT` 在连接 C——事务语义断裂(连接 A 的事务随还池被 Npgsql 自动 reset)。这是 C# 包装层的疏漏(照搬 Npgsql 现代池化示例,未补"持连接事务 API"),不是 PG/Npgsql 引擎限制。
 

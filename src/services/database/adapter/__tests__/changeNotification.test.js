@@ -11,7 +11,7 @@
  *
  * 单连接内存库无法用于真实语义:data_version 是"他写者视角"计数器,
  * 本连接读不到自己提交的递增(详见 SQLiteAdapter._readChangeCounter
- * 与 docs/CHANGE_NOTIFICATION_API.md)。
+ * 与 docs/architecture/ADAPTER_API.md §9)。
  */
 
 import { DatabaseSync } from 'node:sqlite';

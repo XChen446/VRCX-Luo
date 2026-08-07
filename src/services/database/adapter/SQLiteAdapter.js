@@ -89,7 +89,7 @@ class SQLiteAdapter extends EngineAdapter {
                 .then(({ ok }) => {
                     if (!ok) return;
                     openExternalLink(
-                        'https://github.com/yixijun/VRCX-Luo/wiki#how-to-repair-vrcx-database'
+                        'https://github.com/vrcx-team/VRCX/wiki#how-to-repair-vrcx-database'
                     );
                 })
                 .catch(() => {});
@@ -1217,7 +1217,7 @@ class SQLiteAdapter extends EngineAdapter {
      * data_version 是"他写者视角"计数器——本连接读不到自己提交的
      * 递增(单连接下恒为初始值),但能可靠追踪其他连接/外部进程的
      * 提交。漏斗事件的 dv 快照须读自非写者连接(专用观察连接),
-     * 否则基线去重会滞后一版失效。详见 docs/CHANGE_NOTIFICATION_API.md。
+     * 否则基线去重会滞后一版失效。详见 docs/architecture/ADAPTER_API.md §9。
      *
      * @override @protected
      * @returns {Promise<number | null>}

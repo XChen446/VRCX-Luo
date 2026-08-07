@@ -1,4 +1,4 @@
-# VRCX-Luo 改动清单（修正版）
+# VRCX-Jirai 改动清单（修正版）
 
 > 基于原版 [vrcx-team/vrcx](https://github.com/vrcx-team/vrcx) 的分支。
 >
@@ -17,7 +17,7 @@
 - [ ] [6. 个人简介 Diff 视图（Bio Diff）](#6-个人简介-diff-视图bio-diff)
 - [ ] [7. 自动跟随好友实例（Auto Follow）](#7-自动跟随好友实例auto-follow)
 - [ ] [8. 自动更新重定向到 Luo 仓库](#8-自动更新重定向到-luo-仓库)
-- [ ] [9. 多账号功能 V4（WIP）](#9-多账号功能-v4wip)
+- [ ] [9. 多账号功能 V4（已实现）](#9-多账号功能-v4已实现)
 - [ ] [10. 本地构建 脚本](#10-本地构建脚本)
 - [ ] [11. 数据库结构文档](#11-数据库结构文档)
 - [ ] [12. UI 美化合集](#12-ui-美化合集)
@@ -305,18 +305,20 @@ watch(friendStore.friends, (friends) => {
 
 将更新检测 URL 改为指向 `yixijun/VRCX-Luo`。CI 配置 `.github/workflows/` 也相应调整。
 
+> 现状（2026-08）：仓库已转移并更名为 VRChatCN-Kipfel/VRCX-K，更新器已改指向新仓库（`settings.js` 的 `GITHUB_RELEASES_URL`），版本号前缀统一为 `VRCX-K`。
+
 ---
 
-## 9. 多账号功能 V4（WIP）
+## 9. 多账号功能 V4（已实现）
 
-**入口**: Login.vue → 已保存账号前多选框 + "登录选中账号"（分支 `feat/multi-account`）
+**入口**: Login.vue → 已保存账号前多选框 + "登录选中账号"（设计稿分支 `feat/multi-account`）
 
 **文件**:
 
 - `src/services/accountHub.js` (413 行)
 - `src/services/accountSession.js` (441 行)
 - `src/services/aggregatedView.js` (221 行)
-- `docs/MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` (910 行)
+- `docs/architecture/MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` (919 行)
 
 ### 架构
 
@@ -331,7 +333,7 @@ AccountHub (会话管理器)
 
 三个视图模式：`primary`（单号） / `merged`（聚合 UNION） / `account:usrX`（热替换）
 
-> **开发中，未合并到 master**
+> **已实现**（2026-08 随 database-refactor 并入 main）；详细设计与实现偏离点见 [MULTI_ACCOUNT_V4_DETAIL_DESIGN.md](../architecture/MULTI_ACCOUNT_V4_DETAIL_DESIGN.md)（历史设计稿）状态标注。
 
 ---
 
@@ -394,7 +396,7 @@ ERD（实体关系图）：SVG / Mermaid / DBML / Graphviz 鸦脚符号 / 物理
 | 6  | Bio Diff 视图  | 完成 | ~786 行  |
 | 7  | 自动跟随       | 完成 | ~123 行  |
 | 8  | 自动更新重定向 | 完成 | 少量修改 |
-| 9  | 多账号 V4      | WIP  | ~1075 行 |
+| 9  | 多账号 V4      | 已实现 | ~1075 行 |
 | 10 | 本地构建脚本   | 完成 | 1 文件   |
 | 11 | 数据库文档     | 完成 | ~18 文件 |
 | 12 | UI 美化        | 完成 | 全局     |

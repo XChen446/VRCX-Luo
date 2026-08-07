@@ -69,7 +69,7 @@ namespace VRCX
             //
             this.TrayMenu_Open.Name = "TrayMenu_Open";
             this.TrayMenu_Open.Size = new Size(177, 22);
-            this.TrayMenu_Open.Text = "打开 VRCX-Luo";
+            this.TrayMenu_Open.Text = "打开 VRCX-K";
             this.TrayMenu_Open.Click += new EventHandler(this.TrayMenu_Open_Click);
             //
             // TrayMenu_DesktopNotifications
@@ -115,7 +115,7 @@ namespace VRCX
             //
             this.TrayMenu_Quit.Name = "TrayMenu_Quit";
             this.TrayMenu_Quit.Size = new Size(177, 22);
-            this.TrayMenu_Quit.Text = "退出 VRCX-Luo";
+            this.TrayMenu_Quit.Text = "退出 VRCX-K";
             this.TrayMenu_Quit.Click += new EventHandler(this.TrayMenu_Quit_Click);
             //
             // TrayIcon

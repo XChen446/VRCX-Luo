@@ -179,3 +179,42 @@ TAGGED, 1N AVATAR (pub), 0N AVATAR_TAG (pub)
 :
 :
 :
+:
+TRACKED_NONFRIEND (pri): user_id, display_name, added_at
+TRACKED_BY, 1N USER (pri), 0N TRACKED_NONFRIEND (pri)
+:
+MANUAL_RELATION (pri): user_id_a, user_id_b, relation_type, added_at
+RELATED, 1N USER (pri), 1N USER (pri): relation_type
+:
+MUTUAL_GRAPH_META (pri): friend_id, last_fetched_at, opted_out
+META_FOR, 11 MUTUAL_GRAPH_META (pri), 0N MUTUAL_GRAPH_FRIEND (pri)
+:
+NOTIFICATION_V2 (pri): id, created_at, updated_at, expires_at, type, link, link_text, message, title, image_url, seen, sender_user_id, sender_username, data, responses, details
+NOTIF_V2_FOR, 1N USER (pri), 0N NOTIFICATION_V2 (pri)
+:
+ACTIVITY_SYNC_STATE_V2 (pri): updated_at, is_self, source_last_created_at, pending_session_start_at, cached_range_days
+STATE_FOR, 11 ACTIVITY_SYNC_STATE_V2 (pri), 0N USER (pri)
+:
+ACTIVITY_BUCKET_CACHE_V2 (pri): target_user_id, range_days, view_kind, exclude_key, summary_json, built_at
+BUCKET_FOR, 1N ACTIVITY_BUCKET_CACHE_V2 (pri), 0N USER (pri)
+:
+FRIEND_LOG_CURRENT (pri): display_name, trust_level, friend_number
+CUR_LOG_FOR, 11 FRIEND_LOG_CURRENT (pri), 0N USER (pri)
+:
+GAMELOG_PORTAL_SPAWN (pub): id, created_at, display_name, location, user_id, instance_id, world_name
+:
+GAMELOG_VIDEO_PLAY (pub): id, created_at, video_url, video_name, video_id, location, display_name, user_id
+:
+GAMELOG_RESOURCE_LOAD (pub): id, created_at, resource_url, resource_type, location
+:
+GAMELOG_EVENT (pub): id, created_at, data
+:
+GAMELOG_EXTERNAL (pub): id, created_at, message, display_name, user_id, location
+:
+CACHE_AVATAR (pub): id, added_at, author_id, author_name, created_at, description, image_url, name, release_status, thumbnail_image_url, updated_at, version
+:
+CACHE_WORLD (pub): id, added_at, author_id, author_name, created_at, description, image_url, name, release_status, thumbnail_image_url, updated_at, version
+:
+COOKIE (pub): key, value
+:
+CONFIG (pub): key, value

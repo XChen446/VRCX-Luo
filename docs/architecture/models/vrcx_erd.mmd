@@ -179,6 +179,25 @@ erDiagram
         text date
     }
 
+    pri_mutual_graph_meta {
+        text friend_id PK
+        text last_fetched_at
+        int  opted_out
+    }
+
+    pri_tracked_nonfriends {
+        text user_id PK
+        text display_name
+        text added_at
+    }
+
+    pri_manual_relations_MANUEL {
+        text user_id_a PK
+        text user_id_b PK
+        text relation_type
+        text added_at
+    }
+
     %% ════════════════════════════════════════════
     %% GLOBAL SHARED TABLES  (pub) = no prefix
     %% ════════════════════════════════════════════
@@ -309,6 +328,16 @@ erDiagram
         text avatar_id PK
         text tag PK
         text color
+    }
+
+    pub_cookies {
+        text key PK
+        text value
+    }
+
+    pub_configs {
+        text key PK
+        text value
     }
 
     %% ════════════════════════════════════════════

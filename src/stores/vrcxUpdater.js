@@ -92,7 +92,7 @@ export function getAssetOfInterest(assets, options = {}) {
  */
 export function normalizeUpdaterVersion(version) {
     const versionMatch = String(version || '')
-        .replace(/^VRCX(?:-Luo)?(?:\s+Nightly)?\s+/, '')
+        .replace(/^VRCX(?:-K)?(?:\s+Nightly)?\s+/, '')
         .replace(/^v/, '')
         .match(/(\d{4})\.(\d{1,2})\.(\d{1,2})(?:[-.]?(fix\d+))?/i);
     if (!versionMatch) {
@@ -258,7 +258,7 @@ export const useVRCXUpdaterStore = defineStore('VRCXUpdater', () => {
         if (!appVersion.value) {
             return;
         }
-        if (currentVersion.value.includes('VRCX-Luo Nightly')) {
+        if (currentVersion.value.includes('VRCX-K Nightly')) {
             branch.value = 'Nightly';
         } else {
             branch.value = 'Stable';

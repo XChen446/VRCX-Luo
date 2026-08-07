@@ -258,7 +258,7 @@ describe('StatusBar.vue - Servers indicator', () => {
         globalThis.AppApi = new Proxy(
             {
                 CurrentCulture: vi.fn().mockResolvedValue('en-US'),
-                GetVersion: vi.fn().mockResolvedValue('VRCX-Luo 2026.6.15'),
+                GetVersion: vi.fn().mockResolvedValue('VRCX-K 2026.6.15'),
                 GetZoom: vi.fn().mockResolvedValue(0),
                 SetTrayIconNotification: vi.fn(),
                 SetZoom: vi.fn()

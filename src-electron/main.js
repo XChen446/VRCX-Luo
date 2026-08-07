@@ -585,9 +585,9 @@ function createWindow() {
                 mainWindow,
                 {
                     type: 'question',
-                    title: '关闭 VRCX-Luo',
+                    title: '关闭 VRCX-K',
                     message: '是否最小化到系统托盘？',
-                    detail: '最小化后 VRCX-Luo 会继续在后台运行，可从托盘图标重新打开。',
+                    detail: '最小化后 VRCX-K 会继续在后台运行，可从托盘图标重新打开。',
                     buttons: ['最小化到托盘', '直接退出', '取消'],
                     defaultId: 0,
                     cancelId: 2,
@@ -762,7 +762,7 @@ function createTray() {
     const vSleepModeEnabled = isVSleepModeEnabled();
     const contextMenu = Menu.buildFromTemplate([
         {
-            label: '打开 VRCX-Luo',
+                    label: '打开 VRCX-K',
             type: 'normal',
             click: function () {
                 mainWindow.show();
@@ -817,7 +817,7 @@ function createTray() {
             }
         },
         {
-            label: '退出 VRCX-Luo',
+                    label: '退出 VRCX-K',
             type: 'normal',
             click: function () {
                 appIsQuitting = true;

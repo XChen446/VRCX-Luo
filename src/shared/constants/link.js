@@ -1,8 +1,8 @@
 const links = {
-    wiki: 'https://github.com/yixijun/VRCX-Luo/wiki',
+    wiki: 'https://github.com/VRChatCN-Kipfel/VRCX-K/wiki',
     troubleshootingAuthUserConnectionIssues:
-        'https://github.com/yixijun/VRCX-Luo/wiki/Troubleshooting#401-authuser--connection-issues',
-    github: 'https://github.com/yixijun/VRCX-Luo',
+        'https://github.com/VRChatCN-Kipfel/VRCX-K/wiki/Troubleshooting#401-authuser--connection-issues',
+    github: 'https://github.com/VRChatCN-Kipfel/VRCX-K',
     discord: 'https://vrcx.app/discord'
 };
 

@@ -13,7 +13,7 @@
 1. 重构 `VRCX_Database.*` 为完整、自描述的配置骨架
 2. 建立 options 合并策略：内置默认 + 用户覆写
 3. 严格分离读写职责：初始化只读不写，仅 bootstrap 和用户操作触发写入
-4. 向前兼容：自动迁移旧 `VRCX_DatabaseLocation` / `VRCX_Database.location`
+4. 向前兼容：自动迁移旧 `VRCX_DatabaseLocation`
 
 ## 新配置结构
 
@@ -110,8 +110,8 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 
 ## Security Hardening (Phase 7.5.x)
 
-> 集中实现于 `Dotnet/SQLite.cs` 行 159–338（`ValidateAndCanonicalizeDatabasePath` / `ValidateDatabaseFile` / `SanitizePragmaValue`）+ `Dotnet/AppApi/Common/AppApiCommon.cs` 行 115–118（`ResolveDatabaseName` 委托）。
-> 完整测试覆盖见 `Dotnet/VRCX.Tests/SQLiteSecurityTests.cs`（42 用例，6 分组）。
+> 集中实现于 `Dotnet/SQLite.cs` 行 295 / 357 / 441（`ValidateAndCanonicalizeDatabasePath` / `ValidateDatabaseFile` / `SanitizePragmaValue`）+ `Dotnet/AppApi/Common/AppApiCommon.cs` 行 130–132（`ResolveDatabaseName` 委托）。
+> 完整测试覆盖见 `Dotnet/VRCX.Tests/SQLiteSecurityTests.cs`（42 Fact + 4 Theory / 20 InlineData = 46 测试方法、62 执行用例，6 分组）。
 
 ### 集中式路径验证器 (C-1, C-2)
 
@@ -145,7 +145,7 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 ### .bak 向后兼容 (COMPAT-1)
 
 - 实现于 `src/stores/vrcx.js::handleUninitializedDatabase()`
-- `.bak` 键名优先级回退：`VRCX_Database.name` → `VRCX_Database.location` → `VRCX_DatabaseLocation`
+- `.bak` 键名优先级回退：`VRCX_Database.name` → `VRCX_DatabaseLocation`
 - `AppApi.ResolveDatabaseName(bakDbName)` + `AppApi.ResolveDatabaseName(currentDbName)` 包裹 try/catch，验证失败回退 `initAndFixInPlace`
 - 自引用去重：`bakIdentity === currentIdentity` 时不执行 `migrateFromOldDb`，回退 `initAndFixInPlace`（依赖 `ValidateAndCanonicalizeDatabasePath` 的规范化路径字符串等价比较）
 
@@ -157,7 +157,7 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 ### JS 桥接一致性 (BRIDGE-1)
 
 - `AppApi.ResolveDatabaseName`（`AppApiCommon.cs:115-118`）薄包装：`=> SQLite.ValidateAndCanonicalizeDatabasePath(name)`
-- 类型声明：`src/types/globals.d.ts:224` `ResolveDatabaseName(name: string): Promise<string>`
+- 类型声明：`src/types/globals.d.ts:406` `ResolveDatabaseName(name: string): Promise<string>`
 - **JS 调用方必须 try/catch**：验证失败抛 `InvalidOperationException`，跨 IPC 边界后表现为 rejected Promise
 
 ## 写策略 (CORE RULE)
@@ -178,10 +178,11 @@ private static readonly Dictionary<string, string> DefaultOptions = new() {
 
 ```
 VRCX_DatabaseLocation (旧 flat key)  →  VRCX_Database.name
-VRCX_Database.location (旧版 nested) →  VRCX_Database.name
 ```
 
 迁移保留旧值。用户选择是否清空改默认路径。
+
+> 注：`VRCX_Database.location`（database-refactor 分支过程中的中间键）从未进入任何发布版本，无迁移必要，已于 2026-08 移除。
 
 ## 涉及文件
 
@@ -207,7 +208,6 @@ VRCX_Database.location (旧版 nested) →  VRCX_Database.name
 | NAME-3 | `name` 全平台统一检查：拒绝 `:`、拒绝保留设备名、拒绝已存在的目录 |
 | NAME-4 | 父目录不存在时 `Init` 递归创建，不报错 |
 | MIG-1 | `VRCX_DatabaseLocation` → `VRCX_Database.name` |
-| MIG-2 | `VRCX_Database.location` → `VRCX_Database.name` |
 | C-1 | `ValidateAndCanonicalizeDatabasePath` 按路径类型做 boundary 检查：纯文件名在 `Path.GetFullPath` 规范化后检查 `StartsWith(AppData)`；含分隔符的路径必须在 `Path.GetFullPath` **前**检查 `Path.IsPathRooted`（否则规范化后始终为 true，检查失效） |
 | C-2 | `ValidateAndCanonicalizeDatabasePath` 是路径解析的单一审计点，`Init()` 与 `AppApi.ResolveDatabaseName` 均委托 |
 | H-1 | `name` 含 `\0` 在任何字符串处理前拒绝（`ValidateAndCanonicalizeDatabasePath` 步骤 0 主门 + `ValidateDatabaseFile` 步骤 0 defense-in-depth + `ForbiddenPragmaChars` 含 `\0`） |

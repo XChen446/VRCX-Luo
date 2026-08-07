@@ -63,7 +63,7 @@ namespace VRCX
                 Font = new Font(Font.FontFamily, 10F, FontStyle.Regular),
                 ForeColor = Color.FromArgb(212, 212, 216),
                 Location = new Point(18, 13),
-                Text = "关闭 VRCX-Luo"
+                Text = "关闭 VRCX-K"
             };
             var closeButton = CreateFlatButton(
                 text: "×",
@@ -95,7 +95,7 @@ namespace VRCX
                 ForeColor = SecondaryTextColor,
                 Location = new Point(24, 108),
                 Size = new Size(472, 48),
-                Text = "最小化后 VRCX-Luo 会继续在后台运行，您可以随时从托盘图标重新打开。"
+                Text = "最小化后 VRCX-K 会继续在后台运行，您可以随时从托盘图标重新打开。"
             };
             _dontAskAgainCheckBox = new CheckBox
             {

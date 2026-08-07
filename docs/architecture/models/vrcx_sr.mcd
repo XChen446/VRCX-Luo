@@ -217,3 +217,29 @@ AVATAR_HISTORY (pri): #avatar_id > AVATAR (pub) > avatar_id, created_at, time
 :
 :
 :
+:
+COOKIES (pub): key, value
+:
+CONFIGS (pub): key, value
+:
+GAMELOG_PORTAL_SPAWN (pub): id, created_at, display_name, location, user_id, instance_id, world_name
+:
+GAMELOG_VIDEO_PLAY (pub): id, created_at, video_url, video_name, video_id, location, display_name, user_id
+:
+GAMELOG_RESOURCE_LOAD (pub): id, created_at, resource_url, resource_type, location
+:
+GAMELOG_EVENT (pub): id, created_at, data
+:
+GAMELOG_EXTERNAL (pub): id, created_at, message, display_name, user_id, location
+:
+CACHE_AVATAR (pub): id, added_at, author_id, author_name, created_at, description, image_url, name, release_status, thumbnail_image_url, updated_at, version
+:
+CACHE_WORLD (pub): id, added_at, author_id, author_name, created_at, description, image_url, name, release_status, thumbnail_image_url, updated_at, version
+:
+MUTUAL_GRAPH_META (pri): #friend_id > MUTUAL_GRAPH_FRIENDS (pri) > friend_id, last_fetched_at, opted_out
+:
+TRACKED_NONFRIENDS (pri): #user_id > USER (pri) > user_id, display_name, added_at
+:
+MANUAL_RELATIONS_MANUEL (pri): #user_id_a > USER (pri) > user_id, #user_id_b > USER (pri) > user_id, relation_type, added_at
+:
+NOTIFICATIONS_V2 (pri): #user_id > USER (pri) > user_id, id, created_at, updated_at, expires_at, type, link, link_text, message, title, image_url, seen, sender_user_id, sender_username, data, responses, details

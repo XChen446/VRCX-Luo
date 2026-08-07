@@ -341,9 +341,8 @@ export const useVrcxStore = defineStore('Vrcx', () => {
             console.warn('Failed to read backup config:', err);
         }
 
-        const bakDbName = bakConfig?.['VRCX_Database.name']
-            || bakConfig?.['VRCX_Database.location']
-            || bakConfig?.['VRCX_DatabaseLocation'];
+    const bakDbName = bakConfig?.['VRCX_Database.name']
+        || bakConfig?.['VRCX_DatabaseLocation'];
         const currentDbName = await VRCXStorage.Get(
             'VRCX_Database.name'
         );

@@ -138,7 +138,7 @@ namespace VRCX
 
         public override bool CheckForUpdateExe()
         {
-            return File.Exists(Path.Join(Program.AppDataDirectory, "VRCX-Luo_Setup.exe")) ||
+            return File.Exists(Path.Join(Program.AppDataDirectory, "VRCX-K_Setup.exe")) ||
                 File.Exists(Path.Join(Program.AppDataDirectory, "update.exe"));
         }
 

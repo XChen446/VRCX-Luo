@@ -22,7 +22,7 @@ namespace VRCX
         /// `{ conn, table, count, ts, dv }`(dv 仅主库有值,来自专用观察连接)。
         /// 检测语义:事件只是失效提示(invalidate hint),不是数据管道——
         /// 消费方应自行按需重查;漏事件由 data_version 兜底轮询补上。
-        /// 详见 docs/CHANGE_NOTIFICATION_API.md。
+        /// 详见 docs/architecture/ADAPTER_API.md §9。
         /// </summary>
         public event Action<string>? DatabaseChanged;
 

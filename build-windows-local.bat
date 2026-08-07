@@ -2,7 +2,7 @@
 setlocal
 
 echo ===================================================
-echo   VRCX-Luo Local Windows Portable Build Script
+echo   VRCX-K Local Windows Portable Build Script
 echo ===================================================
 echo.
 
@@ -69,11 +69,11 @@ echo [INFO] Building Backend...
 :: Stop only parent processes. CEF children share the same executable name and
 :: must be allowed to exit naturally after their parent process closes.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$exe = [IO.Path]::GetFullPath('%~dp0build\Cef\VRCX-Luo.exe');" ^
-    "$parents = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.Name -eq 'VRCX-Luo.exe' -and $_.ExecutablePath -eq $exe -and $_.CommandLine -notmatch '--type=' };" ^
+    "$exe = [IO.Path]::GetFullPath('%~dp0build\Cef\VRCX-K.exe');" ^
+    "$parents = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.Name -eq 'VRCX-K.exe' -and $_.ExecutablePath -eq $exe -and $_.CommandLine -notmatch '--type=' };" ^
     "$parents ^| ForEach-Object { Stop-Process -Id $_.ProcessId -Force };" ^
     "$deadline = (Get-Date).AddSeconds(10);" ^
-    "do { Start-Sleep -Milliseconds 250; $remaining = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.Name -eq 'VRCX-Luo.exe' -and $_.ExecutablePath -eq $exe } } while ($remaining -and (Get-Date) -lt $deadline);" ^
+    "do { Start-Sleep -Milliseconds 250; $remaining = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.Name -eq 'VRCX-K.exe' -and $_.ExecutablePath -eq $exe } } while ($remaining -and (Get-Date) -lt $deadline);" ^
     "if ($remaining) { Write-Error ('CEF processes did not exit: ' + ($remaining.ProcessId -join ', ')); exit 1 }"
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to stop the running CEF test build safely.
@@ -103,6 +103,6 @@ echo ===================================================
 echo [SUCCESS] Local build completed successfully!
 echo.
 echo You can run the portable executable here:
-echo %~dp0build\Cef\VRCX-Luo.exe
+echo %~dp0build\Cef\VRCX-K.exe
 echo ===================================================
 pause

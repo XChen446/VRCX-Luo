@@ -1,6 +1,6 @@
-# VRCX-Luo 数据刷新机制说明
+# VRCX-K 数据刷新机制说明
 
-本文档描述 VRCX-Luo 中"好友动态 (Feed)"等数据是如何被采集、刷新和持久化的。
+本文档描述 VRCX-K 中"好友动态 (Feed)"等数据是如何被采集、刷新和持久化的。
 数据采集采用了**四层架构**，按实时性从高到低排列。
 
 ---
@@ -14,7 +14,7 @@
 | **L3 轮询 (5分钟)** | VRChat REST API | 5 分钟 | 自身状态、群组实例列表 |
 | **L4 全量同步 (1小时)** | VRChat REST API | 1 小时 | 全体好友列表的完整信息刷新 |
 
-另有 **Luo 特供的数据补全机制**，用于弥补离线期间的数据缺口。
+另有数据补全机制（源自 Luo 分支，机制名沿用"Luo 补全"），用于弥补离线期间的数据缺口。
 
 ---
 
@@ -93,7 +93,7 @@ if (props.bio && props.bio[0] && props.bio[1]) {
 - **控制文件**：[`src/stores/updateLoop.js`](../src/stores/updateLoop.js)。
 - **计时器变量**：
   - `state.nextCurrentUserRefresh`：初始值 **300 秒 (5 分钟)**。
-  - `state.nextGroupInstanceRefresh`：初始值 **300 秒 (5 分钟)**。
+  - `state.nextGroupInstanceRefresh`：初始值 **0**（首次主循环立即触发，之后按周期刷新）。
 - **触发动作**：
   - 调用 `getCurrentUser()` 刷新自身状态。
   - 刷新群组实例列表
@@ -111,7 +111,7 @@ if (props.bio && props.bio[0] && props.bio[1]) {
 
 ---
 
-## 3. Luo 特供：数据补全机制 (Silent Info Fetch)
+## 3. 数据补全机制 (Silent Info Fetch，源自 Luo 分支)
 
 - **核心入口**：[`src/coordinators/infoFetchCoordinator.js`](../src/coordinators/infoFetchCoordinator.js) 中的 `runSilentInfoFetch()`。
 - **触发时机**：应用启动或断网重连后自动触发，也可由用户手动触发。
@@ -131,7 +131,7 @@ if (props.bio && props.bio[0] && props.bio[1]) {
 
 ## 4. 数据持久化：Feed 数据库表结构
 
-所有 Feed 数据写入 SQLite，表名以当前登录用户 ID 为前缀（如 `usr_xxx_feed_gps`）。
+所有 Feed 数据写入数据库（SQLite 默认，经 adapter 层支持 MySQL / PostgreSQL），表名以当前登录用户 ID 去分隔符后的前缀（如 `usrabc_feed_gps`；PostgreSQL 为 schema 限定名 `account_abc.feed_gps`）。
 
 | 表名后缀 | 数据类型 | 写入时机 |
 |:---|:---|:---|
@@ -152,7 +152,7 @@ UI 层的 Feed 查询通过 `UNION ALL` 将以上多张表聚合展示。
 
 ### 5.1 打开用户资料页时的 Bio 快照
 
-在 [`src/coordinators/userCoordinator.js`](../src/coordinators/userCoordinator.js) 的 `showUserDialog()` 中（第 464-488 行），当用户打开某个人的资料页时：
+在 [`src/coordinators/userCoordinator.js`](../src/coordinators/userCoordinator.js) 的 `showUserDialog()` 中（定义于第 335 行，Bio 快照逻辑约 435-503 行），当用户打开某个人的资料页时：
 1. 会发起一次 API 请求拉取最新资料。
 2. 拉取完成后，将当前 Bio 与数据库中最后一条记录比对。
 3. 如果不同，且该变更**不会被 `runHandleUserUpdateFlow` 同时记录**（防止重复），则额外补写一条。
@@ -186,6 +186,6 @@ WebSocket 断开后 **5 秒**自动尝试重连。
 | [`src/coordinators/userEventCoordinator.js`](../src/coordinators/userEventCoordinator.js) | `runHandleUserUpdateFlow()` — 处理 diff 结果，写入 Feed |
 | [`src/coordinators/friendPresenceCoordinator.js`](../src/coordinators/friendPresenceCoordinator.js) | 好友在线状态变更处理，写入 Online/Offline |
 | [`src/coordinators/friendSyncCoordinator.js`](../src/coordinators/friendSyncCoordinator.js) | 全量好友列表刷新编排 |
-| [`src/coordinators/infoFetchCoordinator.js`](../src/coordinators/infoFetchCoordinator.js) | **[Luo]** 数据补全扫描 |
+| [`src/coordinators/infoFetchCoordinator.js`](../src/coordinators/infoFetchCoordinator.js) | **[Luo 补全]** 数据补全扫描 |
 | [`src/stores/feed.js`](../src/stores/feed.js) | Feed Store — UI 层的数据管理 |
 | [`src/services/database/feed.js`](../src/services/database/feed.js) | Feed 数据库读写，`UNION ALL` 聚合查询 |

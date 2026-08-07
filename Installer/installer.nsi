@@ -22,7 +22,7 @@
     VIProductVersion "${PRODUCT_VERSION}"
     VIFileVersion "${VERSION}"
     VIAddVersionKey "FileVersion" "${VERSION}"
-    VIAddVersionKey "ProductName" "VRCX-Luo"
+    VIAddVersionKey "ProductName" "VRCX-K"
     VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
     VIAddVersionKey "LegalCopyright" "Copyright vrcx-team, pypy, natsumi"
     VIAddVersionKey "FileDescription" "Friendship management tool for VRChat"
@@ -40,8 +40,8 @@
     SetCompressor /SOLID lzma
     SetCompressorDictSize 16
     Unicode True
-    Name "VRCX-Luo"
-    OutFile "VRCX-Luo_Setup.exe"
+    Name "VRCX-K"
+    OutFile "VRCX-K_Setup.exe"
     InstallDir "$PROGRAMFILES64\VRCX-Luo"
     InstallDirRegKey HKLM "Software\VRCX-Luo" "InstallDir"
     RequestExecutionLevel admin
@@ -79,7 +79,7 @@
 
     ; Checkbox to launch VRCX.
     !define MUI_FINISHPAGE_RUN
-    !define MUI_FINISHPAGE_RUN_TEXT "Launch VRCX-Luo"
+    !define MUI_FINISHPAGE_RUN_TEXT "Launch VRCX-K"
     !define MUI_FINISHPAGE_RUN_FUNCTION launchVRCX
 
     ; Checkbox to create desktop shortcut.
@@ -121,11 +121,17 @@ Function .onInit
 
     ; If VRCX is already running, display a warning message
     loop:
-    StrCpy $1 "VRCX-Luo.exe"
+    StrCpy $1 "VRCX-K.exe"
     nsProcess::_FindProcess "$1"
     Pop $R1
+    ${If} $R1 != 0
+        StrCpy $1 "VRCX-Luo.exe"
+        nsProcess::_FindProcess "$1"
+        Pop $R1
+    ${EndIf}
     ${If} $R1 = 0
-        MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "VRCX-Luo 依旧在运行。$\n$\n点击“确定”结束进程，或者“取消”退出安装程序。" /SD IDOK IDCANCEL cancel
+        MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "VRCX-K 依旧在运行。$\n$\n点击“确定”结束进程，或者“取消”退出安装程序。" /SD IDOK IDCANCEL cancel
+            nsExec::ExecToStack "taskkill /IM VRCX-K.exe"
             nsExec::ExecToStack "taskkill /IM VRCX-Luo.exe"
     ${Else}
         Goto done
@@ -145,12 +151,12 @@ Function .onInstSuccess
 FunctionEnd
 
 Function createDesktopShortcut
-    CreateShortcut "$DESKTOP\VRCX-Luo.lnk" "$INSTDIR\VRCX-Luo.exe"
+    CreateShortcut "$DESKTOP\VRCX-K.lnk" "$INSTDIR\VRCX-K.exe"
 FunctionEnd
 
 Function launchVRCX
     SetOutPath $INSTDIR
-    ShellExecAsUser::ShellExecAsUser "" "$INSTDIR\VRCX-Luo.exe" ""
+    ShellExecAsUser::ShellExecAsUser "" "$INSTDIR\VRCX-K.exe" ""
 FunctionEnd
 
 ;--------------------------------
@@ -176,8 +182,8 @@ Section "Install" SecInstall
 
     WriteRegStr HKLM "Software\VRCX-Luo" "InstallDir" $INSTDIR
     WriteUninstaller "$INSTDIR\Uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX-Luo" "DisplayName" "VRCX-Luo"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX-Luo" "Publisher" "yixijun"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX-Luo" "DisplayName" "VRCX-K"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX-Luo" "Publisher" "VRChatCN-Kipfel"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX" "DisplayArch" "x64"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VRCX" "InstallLocation" "$INSTDIR"
@@ -191,17 +197,17 @@ Section "Install" SecInstall
     ${GetParameters} $R2
     ${GetOptions} $R2 /SKIP_SHORTCUT= $3
     StrCmp $3 "true" noShortcut
-        CreateShortCut "$SMPROGRAMS\VRCX-Luo.lnk" "$INSTDIR\VRCX-Luo.exe"
-        ApplicationID::Set "$SMPROGRAMS\VRCX-Luo.lnk" "VRCX-Luo"
+        CreateShortCut "$SMPROGRAMS\VRCX-K.lnk" "$INSTDIR\VRCX-K.exe"
+        ApplicationID::Set "$SMPROGRAMS\VRCX-K.lnk" "VRCX-K"
     noShortcut:
 
     WriteRegStr HKCU "Software\Classes\vrcx-luo" "" "URL:vrcx-luo"
-    WriteRegStr HKCU "Software\Classes\vrcx-luo" "FriendlyTypeName" "VRCX-Luo"
+    WriteRegStr HKCU "Software\Classes\vrcx-luo" "FriendlyTypeName" "VRCX-K"
     WriteRegStr HKCU "Software\Classes\vrcx" "URL Protocol" ""
     WriteRegExpandStr HKCU "Software\Classes\vrcx\DefaultIcon" "" "$INSTDIR\VRCX.ico"
     WriteRegStr HKCU "Software\Classes\vrcx\shell" "" "open"
-    WriteRegStr HKCU "Software\Classes\vrcx-luo\shell\open" "FriendlyAppName" "VRCX-Luo"
-    WriteRegStr HKCU "Software\Classes\vrcx-luo\shell\open\command" "" '"$INSTDIR\VRCX-Luo.exe" /uri="%1" /params="%2 %3 %4"'
+    WriteRegStr HKCU "Software\Classes\vrcx-luo\shell\open" "FriendlyAppName" "VRCX-K"
+    WriteRegStr HKCU "Software\Classes\vrcx-luo\shell\open\command" "" '"$INSTDIR\VRCX-K.exe" /uri="%1" /params="%2 %3 %4"'
 SectionEnd
 
 ;--------------------------------
@@ -209,11 +215,16 @@ SectionEnd
 
 Section "Uninstall"
     ; If VRCX is already running, display a warning message and exit
-    StrCpy $1 "VRCX-Luo.exe"
+    StrCpy $1 "VRCX-K.exe"
     nsProcess::_FindProcess "$1"
     Pop $R1
+    ${If} $R1 != 0
+        StrCpy $1 "VRCX-Luo.exe"
+        nsProcess::_FindProcess "$1"
+        Pop $R1
+    ${EndIf}
     ${If} $R1 = 0
-        MessageBox MB_OK|MB_ICONEXCLAMATION "VRCX-Luo 依旧在运行。无法卸载此软件。$\n请先关闭 VRCX-Luo 并重试。" /SD IDOK
+        MessageBox MB_OK|MB_ICONEXCLAMATION "VRCX-K 依旧在运行。无法卸载此软件。$\n请先关闭 VRCX-K 并重试。" /SD IDOK
         Abort
     ${EndIf}
 
@@ -225,6 +236,9 @@ Section "Uninstall"
 
     ${IfNot} ${Silent}
         Delete "$SMPROGRAMS\VRCX.lnk"
+        Delete "$SMPROGRAMS\VRCX-K.lnk"
+        Delete "$SMPROGRAMS\VRCX-Luo.lnk"
+        Delete "$DESKTOP\VRCX-K.lnk"
         Delete "$DESKTOP\VRCX-Luo.lnk"
     ${EndIf}
 SectionEnd

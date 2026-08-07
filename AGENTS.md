@@ -45,7 +45,7 @@ build/            → build output (gitignored)
 - **Platform define**: `WINDOWS=true` / `LINUX=true` set at build time via `PLATFORM` env var; vitest defaults to `WINDOWS=true`
 - **Path alias**: `@/` → `src/`
 - **Modularity**: 所有新增接口/代码文件必须遵循现有代码风格和严格的层级组织，不得写成一团乱麻。L3 及以上数据库读写优先使用 `adapter.*` 方法，基类已冻结，禁止修改。
-- **Tasklist**: 项目任务清单在 https://github.com/XChen446/VRCX-Luo/issues/3 。AI 可通过 `gh` CLI 查询/保存/读取，但**禁止写入**（勾选/编辑/评论），除非得到执行者明确授权。若 AI 认为某项可勾选完成，应汇报给执行者等待确认。
+- **Tasklist**: 项目任务清单在 https://github.com/VRChatCN-Kipfel/VRCX-K/issues/3 。AI 可通过 `gh` CLI 查询/保存/读取，但**禁止写入**（勾选/编辑/评论），除非得到执行者明确授权。若 AI 认为某项可勾选完成，应汇报给执行者等待确认。
 
 ## Testing
 
@@ -63,20 +63,27 @@ build/            → build output (gitignored)
 
 `build-windows-local.bat` auto-installs .NET 10 SDK via winget if missing, then runs `npm run prod` + `dotnet build Dotnet/VRCX-Cef.csproj`.
 
+CEF local testing notes (CefSharp):
+- Main and browser subprocesses share `build/Cef/VRCX-K.exe`; the main process command line has no `--type=`, CEF children (renderer/GPU) do. Children exit on their own after the parent closes (`SubprocessExitIfParentProcessClosed`).
+- To stop a local test build, kill only the main process (no `--type=`) — `build-windows-local.bat` does this safely. Never `taskkill /F /IM VRCX-K.exe /T`: force-killing CEF children can pop a `0xe0434352` managed exception dialog that does NOT mean the main process crashed.
+- Close-to-tray config: `VRCX_CloseToTray` / `VRCX_CloseToTrayPrompt` in `%APPDATA%\VRCX\VRCX.json`. Logs: `%APPDATA%\VRCX\logs\VRCX*.log`; VRChat API SSL EOF is a network error, distinct from a process crash.
+
 ## Docs Knowledge Index
 
-项目架构、数据库设计、多账号方案等深度文档在 `docs/`：
-- `DATABASE_SCHEMA.md` — 数据库概念模型 (MCD) 与关系架构 (SR)，实体关联概览
-- `vrcx_mcd_mld.md` / `vrcx_sr_mld.md` — Merise 逻辑模型与关系模式，列出所有表名、字段、主键/外键
-- `DATA_REFRESH.md` — 四层数据刷新架构（L1 游戏日志、L2 WS、L3 轮询、L4 全量同步 + Luo 补全机制），Feed 采集/持久化/UI 查询全链路
-- `MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` — 多账号 V4 详细设计（AccountHub、AccountSession、热替换 Store、聚合视图、通知路由），含文件改动清单与代码量估算
-- `TRANSACTION_DESIGN.md` — 栈式事务上下文 + 统一池化设计（withTransaction/_txStack/keepAlive、Sliding 超时、三引擎对称）
-- `CHANGE_NOTIFICATION_API.md` — 数据库变更通知 API 使用指南（面向消费方开发者：onTableChange 订阅/退订、事件负载语义、实例与 conn 路由、userTable 物理表名、边界与限制）
+项目架构、数据库设计、多账号方案等深度文档在 `docs/`（导航见 `docs/README.md`，该目录可挂载为 agent skill——请务必阅读`docs/README.md`来了解知识库skill的安装方法！`docs/SKILL.md` 为知识库技能入口）：
+- `architecture/models/vrcx_mcd_mld.md` / `vrcx_sr_mld.md` — Merise 逻辑模型与关系模式，列出所有表名、字段、主键/外键
+- `architecture/DATA_REFRESH.md` — 四层数据刷新架构（L1 游戏日志、L2 WS、L3 轮询、L4 全量同步 + Luo 补全机制），Feed 采集/持久化/UI 查询全链路
+- `architecture/MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` — 多账号 V4 详细设计（AccountHub、AccountSession、热替换 Store、聚合视图、通知路由），含文件改动清单与代码量估算（设计已实现，文档为历史设计稿）
+- `architecture/TRANSACTION_DESIGN.md` — 栈式事务上下文 + 统一池化设计（withTransaction/_txStack/keepAlive、Sliding 超时、三引擎对称）
+- `architecture/ADAPTER_API.md` — EngineAdapter 三引擎统一契约参考（全部公开方法签名/方言差异/事务/事件推送 onTableChange 消费方指南）
+- `architecture/PGSQL_DESIGN.md` — PostgreSQL 引擎设计（Phase 9，新引擎开发模式参考）
+- `architecture/CONFIG_REFACTOR.md` — VRCXStorage 配置重构（bootstrap/_ 前缀/安全加固/旧键迁移）
+- `features/LUO_FEATURES.md` / `features/JIRAI_FEATURES.md` — 功能特性清单（Luo 分支功能 / jirai 继承改动）
 - `vrcx_erd.svg` / `vrcx_erd.mmd` / `vrcx_erd.dbml` — ER 图多格式输出
 
 ## VRCX_Database Config Refactoring (Jul 2026)
 
-See `docs/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` prefix convention, options merge strategy, name resolution rules, and security hardening: path traversal / PRAGMA injection / null byte rejection / quote injection / `.bak` backward compatibility).
+See `docs/architecture/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` prefix convention, options merge strategy, name resolution rules, and security hardening: path traversal / PRAGMA injection / null byte rejection / quote injection / `.bak` backward compatibility).
 
 ## GitHub Issue/PR Editing (UTF-8 中文)
 
@@ -86,7 +93,7 @@ See `docs/CONFIG_REFACTOR.md` for full design decisions (bootstrap policy, `_` p
 
 ```bash
 # 1. 用 Node.js 读取当前 body（正确 UTF-8）
-node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/XChen446/VRCX-Luo/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});require('fs').writeFileSync('issue3.md',out,'utf8');"
+node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/VRChatCN-Kipfel/VRCX-K/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});require('fs').writeFileSync('issue3.md',out,'utf8');"
 
 # 2. 编辑 issue3.md（edit 工具或手动），插入/修改内容
 
@@ -94,14 +101,14 @@ node -e "const {execSync}=require('child_process');const out=execSync('gh api re
 node -e "const fs=require('fs');const body=fs.readFileSync('issue3.md','utf8');fs.writeFileSync('issue3.json',JSON.stringify({body:body}),'utf8');"
 
 # 4. 通过 gh api PATCH 上传
-gh api --method PATCH repos/XChen446/VRCX-Luo/issues/3 --input issue3.json --jq '.title'
+gh api --method PATCH repos/VRChatCN-Kipfel/VRCX-K/issues/3 --input issue3.json --jq '.title'
 
 # 5. 用 Node.js 验证（避免 PowerShell 重定向编码问题）
-node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/XChen446/VRCX-Luo/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});console.log('Length:',out.length);console.log(out.split('\n')[0]);"
+node -e "const {execSync}=require('child_process');const out=execSync('gh api repos/VRChatCN-Kipfel/VRCX-K/issues/3 --jq .body',{encoding:'utf8',maxBuffer:1024*1024});console.log('Length:',out.length);console.log(out.split('\n')[0]);"
 ```
 
 **要点**：
 - 全程使用 Node.js 读写文件和捕获 `gh` 输出（`{encoding:'utf8'}`），不经过 PowerShell 的编码层
 - `gh api --input` 接受 JSON 文件，比 `gh issue edit --body-file` 更可靠
 - 验证时也用 Node.js `execSync`，避免 PowerShell `>` 重定向导致 UTF-8 变 GBK
-- 同样适用于 PR 编辑：`gh api --method PATCH repos/XChen446/VRCX-Luo/pulls/{n}`
+- 同样适用于 PR 编辑：`gh api --method PATCH repos/VRChatCN-Kipfel/VRCX-K/pulls/{n}`

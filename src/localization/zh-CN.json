@@ -247,7 +247,7 @@
             "remove_tooltip": "取消追踪",
             "add_button": "添加 +",
             "add_dialog_title": "追踪玩家",
-            "add_dialog_hint": "手动输入用户ID（usr_xxx...），或在VRCX-Luo中点击任意玩家，通过右侧「⋯」按钮选择「追踪」。",
+            "add_dialog_hint": "手动输入用户ID（usr_xxx...），或在VRCX-K中点击任意玩家，通过右侧「⋯」按钮选择「追踪」。",
             "add_input_placeholder": "usr_xxx...",
             "add_verify_error": "无法获取该用户数据，请检查ID后重试。",
             "add_confirm_question": "是否为用户「{name}」？",
@@ -919,8 +919,8 @@
                     "ask": "每次询问",
                     "tray": "最小化到系统托盘",
                     "exit": "直接退出",
-                    "dialog_title": "关闭 VRCX-Luo",
-                    "dialog_description": "最小化后 VRCX-Luo 会继续在后台运行，您可以随时从托盘图标重新打开。",
+                    "dialog_title": "关闭 VRCX-K",
+                    "dialog_description": "最小化后 VRCX-K 会继续在后台运行，您可以随时从托盘图标重新打开。",
                     "dont_ask_again": "以后不再提示",
                     "cancel": "取消"
                 }
@@ -2687,7 +2687,7 @@
         },
         "change_log": {
             "header": "更新日志",
-            "description": "更新日志来自 VRCX-Luo 仓库的 GitHub Release。",
+            "description": "更新日志来自 VRCX-K 仓库的 GitHub Release。",
             "close": "关闭",
             "donate": "捐赠支持",
             "github": "查看 Release",

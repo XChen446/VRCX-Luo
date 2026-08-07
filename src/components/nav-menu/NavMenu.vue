@@ -323,7 +323,7 @@
     };
 
     const openGithub = () => {
-        openExternalLink('https://github.com/yixijun/VRCX-Luo');
+        openExternalLink('https://github.com/VRChatCN-Kipfel/VRCX-K');
     };
 
     const handleSupportLink = (id) => {

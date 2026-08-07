@@ -17,7 +17,7 @@ namespace VRCX
     public class Update
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
-        private static readonly string VrcxSetupExecutable = Path.Join(Program.AppDataDirectory, "VRCX-Luo_Setup.exe");
+        private static readonly string VrcxSetupExecutable = Path.Join(Program.AppDataDirectory, "VRCX-K_Setup.exe");
         private static readonly string UpdateExecutable = Path.Join(Program.AppDataDirectory, "update.exe");
         private static readonly string TempDownload = Path.Join(Program.AppDataDirectory, "tempDownload");
         private static readonly HttpClient httpClient;
@@ -48,7 +48,7 @@ namespace VRCX
 
         public static void Check()
         {
-            if (Process.GetProcessesByName("VRCX-Luo_Setup").Length > 0 || Process.GetProcessesByName("VRCX_Setup").Length > 0)
+            if (Process.GetProcessesByName("VRCX-K_Setup").Length > 0 || Process.GetProcessesByName("VRCX-Luo_Setup").Length > 0 || Process.GetProcessesByName("VRCX-Jirai_Setup").Length > 0 || Process.GetProcessesByName("VRCX_Setup").Length > 0)
                 Environment.Exit(0);
 
             if (!StartupArgs.LaunchArguments.IsUpgrade)

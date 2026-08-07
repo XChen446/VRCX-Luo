@@ -25,12 +25,12 @@
  * 这三个方法只在测试中验证栈契约时出现。@private 触发 IDE 高亮
  * 但不触发 lint 失败(eslint-plugin-jsdoc 未在 eslint.config.mjs
  * 启用),WebStorm 仍会对外部调用显示警告,达到引导效果。
- * 详见 docs/TRANSACTION_DESIGN.md。
+ * 详见 docs/architecture/TRANSACTION_DESIGN.md。
  *
  * onTableChange(变更通知订阅)是 @optional 默认实现——基类提供完整
  * 实现(订阅注册表 + 完备层计数器轮询 + 基线去重),实现方不覆写
  * 即退化为 no-op,行为与现状一致;引擎只需覆写 _readChangeCounter()
- * 启用计数器兜底。详见 docs/CHANGE_NOTIFICATION_API.md。
+ * 启用计数器兜底。详见 docs/architecture/ADAPTER_API.md §9。
  *
  * The `engineType` getter below is metadata, not part of the 42+3
  * method interface — it carries no SQL semantics and exists solely so
@@ -45,7 +45,7 @@ class EngineAdapter {
     /**
      * 连接标识:默认单例为 null(对应 C# 侧 conn="default"),
      * createAdapter 实例为构建后的 connectionString。
-     * 写漏斗事件按此值路由(见 CHANGE_NOTIFICATION_API.md)。
+     * 写漏斗事件按此值路由(见 docs/architecture/ADAPTER_API.md §9)。
      * @type {string|null}
      */
     connectionString = null;
@@ -992,7 +992,7 @@ class EngineAdapter {
 
     // ── Change notification: onTableChange ───────────────────────────
     //
-    // 数据库变更通知(详见 docs/CHANGE_NOTIFICATION_API.md):
+    // 数据库变更通知(详见 docs/architecture/ADAPTER_API.md §9):
     //   - 实时层:C# 写漏斗事件,负载携带发射时的计数器快照(dv),
     //     经 _syncChangeBaseline() 推进基线;
     //   - 完备层:引擎原生计数器轮询(_readChangeCounter),

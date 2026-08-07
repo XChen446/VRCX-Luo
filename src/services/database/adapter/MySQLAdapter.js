@@ -1306,7 +1306,7 @@ class MySQLAdapter extends EngineAdapter {
      * 注意:依赖 `performance_schema_max_table_instances` 覆盖全部动态表
      * (默认 AUTO 跟随 table_definition_cache,多账号大量建表时需核查/调大);
      * `information_schema.TABLES.UPDATE_TIME` 在 InnoDB 下文档明确不可靠,
-     * 不作备选。详见 docs/CHANGE_NOTIFICATION_API.md。
+     * 不作备选。详见 docs/architecture/ADAPTER_API.md §9。
      *
      * @override @protected
      * @returns {Promise<number | null>}

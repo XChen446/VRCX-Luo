@@ -227,6 +227,32 @@ Table pri_mutual_graph_friends_old [note: "(pri) {prefix}_mutual_graph_friends_o
   last_updated text [not null, note: "ISO datetime of last API fetch"]
 }
 
+// Per-friend mutual graph metadata (fetch state / opt-out)
+Table pri_mutual_graph_meta [note: "(pri) {prefix}_mutual_graph_meta"] {
+  friend_id      text [pk]
+  last_fetched_at text [note: "ISO datetime of last fetch"]
+  opted_out      integer [default: 0, note: "1 = user opted out of mutual graph"]
+}
+
+// Tracked non-friends (local watch list)
+Table pri_tracked_nonfriends [note: "(pri) {prefix}_tracked_nonfriends"] {
+  user_id      text [pk]
+  display_name text
+  added_at     text
+}
+
+// Manual relations between two users (green edges in relation graph)
+Table pri_manual_relations_MANUEL [note: "(pri) {prefix}_manual_relations_MANUEL"] {
+  user_id_a     text [not null]
+  user_id_b     text [not null]
+  relation_type text [not null, default: "friend"]
+  added_at      text
+
+  indexes {
+    (user_id_a, user_id_b) [pk]
+  }
+}
+
 
 // ─── GLOBAL SHARED TABLES (pub) ──────────────────────────────
 
@@ -398,6 +424,18 @@ Table pub_avatar_tags [note: "(pub) avatar_tags"] {
   indexes {
     (avatar_id, tag) [pk]
   }
+}
+
+// Auth cookies (key-value, engine-agnostic LONGTEXT value)
+Table pub_cookies [note: "(pub) cookies"] {
+  key   text [pk]
+  value text [note: "LONGTEXT on MySQL/PG"]
+}
+
+// Runtime config key-value store
+Table pub_configs [note: "(pub) configs"] {
+  key   text [pk]
+  value text [note: "LONGTEXT on MySQL/PG"]
 }
 
 

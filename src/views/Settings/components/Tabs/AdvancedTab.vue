@@ -143,7 +143,7 @@
                 <Button
                     size="sm"
                     variant="outline"
-                    @click="openExternalLink('https://github.com/yixijun/VRCX-Luo/wiki/Launch-parameters-&-VRCX.json')"
+                    @click="openExternalLink('https://github.com/VRChatCN-Kipfel/VRCX-K/wiki/Launch-parameters-&-VRCX.json')"
                     >{{ t('view.settings.advanced.advanced.launch_commands.docs') }}</Button
                 >
                 <Button

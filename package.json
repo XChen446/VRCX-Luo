@@ -1,20 +1,20 @@
 {
-    "name": "vrcx-luo",
+    "name": "vrcx-k",
     "version": "2026.03.28",
     "private": true,
     "description": "Friendship management tool for VRChat",
     "keywords": [
         "vrchat"
     ],
-    "homepage": "https://github.com/yixijun/VRCX-Luo#readme",
+    "homepage": "https://github.com/VRChatCN-Kipfel/VRCX-K#readme",
     "bugs": {
-        "url": "https://github.com/yixijun/VRCX-Luo/issues"
+        "url": "https://github.com/VRChatCN-Kipfel/VRCX-K/issues"
     },
     "license": "MIT",
     "author": "VRCX Team",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/yixijun/VRCX-Luo.git"
+        "url": "git+https://github.com/VRChatCN-Kipfel/VRCX-K.git"
     },
     "main": "src-electron/main.js",
     "scripts": {
@@ -121,7 +121,7 @@
     },
     "build": {
         "appId": "app.vrcx",
-        "productName": "VRCX-Luo",
+        "productName": "VRCX-K",
         "icon": "images/VRCX.png",
         "files": [
             "build/html/**/*",
@@ -172,7 +172,7 @@
             "output": "build"
         },
         "linux": {
-            "artifactName": "VRCX-Luo_Version.${ext}",
+            "artifactName": "VRCX-K_Version.${ext}",
             "target": [
                 "AppImage"
             ],
@@ -193,7 +193,7 @@
             "description": "Friendship management tool for VRChat"
         },
         "mac": {
-            "artifactName": "VRCX-Luo_Version.${ext}",
+            "artifactName": "VRCX-K_Version.${ext}",
             "target": [
                 "dmg"
             ],
@@ -204,9 +204,9 @@
     },
     "allowScripts": {
         "vue-demi@0.14.10": true,
-        "@sentry/cli@2.58.5": true,
-        "electron@40.9.2": true,
         "electron-winstaller@5.4.0": true,
-        "core-js@3.47.0": true
+        "core-js@3.47.0": true,
+        "@sentry/cli@2.58.6": true,
+        "electron@40.10.6": true
     }
 }

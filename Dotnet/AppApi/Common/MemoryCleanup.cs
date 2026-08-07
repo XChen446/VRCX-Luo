@@ -43,7 +43,9 @@ namespace VRCX
 
         private static readonly string[] MemoryCleanupProcessNames =
         {
+            "VRCX-K",
             "VRCX-Luo",
+            "VRCX-Jirai",
             "VRCX",
             "VRChat",
             "CefSharp.BrowserSubprocess"

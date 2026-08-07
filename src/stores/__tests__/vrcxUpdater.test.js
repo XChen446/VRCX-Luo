@@ -54,9 +54,9 @@ import {
 
 describe('normalizeUpdaterVersion', () => {
     test.each([
-        ['VRCX-Luo 2026.6.14-fix1', '2026.06.14-fix1'],
+        ['VRCX-K 2026.6.14-fix1', '2026.06.14-fix1'],
         ['2026.6.14-fix1', '2026.06.14-fix1'],
-        ['VRCX-Luo 2026.6.16', '2026.06.16'],
+        ['VRCX-K 2026.6.16', '2026.06.16'],
         ['v2026.6.16', '2026.06.16']
     ])('normalizes %s', (input, expected) => {
         expect(normalizeUpdaterVersion(input)).toBe(expected);
@@ -65,9 +65,9 @@ describe('normalizeUpdaterVersion', () => {
 
 describe('getUpdaterReleaseKey', () => {
     test.each([
-        ['VRCX-Luo 2026.6.14-fix2', '2026.06.14-fix2'],
+        ['VRCX-K 2026.6.14-fix2', '2026.06.14-fix2'],
         ['2026.6.14-fix2', '2026.06.14-fix2'],
-        ['VRCX-Luo 2026.6.14-fix5', '2026.06.14-fix5']
+        ['VRCX-K 2026.6.14-fix5', '2026.06.14-fix5']
     ])('normalizes release key %s', (input, expected) => {
         expect(getUpdaterReleaseKey(input)).toBe(expected);
     });
@@ -99,7 +99,7 @@ describe('getAssetOfInterest', () => {
             [
                 {
                     state: 'uploaded',
-                    name: 'VRCX-Luo.exe',
+                    name: 'VRCX-K.exe',
                     content_type: 'application/x-msdownload',
                     browser_download_url: 'https://example.com/portable.exe',
                     digest: 'sha256:portable',
@@ -107,7 +107,7 @@ describe('getAssetOfInterest', () => {
                 },
                 {
                     state: 'uploaded',
-                    name: 'VRCX-Luo_Setup.exe',
+                    name: 'VRCX-K_Setup.exe',
                     content_type: 'application/x-msdownload',
                     browser_download_url: 'https://example.com/setup.exe',
                     digest: 'sha256:setup',
@@ -129,7 +129,7 @@ describe('getAssetOfInterest', () => {
             [
                 {
                     state: 'uploaded',
-                    name: 'VRCX-Luo.exe',
+                    name: 'VRCX-K.exe',
                     content_type: 'application/x-msdownload',
                     browser_download_url: 'https://example.com/app.exe',
                     size: 1
@@ -146,14 +146,14 @@ describe('getAssetOfInterest', () => {
             [
                 {
                     state: 'uploaded',
-                    name: 'VRCX-Luo-arm64.AppImage',
+                    name: 'VRCX-K-arm64.AppImage',
                     content_type: 'application/octet-stream',
                     browser_download_url: 'https://example.com/arm64.AppImage',
                     size: 1
                 },
                 {
                     state: 'uploaded',
-                    name: 'VRCX-Luo-x64.AppImage',
+                    name: 'VRCX-K-x64.AppImage',
                     content_type: 'application/octet-stream',
                     browser_download_url: 'https://example.com/x64.AppImage',
                     digest: 'sha256:linux',
@@ -232,7 +232,7 @@ describe('useVRCXUpdaterStore.setAutoUpdateVRCX', () => {
     });
 
     test('loads changelog from matching GitHub release', async () => {
-        globalThis.AppApi.GetVersion.mockResolvedValue('VRCX-Luo 2026.6.15');
+        globalThis.AppApi.GetVersion.mockResolvedValue('VRCX-K 2026.6.15');
         mocks.webApiService.execute.mockResolvedValue({
             status: 200,
             data: JSON.stringify([
@@ -241,7 +241,7 @@ describe('useVRCXUpdaterStore.setAutoUpdateVRCX', () => {
                     name: 'Beta 2026.6.15',
                     body: '## Release body\n[Full notes](https://example.com)',
                     html_url:
-                        'https://github.com/yixijun/VRCX-Luo/releases/tag/beta-2026.6.15',
+                        'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/tag/beta-2026.6.15',
                     prerelease: true,
                     assets: []
                 }
@@ -258,13 +258,13 @@ describe('useVRCXUpdaterStore.setAutoUpdateVRCX', () => {
             '## Release body\n[Full notes](https://example.com)'
         );
         expect(store.changeLogDialog.releaseUrl).toBe(
-            'https://github.com/yixijun/VRCX-Luo/releases/tag/beta-2026.6.15'
+            'https://github.com/VRChatCN-Kipfel/VRCX-K/releases/tag/beta-2026.6.15'
         );
     });
 
     test('uses GitHub latest release instead of sorted release list', async () => {
         globalThis.AppApi.GetVersion.mockResolvedValue(
-            'VRCX-Luo 2026.6.14-fix2'
+            'VRCX-K 2026.6.14-fix2'
         );
         mocks.webApiService.execute.mockImplementation(({ url }) => {
             if (url.endsWith('/releases/latest')) {
@@ -272,7 +272,7 @@ describe('useVRCXUpdaterStore.setAutoUpdateVRCX', () => {
                     status: 200,
                     data: JSON.stringify({
                         tag_name: '2026.6.14-fix2',
-                        name: 'VRCX-Luo 2026.6.14-fix2',
+                        name: 'VRCX-K 2026.6.14-fix2',
                         prerelease: false,
                         published_at: '2026-06-18T00:00:00Z',
                         assets: [{ state: 'uploaded' }]
@@ -285,14 +285,14 @@ describe('useVRCXUpdaterStore.setAutoUpdateVRCX', () => {
                 data: JSON.stringify([
                     {
                         tag_name: '2026.6.16',
-                        name: 'VRCX-Luo 2026.6.16',
+                        name: 'VRCX-K 2026.6.16',
                         prerelease: false,
                         published_at: '2026-06-16T00:00:00Z',
                         assets: [{ state: 'uploaded' }]
                     },
                     {
                         tag_name: '2026.6.14-fix1',
-                        name: 'VRCX-Luo 2026.6.14-fix1',
+                        name: 'VRCX-K 2026.6.14-fix1',
                         prerelease: false,
                         published_at: '2026-06-17T00:00:00Z',
                         assets: [{ state: 'uploaded' }]

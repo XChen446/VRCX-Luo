@@ -1,23 +1,19 @@
-# Design Document — Phase 9 PostgreSQL 适配器
+# Design Document — PostgreSQL 适配器（Phase 9）
 
-> **版本**:v1.2(并入 PR #13 review #3 的健康检查 async 化 + 连接池 `poolIdle` → `availableCapacity` 语义修正)· **分支**:`database-refactor-AsyncEvent-fix` · **日期**:2026-07-26
+> **状态**:已实现（2026-08 随 database-refactor 并入 main）。本文档为设计稿，实现已落地；下文标注了实现与设计的偏离点。
+> **版本**:v1.2（并入 PR #13 review #3 的健康检查 async 化 + 连接池 `poolIdle` → `availableCapacity` 语义修正）· **分支**:`database-refactor-AsyncEvent-fix`（已并入 main）· **日期**:2026-07-26
 > **覆盖范围**:Issue #3 Phase 9 task 9.2–9.16(共 15 个子任务)
 > **设计约束**:D1–D5(用户已拍板,不可违背)
 > **接口基线**:EngineAdapter.js 42 abstract + 3 optional + 健康检查 3 抽象(`isConnected()`/`getHealth()`/`getPoolStats()`,2026-07-26 破例提升入基类)
 >
-> **v1.1 更新(2026-07-18)**:8 项待核实事项已全部核实(详见 §11.3 结尾"核实结论"附录)。3 项修订实现条款(§4.1.5 insert replace 分层、§4.1.7 session_id 用 BY DEFAULT、§4.1.12 sqlEnterTime 改 to_char);3 项印证假设关闭风险(R4/R13/§3.2.11);2 项重新定性(R14 待产品决策、搬迁 UI 必须新建于 AdvancedTab)。
->
-> **v1.2 更新(2026-07-26)**:PR #13 第三轮 review 后的修正:
->   1. **接口冻结破例**:`isConnected()` / `getHealth()` 从 PgSQLAdapter 扩展方法提升为 EngineAdapter 基类抽象方法(三引擎对称 commit `c08c62e1`)。原 §4.1.15 / §11.1 / §11.2 / §11.3 末尾的"不入基类"决定撤销。
->   2. **`isConnected()` 改 async**:Electron 下 C# 桥返回 `Promise<boolean>`,`Boolean(Ping())` 恒 true 会导致探针失真。统一 `async isConnected()` + 调用方 `await`(commit `9dedc048`,fixup 到 `762b8943`)。
->   3. **`GetPoolStats().poolIdle` 语义修正**:旧公式 `_totalBorrowed - _pinned.Count` 算的是"非 pinned 借出连接数"而非"池中空闲连接数",误导 StatusBar 绿色波线。改名 `availableCapacity` + 公式改 `_maxPoolSize - _totalBorrowed`(commit `9429cca8`)。
+> **修订记录（v1.1 2026-07-18 / v1.2 2026-07-26）**：8 项待核实事项全部核实（结论见 §11.3）；3 项实现条款修订（§4.1.5 insert replace 分层、§4.1.7 session_id 用 BY DEFAULT、§4.1.12 sqlEnterTime 改 to_char）；接口冻结破例——`isConnected()` / `getHealth()` / `getPoolStats()` 提升为 EngineAdapter 基类抽象（三引擎对称，commit `c08c62e1`），`isConnected()` 改 async（Electron 桥返回 Promise，`Boolean(Ping())` 恒 true 失真）；`GetPoolStats().poolIdle` 改名 `availableCapacity`（公式改 `_maxPoolSize - _totalBorrowed`，commit `9429cca8`）；R14 待产品决策；搬迁 UI 新建于 AdvancedTab。
 >   4. **`getHealth()` payload 字段订正**:C# 实际返回 `{ connected, latencyMs, lastHealthCheck }`,**无 `poolSize` 字段**(原 §4.1.15 JSDoc 笔误,代码从未生成过该字段)。
 
 ---
 
 ## 0. 摘要
 
-本设计为 VRCX-Luo 新增 PostgreSQL 后端能力,使现有 18 个 `database/*` 业务模块的 338 处 adapter 调用**零改动**地运行在 PgSQL 之上。核心机制是新建 `PgSQLAdapter`(继承 EngineAdapter),其内部 `_bind(sql, args)` 方法扫描 SQL 文本把 `@key` 命名占位符替换为 PgSQL 位置占位符 `$N` 并把 `{key:val}` 转为 positional array(D1),对业务模块完全透明。PgSQL 采用**每账号一个 schema**的隔离方案(`account_{prefix}.{table}`),`userTable()` 返回带 schema 的二段式限定名,`listTables()` 返回带 schema 的完整限定名(D4)。PgSQL 作为新引擎无历史库,`initUserSchema/initGlobalSchema` 直接建 PG 版表,迁移运行器对非 sqlite 引擎跳过 `database.after:"sqlite"` 锁死的 .map(D2)。C# 端 `PostgreSQL.cs.Init()` 改为读 `VRCX_Database.host/port/username/password/name` 字段拼装 Npgsql 连接串(D3)。Phase 9 仅做单账号 schema 隔离,不新建跨账号 UNION ALL 聚合视图(D5)。配套补齐 C#→JS 桥注册 4 处缺口、vitest PostgreSQL stub、CI PG service container、docker-compose.pgsql.yml、SQLite→PgSQL 数据搬迁管道。
+本设计为 VRCX-K 新增 PostgreSQL 后端能力,使现有 18 个 `database/*` 业务模块的 338 处 adapter 调用**零改动**地运行在 PgSQL 之上。核心机制是新建 `PgSQLAdapter`(继承 EngineAdapter),其内部 `_bind(sql, args)` 方法扫描 SQL 文本把 `@key` 命名占位符替换为 PgSQL 位置占位符 `$N` 并把 `{key:val}` 转为 positional array(D1),对业务模块完全透明。PgSQL 采用**每账号一个 schema**的隔离方案(`account_{prefix}.{table}`),`userTable()` 返回带 schema 的二段式限定名,`listTables()` 返回带 schema 的完整限定名(D4)。PgSQL 作为新引擎无历史库,`initUserSchema/initGlobalSchema` 直接建 PG 版表,迁移运行器对非 sqlite 引擎跳过 `database.after:"sqlite"` 锁死的 .map(D2)。C# 端 `PostgreSQL.cs.Init()` 改为读 `VRCX_Database.host/port/username/password/name` 字段拼装 Npgsql 连接串(D3)。Phase 9 仅做单账号 schema 隔离,不新建跨账号 UNION ALL 聚合视图(D5)。配套补齐 C#→JS 桥注册 4 处缺口、vitest PostgreSQL stub、CI PG service container、docker-compose.pgsql.yml、SQLite→PgSQL 数据搬迁管道。
 
 ---
 
@@ -55,7 +51,7 @@
 | **跨账号 UNION ALL 聚合视图** | D5:Phase 9 仅单账号 schema 隔离,`withPrefix` 串行单 prefix 透明适配 |
 | **9.10 新建聚合视图/改写 aggregatedView.js** | 按 D5,9.10 降级为验证现有实现(Phase 4.3 已删硬编码 UNION ALL 复用 feed 接口)在 PgSQL 全限定名下透明工作 |
 | **密码加密 / VRCX_Database.password 安全存储** | 属 Issue #5 范围,Phase 9 仅读 password 字段拼连接串 |
-| **MySQL/MariaDB 适配器** | Phase 8 范围(task 8.2-8.11 未完成),Phase 9 不涉及 |
+| **MySQL/MariaDB 适配器** | Phase 8 范围（已实现，2026-07-19 完成），Phase 9 不涉及 |
 | **v16 .map 的 PgSQL 方言重写** | D2:PgSQL 跳过 v16,无需重写 `SUBSTR(...INSTR(...))` 等 SQLite 片段 |
 | **业务模块(18 个 database/*)SQL 改写** | D1:_bind 对业务模块透明,338 处调用零改动 |
 | **EngineAdapter 基类签名变更** | 接口已冻结(42+3),PgSQL 扩展方法走 @optional/特有,不破冻结 |
@@ -67,7 +63,7 @@
 - **9.1 已完成**:`Dotnet/PostgreSQL.cs` 骨架 + Npgsql 9.0.0 包已加入两个 csproj(已核实 `PostgreSQL.cs` L1-201,含 Execute/ExecuteNonQuery/ExecuteJson 基础实现,但 Init 不符 D3)
 - **Phase 3 EngineAdapter 抽象层**:已冻结 42 abstract + 3 optional(已核实 `EngineAdapter.js` L13 注释)
 - **Phase 4/5 全量模块迁移**:18 个 `database/*` 模块已全部走 adapter 出口,338 处调用面已稳定
-- **Phase 8 MySQL 关系**:并行参考,不依赖。Phase 8 未完成(8.2-8.11 待做),但 `adapter/index.js` 引擎选择改造(task 8.7)与本设计 task 9.3 配套的 `adapter/index.js` 改造**同一文件同一逻辑**,实际由 Phase 9 先落地,Phase 8 后续复用
+- **Phase 8 MySQL 关系**:并行参考,不依赖。Phase 8 已完成（MySQLAdapter + C# MySQL.cs + mariadb 别名，2026-07-19 落地）；`adapter/index.js` 引擎选择改造（task 8.7）与本设计 task 9.3 配套的 `adapter/index.js` 改造**同一文件同一逻辑**，实际由 Phase 9 先落地，Phase 8 后续复用
 - **CONFIG_REFACTOR(D3 依据)**:`VRCX_Database.{mode,name,host,port,username,password,options}` 7 字段 bootstrap 已就绪(由 VRCXStorage.cs L70-86 创建)
 
 ---
@@ -143,7 +139,7 @@
 
 | 锚点 | 现状 | 改动性质 | 任务 |
 |------|------|----------|------|
-| L3 `const ENGINE = 'sqlite';` | 硬编码 | **改为运行时读**:从 `VRCXStorage.Get('VRCX_Database.mode')` 读 mode(默认 `'sqlite'`),惰性导入 PgSQLAdapter | 9.3 |
+| L3 `const ENGINE = 'sqlite';` | 硬编码 | **改为运行时读**:从 `VRCXStorage.Get('VRCX_Database.mode')` 读 mode(默认 `'sqlite'`),惰性导入 PgSQLAdapter。**实现演进**:落地为 `initAdapter(mode)` + `_engineSpec` 惰性注册表(`adapter/index.js`),引擎选择经 `adapter.engineType` 暴露 | 9.3 |
 | L6-10 `if (ENGINE === 'sqlite')` | 仅 sqlite 分支 | **扩展 else if**:mode === 'postgresql' → `new PgSQLAdapter()`,其他抛错 | 9.3 |
 | L20-34 `createAdapter(config)` | 仅支持 `sqlite://` scheme | **扩展**:`postgresql://` scheme → `new PgSQLAdapter(config)`,解析 URI 为 host/port/db/user/password | 9.3 |
 
@@ -181,11 +177,11 @@
 | L671-693 `executeUpdate` | `UPDATE ${table} SET ${buildSetClause} WHERE ${where}` + `flattenArgs`(含 `@col`) | **不改**:按 D1,`@col` 由 PgSQLAdapter._bind 在 executeNonQuery 内统一替换 | 9.12 |
 | L843-858 `executeWithParams` | `adapter.execute(callback, sql, args)` | **不改**:按 D1,`@key` 由 _bind 处理 | 9.12 |
 | L868-878 `buildSetClause` | 生成 `col = @col` | **不改**:按 D1 | 9.12 |
-| 迁移调度入口(需核实精确行号) | 顺序执行 .map | **新增跳过逻辑**:checkDatabaseCompatibility 返回 skip 时,`console.warn` 记录跳过并 continue,不执行该 .map | 9.12 |
+| 迁移调度入口（migrations/index.js） | 顺序执行 .map | **新增跳过逻辑**:checkDatabaseCompatibility 返回 skip 时,`console.warn` 记录跳过并 continue,不执行该 .map | 9.12 |
 
 #### 3.2.8 `src/services/database/adapter/SQLiteAdapter.js`
 
-**不改**。PgSQLAdapter 是独立新文件,不复用也不修改 SQLiteAdapter。`initUserSchema` 的 50 张表 DDL 作为 PgSQL DDL 生成的参照蓝本(见 §5.2)。
+**不改**。PgSQLAdapter 是独立新文件,不复用也不修改 SQLiteAdapter。`initUserSchema` 的 22 张表 DDL 作为 PgSQL DDL 生成的参照蓝本(见 §5.2)。
 
 #### 3.2.9 业务模块(18 个 `database/*.js` + `coordinators/feed.js` 等)
 
@@ -362,7 +358,7 @@ async initUserSchema(prefix):
   await this.executeNonQuery(
     `CREATE SCHEMA IF NOT EXISTS ${this._schemaPrefix(prefix)}`
   )
-  # 步骤 2:在 schema 下建 50 张用户表(PG DDL,见 §5.2)
+  # 步骤 2:在 schema 下建 22 张用户表(PG DDL,见 §5.2)
   await this.executeNonQuery(
     `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')} (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, created_at TEXT, user_id TEXT, ...)`
   )
@@ -384,7 +380,7 @@ async initGlobalSchema():
   await this.executeNonQuery(
     `CREATE TABLE IF NOT EXISTS public.gamelog_location (id BIGINT ..., UNIQUE(created_at, location))`
   )
-  # ... 其余 19 张全局表 + 索引(见 §5.3)
+  # ... 其余 18 张全局表 + 索引(见 §5.3)
 ```
 
 **与 SQLiteAdapter(L985-1049)差异**:
@@ -475,7 +471,7 @@ async listTablesTypes():
 
 **说明**:
 - `sqlEnterTime` 需返回 ISO 8601 字符串(与 SQLite strftime 格式对齐)。**已核实(2026-07-18)**:gameLog.js:1594 唯一生产调用,sqlEnterTime 返回值用于 `BETWEEN @utc_start_date AND @utc_end_date` 字符串字典序比较,边界值是 `dayjs.tz().toISOString()` 产出的严格 ISO `YYYY-MM-DDTHH:MM:SS.sssZ`,created_at 列是 TEXT 存 ISO 字符串。PG `::text` 默认格式 `YYYY-MM-DD HH:MM:SS+00`(空格分隔、+00 时区)与 SQLite strftime `YYYY-MM-DDTHH:MM:SSZ`(T 分隔、Z 后缀)字节不一致,会破坏 BETWEEN 字典序比较。**必须改用 `to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` 严格对齐**。R5 确认为真实风险,已在上表修订实现。
-- `sqlToUnixMs`:`EXTRACT(EPOCH FROM ...)` 返回 `numeric`,`* 1000` 后仍为 numeric,调用方若需整数需 `::bigint`。**需核实调用方是否依赖整数类型**(留待实现时核实,影响低:numeric 在 JS 层 JSON.parse 后即为 number)。
+- `sqlToUnixMs`:`EXTRACT(EPOCH FROM ...)` 返回 `numeric`,`* 1000` 后仍为 numeric,调用方经 JS `JSON.parse` 得到 number,无需强制 `::bigint`。
 
 #### 4.1.13 DDL 方法(createTable/createIndex/alterTableAddColumn 等)
 
@@ -508,14 +504,14 @@ async listTablesTypes():
 | `dropUserSchema(prefix)` | `(prefix: string) => Promise<number>` | `DROP SCHEMA IF EXISTS account_${prefix} CASCADE`,删用户时清理 | 9.11 | 同 | 仍为 PgSQL 特有扩展,不入基类 |
 | `isConnected()` | `() => Promise<boolean>` | `await C# PostgreSQL.Ping()`(SELECT 1)探活,不是只看初始化的 `IsConnected()`。async 是为兼容 Electron 的 `Promise<boolean>` 返回(CefSharp 下是同步 bool,await 是 no-op) | 9.14 | `() => boolean`(号称调 `PostgreSQL.IsConnected()`) | **v1.2 改 async + 调 Ping**。原签名描述错误(v1.1 曾写"调 IsConnected",但实际一直调 Ping;且把 boolean 同步返回错揭为不 await 化的同步类型,Electron 下 `Boolean(Promise)` 恒 true) |
 | `getHealth()` | `() => Promise<{ connected: boolean, latencyMs?: number, lastHealthCheck?: string \| null }>` | 调 C# `PostgreSQL.GetHealth()`(SELECT 1 + Stopwatch) | 9.14 | `() => Promise<object>` 返回 `{ connected, poolSize, latencyMs }` | **v1.2 字段订正**:C# 实际返回 `{ connected, latencyMs, lastHealthCheck }`,**无 `poolSize` 字段**(原 JSDoc 笔误,代码从未生成过该字段)。见 PgSQLAdapter.js:1142-1148 F-13.1 注释 |
-| `getPoolStats()` | `() => Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>` | C# `PostgreSQL.GetPoolStats()` 三态快照,纯内存计数器,不探网络 | 9.14(v1.2 新增) | — | **v1.2 新增**。三态语义:`active` = 正在执行 SQL、`pinnedIdle` = 事务持有但未执行 SQL、`availableCapacity` = `_maxPoolSize - _totalBorrowed`(可用容量 = 池空闲 + 未用配额)。原连接池监控 PR 起初用 `poolIdle`(公式 `_totalBorrowed - _pinned.Count`,实为"非 pinned 借出",误导),经 PR #13 review #3 改名为 `availableCapacity` + 公式改 `_maxPoolSize - _totalBorrowed`(commit `9429cca8`) |
+| `getPoolStats()` | `() => Promise<{ active: number, pinnedIdle: number, availableCapacity: number, max: number }>` | C# `PostgreSQL.GetPoolStats()` 三态快照,纯内存计数器,不探网络 | 9.14(v1.2 新增) | — | **v1.2 新增**。三态语义:`active` = 正在执行 SQL、`pinnedIdle` = 事务持有但未执行 SQL、`availableCapacity` = `_maxPoolSize - _totalBorrowed`(可用容量 = 池空闲 + 未用配额)。原连接池监控 PR 起初用 `poolIdle`(公式 `_totalBorrowed - _pinned.Count`,实为"非 pinned 借出",误导),经 PR #13 review #3 改名为 `availableCapacity` + 公式改 `_maxPoolSize - _totalBorrowed`(commit `9429cca8`)。**实现演进**:实际返回 6 字段(新增 `totalOpen`/`idleInPool` 反射真值,PgSQL 读 `PoolingDataSource.Statistics`,SQLite 用 peak-borrowed 近似),基类另增 `clearIdleConnections()` 抽象(StatusBar 池监控 Issue #14,见 ADAPTER_API.md §2) |
 
 **接口冻结说明(v1.2 修订)**:`dropUserSchema` 仍为 PgSQLAdapter 特有方法,不加入基类(只 PG 有 schema)。`isConnected()` / `getHealth()` / `getPoolStats()` **已提升入 EngineAdapter 基类抽象方法**(v1.1 原稿的"不入基类"决定撤销,见顶部 v1.2 更新条目 1)。三引擎必须实现这三个抽象方法,实现内部允许 `noopAsync` 走空值 fallback。调用方按引擎能力检测:
 ```
 if (typeof adapter.dropUserSchema === 'function') {
   await adapter.dropUserSchema(prefix);
 } else {
-  // SQLite 侧逐表 dropTable(需核实删除用户的调用点)
+  // SQLite 侧逐表 dropTable（删除用户调用点：11.3 附录⑤——无既有删除用户数据流程，dropTable 生产零调用）
 }
 ```
 **需进一步核实**:删除用户的调用点(accountSession.js 或用户管理 UI),以确定 dropUserSchema 的接入位置。SQLite 侧等价行为需同步设计(逐表 dropTable vs PgSQL drop schema)。
@@ -634,6 +630,7 @@ if (ENGINE === 'sqlite') {
 
 **现状**(migrations/index.js L210-212):`return 'sqlite'` 硬编码。
 **改造**:`return VRCXStorage.Get('VRCX_Database.mode') ?? 'sqlite';`
+**实现演进**:落地为读 `adapter.engineType`（`migrations/index.js:233-240`）——引擎检测与 `initAdapter(mode)` 实际构造的实例保持同步，不重复读配置。
 
 #### 4.5.2 checkDatabaseCompatibility 对非 sqlite 引擎跳过(D2)
 
@@ -659,7 +656,7 @@ function checkDatabaseCompatibility(database, engine):
   return { compatible: true, skip: false }
 ```
 
-**调用方**:迁移调度入口(需核实精确行号)在 checkDatabaseCompatibility 返回 `skip: true` 时,`console.warn('[迁移] 跳过 ${engine} 锁定的 .map: v${version}-${type}')` 并 continue,不执行。
+**调用方**:迁移调度入口（migrations/index.js）在 checkDatabaseCompatibility 返回 `skip: true` 时,`console.warn('[迁移] 跳过 ${engine} 锁定的 .map: v${version}-${type}')` 并 continue,不执行。
 
 #### 4.5.3 三个硬编码 SQL 逃生口(按 D1 不改运行器)
 
@@ -709,7 +706,7 @@ _mapColumnType(sqliteType):
 ```
 **实现注意**:需按"最长匹配优先"顺序替换(先匹配 AUTOINCREMENT 再匹配 PRIMARY KEY),避免 `INTEGER PRIMARY KEY` 被先替换为 `BIGINT ... PRIMARY KEY` 后又撞 AUTOINCREMENT。
 
-### 5.2 50 张用户表的 PG DDL 生成策略
+### 5.2 22 张用户表的 PG DDL 生成策略
 
 **策略**:PgSQLAdapter.initUserSchema **自带完整 PG DDL**(与 SQLiteAdapter L900-979 同构但类型映射后),不复用 SQLiteAdapter 的表定义元数据。
 
@@ -718,7 +715,7 @@ _mapColumnType(sqliteType):
 - 类型映射需逐表逐列处理,直接写 PG DDL 比抽元数据更清晰
 - EngineAdapter 接口未定义表元数据抽象,抽元数据需新增接口(破冻结)
 
-**生成方式**:手动把 SQLiteAdapter L900-979 的 50 张表 DDL 翻译为 PG 版本(类型按 §5.1 映射,表名用 `userTable(prefix, name)`,索引名去 prefix)。
+**生成方式**:手动把 SQLiteAdapter L900-979 的 22 张表 DDL 翻译为 PG 版本(类型按 §5.1 映射,表名用 `userTable(prefix, name)`,索引名去 prefix)。
 
 **DDL 模板示例**(feed_gps,对应 SQLiteAdapter L901-903):
 ```
@@ -736,10 +733,10 @@ CREATE INDEX IF NOT EXISTS feed_online_offline_user_created_idx
 ```
 索引名去 prefix(schema 内唯一),`ON account_{prefix}.table`。
 
-**50 张表清单**(据 SQLiteAdapter L900-979 核实,实际为 ~25 张表 + 若干索引,Brief 称 50 张含索引计数):
+**22 张表清单**(据 SQLiteAdapter 核实,22 张用户表 + 4 索引,已全部列出):
 feed_gps, feed_status, feed_bio, feed_avatar, feed_online_offline(+索引), activity_sync_state_v2, activity_sessions_v2(+2索引), activity_bucket_cache_v2, friend_log_current, friend_log_history(+索引), notifications, notifications_v2, moderation, avatar_history, notes, mutual_graph_friends, mutual_graph_links, mutual_graph_links_old, mutual_graph_friends_old, mutual_graph_meta, tracked_nonfriends, manual_relations_MANUEL
 
-### 5.3 20 张全局表的 PG DDL
+### 5.3 18 张全局表的 PG DDL
 
 **策略**:PgSQLAdapter.initGlobalSchema 自带 PG DDL,表放 `public` schema。
 
@@ -779,13 +776,13 @@ CREATE TABLE IF NOT EXISTS public.gamelog_location (
 
 **路径**:
 1. `PostgreSQL.Init()` 读配置建连接池(§4.2)
-2. `adapter.initGlobalSchema()` 建 public schema 下 20 张全局表(§4.1.8)
+2. `adapter.initGlobalSchema()` 建 public schema 下 18 张全局表(§4.1.8)
 3. `runMigrations(currentVersion=0, targetVersion=LATEST)`:
    - PgSQL 的 `currentVersion` 从 configs 表读 `VRCX_databaseVersion`(首次为 0)
    - 迁移运行器遍历 .map,`checkDatabaseCompatibility` 对 `database.after:"sqlite"` 的 .map 返回 skip(D2)
    - v16 schema.map/data.map 被跳过(都有 `database.after:"sqlite"`)
    - 其余非 sqlite 锁的 .map 执行(若有的话)
-4. 用户登录后 `adapter.initUserSchema(prefix)` 建 `account_{prefix}` schema + 50 张用户表(§4.1.7)
+4. 用户登录后 `adapter.initUserSchema(prefix)` 建 `account_{prefix}` schema + 22 张用户表(§4.1.7)
 5. `recordCheckpoint(LATEST)` 写 configs 表
 
 **v16 ALTER 对 PgSQL 的意义**:v16 是给 SQLite 历史库补 group_name 列等。PgSQL 的 initUserSchema PG DDL **已直接包含 group_name 列**(因 DDL 是最新版翻译),故 v16 ALTER 对 PgSQL 无意义,跳过正确。
@@ -832,7 +829,7 @@ CREATE TABLE IF NOT EXISTS public.gamelog_location (
    - 抽样校验:随机抽 K 行对比关键字段
    - 时间戳范围校验:`MIN(created_at)`/`MAX(created_at)` 一致
 
-6. **搬迁入口(已核实 2026-07-18)**:新增 `src/services/database/migrateEngine.js`,提供 `migrateSqliteToPgsql(srcConnStr, dstConfig)`。**UI 入口确定**:当前无任何引擎配置/切换/搬迁 UI,必须新建。入口放 **AdvancedTab.vue**(L177 现有"数据库"组后)新增"数据库引擎" `SettingsGroup`:引擎模式 `Select`(SQLite/PostgreSQL)+ PgSQL 连接字段(host/port/username/password/name)`Input` + "测试连接"`Button`(调 `adapter.isConnected()`/`getHealth()` 或 C# `Ping()`)+ "迁移数据并切换"`Button`(触发 `migrateEngine.migrateSqliteToPgsql`)。搬迁进度复用现有 `DatabaseUpgradeDialog.vue`(已有 `fromVersion = -1` "迁移中"状态)。**首次切引擎引导对话框建议留作后续,Phase 9 不做**。可参考 `vrcx.js:421-486 migrateFromOldDb` 的同引擎搬迁代码模式(枚举表 → bulkInsert ignore → 跑 fixes),但跨引擎需独立模块。
+6. **搬迁入口(已核实 2026-07-18)**:新增 `src/services/database/migrateEngine.js`,提供 `migrateSqliteToPgsql(srcConnStr, dstConfig)`。**实现落地**:通用 push/pull 引擎（`pushEngine.js`/`pullEngine.js`，18 全局 + 22 用户白名单 + mirror 兜底 + 分组事务 + 行数严格校验），AdvancedTab 落地为"迁移"（openPushDialog，含源 SQLite 文件选择）+"备份"按钮，DatabaseUpgradeDialog 复用点已实现。**UI 入口确定**:入口放 **AdvancedTab.vue**(L177 现有"数据库"组后)新增"数据库引擎" `SettingsGroup`:引擎模式 `Select`(SQLite/PostgreSQL)+ PgSQL 连接字段(host/port/username/password/name)`Input` + "测试连接"`Button`(调 `adapter.isConnected()`/`getHealth()` 或 C# `Ping()`)+ "迁移数据并切换"`Button`。搬迁进度复用现有 `DatabaseUpgradeDialog.vue`。可参考 `vrcx.js:421-486 migrateFromOldDb` 的同引擎搬迁代码模式,但跨引擎需独立模块。
 
 ### 6.3 v16 .map 跳过逻辑对运行器的影响
 
@@ -888,7 +885,7 @@ globalThis.PostgreSQL = new Proxy({}, { get: () => noopAsync });
 - 用 `createTestAdapter`(vitest.setup.js L97-104,SQLite 内存库)作为源
 - 用 PG 容器 adapter 作为目标
 - 执行 §6.2 搬迁流程,校验行数 + 抽样
-- **需新增**:`migrateEngine.test.js`,skip 若无 PG 容器(`describe.skipIf(!process.env.PG_TEST_HOST)`)
+- **需新增**:`migrateEngine.test.js`,skip 若无 PG 容器(`describe.skipIf(!process.env.PG_TEST_HOST)`)。**实现落地**:`pushEngine.test.js` / `pullEngine.test.js`（通用 push/pull 引擎，覆盖 18 全局 + 22 用户白名单 + mirror 兜底 + 分组事务 + 行数严格校验）
 
 ### 7.5 CI PostgreSQL setup(task 9.15,采纳 review 后修订)
 
@@ -1124,7 +1121,7 @@ CI 不依赖 docker-compose(改用 §7.5 的 `action-setup-postgres`),仓库内�
 #### 切片 S9 — task 9.13(数据搬迁管道 + UI 入口)
 - **任务**:9.13 SQLite → PgSQL 搬迁管道(§6.2)+ 搬迁 UI 入口(AdvancedTab 新增"数据库引擎"组)
 - **改动文件**:
-  - 新增 `src/services/database/migrateEngine.js`(提供 `migrateSqliteToPgsql`)
+  - 新增 `src/services/database/migrateEngine.js`(提供 `migrateSqliteToPgsql`)。**实现落地**:通用 `pushEngine.js`/`pullEngine.js`
   - 扩展 `src/views/Settings/components/Tabs/AdvancedTab.vue`(L177 后新增"数据库引擎" `SettingsGroup`:引擎模式 Select + PgSQL 连接字段 Input + 测试连接 Button + 迁移并切换 Button)
   - 复用 `src/components/dialogs/DatabaseUpgradeDialog.vue`(已有 `fromVersion = -1` "迁移中"状态展示搬迁进度)
   - 可能新增 `src/stores/settings/advanced.js` 的 `databaseEngine` 状态 + setter(写 `VRCX_Database.*`)
@@ -1188,7 +1185,7 @@ S12 (9.15) 最后,依赖全部集成测试就绪
 | **9.10** | ① 按 D5 不新建聚合视图,aggregatedView.js 未改(已核实无硬编码表名);② 集成测试:PgSQL 模式 aggregatedView 经 feed 接口查询多账号数据正确;③ 验证 feed.js 的 selectUnion 在 PgSQL schema 隔离下透明工作 |
 | **9.11** | ① `dropUserSchema('abc')` 执行 `DROP SCHEMA IF EXISTS account_abc CASCADE`;② 集成测试:建 schema 后 drop,pg_tables 查询返回空;③ **R14 待产品决策**:dropUserSchema 作为预留能力存在,暂不接入 UI 调用点(当前无既有"删除用户数据"流程,DB 数据永久保留是有意设计) |
 | **9.12** | ① `getDatabaseEngine()` 运行时读 mode(非硬编码);② `checkDatabaseCompatibility` 对非 sqlite + `database.after:'sqlite'` 返回 skip;③ 调度入口处理 skip(continue + warn);④ 集成测试:PgSQL 首次 runMigrations,v16 跳过(INV-04),checkpoint 记录 LATEST;⑤ **R13 已缓解:无需补加任何 .map 引擎锁(全仓 .map 锁已覆盖,空集 ∅)** |
-| **9.13** | ① 搬迁管道 `migrateSqliteToPgsql(srcConnStr, dstConfig)` 存在;② 集成测试:SQLite 内存库 20 全局表 + 50 用户表搬到 PG,行数一致 + 抽样校验 + 时间戳范围校验;③ 分批 bulkInsert 无 PG 参数超限;④ **R6 已缓解:activity_sessions_v2 用 GENERATED BY DEFAULT,搬迁管道直接 copyTableData 即可**;⑤ **UI 入口(已确定)**:AdvancedTab 新增"数据库引擎"组,含模式选择 + 连接字段 + 测试连接 + 迁移并切换按钮,进度复用 DatabaseUpgradeDialog |
+| **9.13** | ① 搬迁管道 `migrateSqliteToPgsql(srcConnStr, dstConfig)` 存在(**实现落地**:push/pull 引擎);② 集成测试:SQLite 内存库 18 全局表 + 22 用户表搬到 PG,行数一致 + 抽样校验 + 时间戳范围校验;③ 分批 bulkInsert 无 PG 参数超限;④ **R6 已缓解:activity_sessions_v2 用 GENERATED BY DEFAULT,搬迁管道直接 copyTableData 即可**;⑤ **UI 入口(已实现)**:AdvancedTab 新增"数据库引擎"组,含模式选择 + 连接字段 + 测试连接 + 迁移并切换按钮,进度复用 DatabaseUpgradeDialog |
 | **9.14** | ① `adapter.isConnected()` 返回 `Promise<boolean>`,调用方 `await`(v1.2 改 async —— Electron 桥返回 Promise,同步 `Boolean(Ping())` 恒 true);② `adapter.getHealth()` 返回 `{ connected, latencyMs, lastHealthCheck }`(**v1.2 字段订正**:原稿写成 `{connected, poolStats, latencyMs}`,但 `poolSize`/`poolStats` 字段从未在 C# `GetHealth` 中生成过);③ C# `Ping()` 执行 `SELECT 1` 探活;④ 集成测试:断开 PG 后 `await adapter.isConnected()===false` |
 | **9.15** | ① CI workflow 含 PG 16 + PG 17 matrix;② 使用 `ikalnytskyi/action-setup-postgres` action(无需 service container);③ CI 在 PG 16/17 上跑集成测试(S4/S5/S8/S9)全绿;④ `npm run test` 在 CI PG 环境通过 |
 | **9.16** | **降级**(PR #7 review 采纳):① `docker-compose.pgsql.yml` 已移除;② 开发者本地用 `docker run postgres:16` + `pg_isready` 验证可连接;③ CI 不依赖 docker-compose(改用 action) |

@@ -7,8 +7,8 @@ Import-Module (Join-Path $installPath "Common7\Tools\Microsoft.VisualStudio.DevS
 Enter-VsDevShell -VsInstallPath $installPath -SkipAutomaticLocation
 
 $Date = Get-Date -format yyyyMMdd
-$ZipName = "VRCX-Luo_" + $Date + ".zip"
-$SetupName = "VRCX-Luo_" + $Date + "_Setup.exe"
+$ZipName = "VRCX-K_" + $Date + ".zip"
+$SetupName = "VRCX-K_" + $Date + "_Setup.exe"
 
 Write-Host "Building .Net..." -ForegroundColor Green
 dotnet build Dotnet\VRCX-Cef.csproj -p:Configuration=Release -p:WarningLevel=0 -p:Platform=x64 -p:RestorePackagesConfig=true -t:"Restore;Clean;Build" -m --self-contained
@@ -38,7 +38,7 @@ cd "Installer"
 $nsisPath = "C:\Program Files (x86)\NSIS\makensis.exe"
 &$nsisPath /INPUTCHARSET UTF8 installer.nsi
 Start-Sleep -Seconds 1
-Move-Item VRCX-Luo_Setup.exe ..\$SetupName -Force
+Move-Item VRCX-K_Setup.exe ..\$SetupName -Force
 cd ..
 
 Write-Host "Creating SHA256-hash..." -ForegroundColor Green

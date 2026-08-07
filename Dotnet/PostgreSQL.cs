@@ -31,7 +31,7 @@ namespace VRCX
         /// 数据库变更通知(写漏斗):进程内任何写提交后触发,负载 JSON 字符串
         /// `{ conn, table, count, ts, dv }`(dv 读自服务端计数器,任意连接
         /// 视角一致,无需观察连接)。检测语义:事件只是失效提示,不是数据
-        /// 管道——漏事件由计数器兜底轮询补上。详见 docs/CHANGE_NOTIFICATION_API.md。
+        /// 管道——漏事件由计数器兜底轮询补上。详见 docs/architecture/ADAPTER_API.md §9。
         /// </summary>
         public event Action<string>? DatabaseChanged;
 
@@ -269,7 +269,7 @@ namespace VRCX
         // multiple Execute/ExecuteNonQuery calls so that BEGIN ... INSERT
         // ... COMMIT run on the SAME physical connection (otherwise the
         // Npgsql pool returns a fresh connection per call and the
-        // transaction silently no-ops — see docs/TRANSACTION_DESIGN.md).
+        // transaction silently no-ops — see docs/architecture/TRANSACTION_DESIGN.md).
         //
         // Sliding timeout: each use of a pinned connection resets the
         // timer (TX_IDLE_MS) so long-running transactions stay alive as
