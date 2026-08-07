@@ -39,8 +39,17 @@
          This mirrors the long-standing MySQL.cs L353 pattern (VRCX-Cef.csproj disables
          warnings entirely via WarningLevel=0; the linked test build needs the explicit
          suppression).
-         Task constraint forbids modifying stub content; suppressing here is the minimal fix. -->
-    <NoWarn>CS8618;CS8603;CS8601</NoWarn>
+         Task constraint forbids modifying stub content; suppressing here is the minimal fix.
+         CS8625/CS8600/CS8604/CS8605 (PR #17 回归测试接入 PostgreSQL.cs/MySQL.cs 后新增,
+         2026-08-07): 与上述同类的 nullable 静态分析告警, 来源为 Link'd 生产文件:
+         CS8625 — SQLite.cs L479 / MySQL.cs L339 / PostgreSQL.cs L693/856/882 向
+         string? 签名传 null 字面量 (生产构建 WarningLevel=0 不报, 测试构建需显式抑制)
+         CS8604 — PostgreSQL.cs L440/443/447 Init() 中 VRCXStorage.Instance.Get()?.Trim()
+         → ValidateField/ValidatePort 形参可空 (Init 不被测试调用, 静态告警仅编译期)
+         CS8605 — PostgreSQL.cs L702 反射/强制类型转换路径上解箱可能为 null
+         CS8600 — 三引擎 Execute 路径中 arg.Value/GetValue 转非空类型 (测试不触达该路径)
+         均不改生产代码, 按既有 NoWarn 政策扩展. -->
+    <NoWarn>CS8618;CS8603;CS8601;CS8625;CS8604;CS8605;CS8600</NoWarn>
     <!-- 不设 EnableWindowsTargeting，TFM 无 -windows 后缀，可在 Linux CI 跑 -->
   </PropertyGroup>
 
@@ -54,6 +63,12 @@
          v2.0.3 targets netstandard2.0 (No dependencies), pure managed, cross-platform.
          Security tests don't call Init(), so native SQLite runtime is NOT required at test time. -->
     <PackageReference Include="System.Data.SQLite" Version="2.0.3" />
+    <!-- Npgsql 10.0.3 + MySqlConnector 2.6.1 (与生产 pin 一致, 见 VRCX-Cef.csproj L105/114):
+         Link'd PostgreSQL.cs / MySQL.cs 引用 NpgsqlDataSource / MySqlConnection 等类型。
+         PR #17 回归测试只触达 NormalizeConnId (静态纯函数) 与 Execute* 的
+         connId 归一化早抛点, 不建立真实连接, 故不触发 native 运行时。 -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="MySqlConnector" Version="2.6.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -67,6 +82,12 @@
          Linked into VRCX.Tests.dll so the test compile resolves the type without
          pulling in MySQL.cs / PostgreSQL.cs / WebApi.cs (pure interface, no deps). -->
     <Compile Include="..\IAuthStore.cs" Link="IAuthStore.cs" />
+    <!-- PostgreSQL.cs / MySQL.cs Link 进来 (PR #17 回归测试, 同 assembly internal
+         直接可见). 两文件自包含: 仅依赖 BCL + Npgsql/MySqlConnector + IAuthStore +
+         VRCXStorage (Stubs\ 隐式编译). 桥接测试只反射触达 Execute* 的 connId 归一化
+         早抛点, 不调 Init()/SetChangeEnabled, 不触碰 .Instance 静态。 -->
+    <Compile Include="..\PostgreSQL.cs" Link="PostgreSQL.cs" />
+    <Compile Include="..\MySQL.cs" Link="MySQL.cs" />
   </ItemGroup>
 
 </Project>
