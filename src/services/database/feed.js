@@ -47,6 +47,11 @@ function notifyFeedExternalWrite() {
  * "除 created_at/time 外完全一致"的行。命中（说明该事件已写入，通常是
  * 另一客户端）→ 发"外部写"信号并返回 true。
  *
+ * MySQL/MariaDB 下在事务栈(withTransaction)内用加锁读 `FOR UPDATE`：
+ * 对同一 user_id 的间隙加锁 → 两个客户端对同一事件的"查+插"串行化，
+ * 后到者等先到者提交后能查到其行而跳过 → 竞态安全(需 user_id 索引支撑)。
+ * SQLite 文件锁天然串行写、且不支持 FOR UPDATE，故走普通查询。
+ *
  * @param {string} table 物理表名（含账号前缀）
  * @param {object} data 即将写入的列值映射
  * @returns {Promise<boolean>} true=窗口内已有相同内容，应跳过本次写入
@@ -63,10 +68,26 @@ async function hasRecentDuplicate(table, data) {
         params[key] = value;
     }
     if (where.length === 0) return false;
+    const cond = `${where.join(' AND ')} AND created_at >= @__cutoff`;
+    if (adapter.engineType === 'mysql') {
+        let found = false;
+        await adapter.execute(
+            (row) => {
+                found = true;
+            },
+            `SELECT id FROM ${table} WHERE ${cond} ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+            params
+        );
+        if (found) {
+            notifyFeedExternalWrite();
+            return true;
+        }
+        return false;
+    }
     const rows = await adapter.selectWhere(
         table,
         ['id'],
-        `${where.join(' AND ')} AND created_at >= @__cutoff`,
+        cond,
         params,
         { order: 'id DESC', limit: 1 }
     );
@@ -292,8 +313,10 @@ const feed = {
             group_name: entry.groupName
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addGPSToDatabase failed', err);
         }
@@ -311,8 +334,10 @@ const feed = {
             previous_status_description: entry.previousStatusDescription
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addStatusToDatabase failed', err);
         }
@@ -328,8 +353,10 @@ const feed = {
             previous_bio: entry.previousBio
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addBioToDatabase failed', err);
         }
@@ -435,8 +462,10 @@ const feed = {
                 entry.previousCurrentAvatarThumbnailImageUrl
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addAvatarToDatabase failed', err);
         }
@@ -477,8 +506,10 @@ const feed = {
             group_name: entry.groupName
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addOnlineOfflineToDatabase failed', err);
         }

@@ -949,6 +949,29 @@ class MySQLAdapter extends EngineAdapter {
             this.userTable(prefix, 'feed_online_offline'),
             ['user_id', 'created_at']
         );
+        // 多客户端共库竞态修复:写入预检用 SELECT ... FOR UPDATE 需 user_id 索引
+        // 支撑间隙锁;与 feed_online_offline 的 idx_user_created / friend_log_history
+        // 的 idx_user_id 对齐(普通非唯一索引,不改数据语义)。
+        await this.createIndex(
+            'idx_user_id',
+            this.userTable(prefix, 'feed_gps'),
+            ['user_id']
+        );
+        await this.createIndex(
+            'idx_user_id',
+            this.userTable(prefix, 'feed_status'),
+            ['user_id']
+        );
+        await this.createIndex(
+            'idx_user_id',
+            this.userTable(prefix, 'feed_bio'),
+            ['user_id']
+        );
+        await this.createIndex(
+            'idx_user_id',
+            this.userTable(prefix, 'feed_avatar'),
+            ['user_id']
+        );
         await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id VARCHAR(255) PRIMARY KEY, updated_at VARCHAR(255) NOT NULL DEFAULT '', is_self INT NOT NULL DEFAULT 0, source_last_created_at VARCHAR(255) NOT NULL DEFAULT '', pending_session_start_at INT, cached_range_days INT NOT NULL DEFAULT 0)`
         );

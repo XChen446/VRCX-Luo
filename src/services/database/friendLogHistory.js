@@ -47,8 +47,10 @@ const friendLogHistory = {
             friend_number: entry.friendNumber
         };
         try {
-            if (await hasRecentDuplicate(table, data)) return;
-            await adapter.insert(table, data, 'ignore');
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
         } catch (err) {
             console.error('[feed] addFriendLogHistory failed', err);
         }
