@@ -232,11 +232,17 @@ namespace VRCX
         public static bool WriteVRCXMetadata(string text, string path)
         {
             var pngFile = new PNGFile(path, true);
-            var chunk = PNGHelper.GenerateTextChunk("Description", text);
-            var status = pngFile.WriteChunk(chunk);
-            pngFile.Dispose();
+            try
+            {
+                var chunk = PNGHelper.GenerateTextChunk("Description", text);
+                var status = pngFile.WriteChunk(chunk);
 
-            return status;
+                return status;
+            }
+            finally
+            {
+                pngFile.Dispose();
+            }
         }
 
         public static ScreenshotMetadata ParseVRCImage(string xmlString)
