@@ -230,7 +230,7 @@
         const displayName = row?.displayName ?? '';
         const location = row?.location ?? '';
 
-        return `${type}:${createdAt}:${userId}:${displayName}:${location}:${Date.now()}`;
+        return `${type}:${createdAt}:${userId}:${displayName}:${location}`;
     }
 
     const { table, pagination } = useVrcxVueTable({
