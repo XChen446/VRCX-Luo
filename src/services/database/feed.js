@@ -3,6 +3,81 @@ import { dbVars } from '../database';
 import { adapter } from './adapter/index.js';
 
 /**
+ * 跨客户端双写去重窗口(ms)。
+ *
+ * 两个 VRCX 客户端连同一数据库时，各自轮询到同一 feed 事件会分别写一行，
+ * 且 created_at = 客户端本地检测时间(nowIso())，两行差几十秒（实测集中在
+ * 30~120s）。因此写前用"内容全等 + created_at 落在本窗口"判定是否为同一事件，
+ * 命中则跳过本次写入。窗口需覆盖主要轮询偏差；不宜过大(如 300s)，否则会误
+ * 合并一个人在几个房间/世界间快速来回切换的合法事件。
+ */
+const FEED_DEDUP_WINDOW_MS = 120000;
+
+/**
+ * 跨客户端"外部写"信号：本客户端写入前预检发现窗口内已有相同内容
+ * （判定为另一客户端已写入该事件）时触发，供 feed store 刷新数据，
+ * 让另一客户端写入的内容显示在本客户端——无需轮询，写入即触发。
+ */
+const feedExternalWriteHandlers = new Set();
+
+/**
+ * 订阅"外部写"信号。返回退订函数。
+ * @param {() => void} handler
+ * @returns {() => void}
+ */
+export function onFeedExternalWrite(handler) {
+    feedExternalWriteHandlers.add(handler);
+    return () => {
+        feedExternalWriteHandlers.delete(handler);
+    };
+}
+
+function notifyFeedExternalWrite() {
+    for (const handler of [...feedExternalWriteHandlers]) {
+        try {
+            handler();
+        } catch (err) {
+            console.error('[feed] external-write handler error', err);
+        }
+    }
+}
+
+/**
+ * 写 feed 前预检：目标表最近 FEED_DEDUP_WINDOW_MS 内是否已存在
+ * "除 created_at/time 外完全一致"的行。命中（说明该事件已写入，通常是
+ * 另一客户端）→ 发"外部写"信号并返回 true。
+ *
+ * @param {string} table 物理表名（含账号前缀）
+ * @param {object} data 即将写入的列值映射
+ * @returns {Promise<boolean>} true=窗口内已有相同内容，应跳过本次写入
+ */
+async function hasRecentDuplicate(table, data) {
+    const cutoff = new Date(Date.now() - FEED_DEDUP_WINDOW_MS).toJSON();
+    const where = [];
+    const params = { __cutoff: cutoff };
+    for (const [key, value] of Object.entries(data)) {
+        if (key === 'created_at' || key === 'time' || value === undefined) {
+            continue;
+        }
+        where.push(`${key} = @${key}`);
+        params[key] = value;
+    }
+    if (where.length === 0) return false;
+    const rows = await adapter.selectWhere(
+        table,
+        ['id'],
+        `${where.join(' AND ')} AND created_at >= @__cutoff`,
+        params,
+        { order: 'id DESC', limit: 1 }
+    );
+    if (rows.length > 0) {
+        notifyFeedExternalWrite();
+        return true;
+    }
+    return false;
+}
+
+/**
  * 22-column schema shared by all feed UNION ALL queries.
  * Each source realises different positions and NULL-pads the rest.
  */
@@ -204,51 +279,60 @@ function mapFeedRow(dbRow) {
 }
 
 const feed = {
-    addGPSToDatabase(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'feed_gps')}`,
-            {
-                created_at: entry.created_at,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                location: entry.location,
-                world_name: entry.worldName,
-                previous_location: entry.previousLocation,
-                time: entry.time,
-                group_name: entry.groupName
-            },
-            'ignore'
-        );
+    async addGPSToDatabase(entry) {
+        const table = adapter.userTable(dbVars.userPrefix, 'feed_gps');
+        const data = {
+            created_at: entry.created_at,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            location: entry.location,
+            world_name: entry.worldName,
+            previous_location: entry.previousLocation,
+            time: entry.time,
+            group_name: entry.groupName
+        };
+        try {
+            if (await hasRecentDuplicate(table, data)) return;
+            await adapter.insert(table, data, 'ignore');
+        } catch (err) {
+            console.error('[feed] addGPSToDatabase failed', err);
+        }
     },
 
-    addStatusToDatabase(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'feed_status')}`,
-            {
-                created_at: entry.created_at,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                status: entry.status,
-                status_description: entry.statusDescription,
-                previous_status: entry.previousStatus,
-                previous_status_description: entry.previousStatusDescription
-            },
-            'ignore'
-        );
+    async addStatusToDatabase(entry) {
+        const table = adapter.userTable(dbVars.userPrefix, 'feed_status');
+        const data = {
+            created_at: entry.created_at,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            status: entry.status,
+            status_description: entry.statusDescription,
+            previous_status: entry.previousStatus,
+            previous_status_description: entry.previousStatusDescription
+        };
+        try {
+            if (await hasRecentDuplicate(table, data)) return;
+            await adapter.insert(table, data, 'ignore');
+        } catch (err) {
+            console.error('[feed] addStatusToDatabase failed', err);
+        }
     },
 
-    addBioToDatabase(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'feed_bio')}`,
-            {
-                created_at: entry.created_at,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                bio: entry.bio,
-                previous_bio: entry.previousBio
-            },
-            'ignore'
-        );
+    async addBioToDatabase(entry) {
+        const table = adapter.userTable(dbVars.userPrefix, 'feed_bio');
+        const data = {
+            created_at: entry.created_at,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            bio: entry.bio,
+            previous_bio: entry.previousBio
+        };
+        try {
+            if (await hasRecentDuplicate(table, data)) return;
+            await adapter.insert(table, data, 'ignore');
+        } catch (err) {
+            console.error('[feed] addBioToDatabase failed', err);
+        }
     },
 
     async getLastBioChangeForUser(userId) {
@@ -334,25 +418,28 @@ const feed = {
         }));
     },
 
-    addAvatarToDatabase(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'feed_avatar')}`,
-            {
-                created_at: entry.created_at,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                owner_id: entry.ownerId,
-                avatar_name: entry.avatarName,
-                current_avatar_image_url: entry.currentAvatarImageUrl,
-                current_avatar_thumbnail_image_url:
-                    entry.currentAvatarThumbnailImageUrl,
-                previous_current_avatar_image_url:
-                    entry.previousCurrentAvatarImageUrl,
-                previous_current_avatar_thumbnail_image_url:
-                    entry.previousCurrentAvatarThumbnailImageUrl
-            },
-            'ignore'
-        );
+    async addAvatarToDatabase(entry) {
+        const table = adapter.userTable(dbVars.userPrefix, 'feed_avatar');
+        const data = {
+            created_at: entry.created_at,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            owner_id: entry.ownerId,
+            avatar_name: entry.avatarName,
+            current_avatar_image_url: entry.currentAvatarImageUrl,
+            current_avatar_thumbnail_image_url:
+                entry.currentAvatarThumbnailImageUrl,
+            previous_current_avatar_image_url:
+                entry.previousCurrentAvatarImageUrl,
+            previous_current_avatar_thumbnail_image_url:
+                entry.previousCurrentAvatarThumbnailImageUrl
+        };
+        try {
+            if (await hasRecentDuplicate(table, data)) return;
+            await adapter.insert(table, data, 'ignore');
+        } catch (err) {
+            console.error('[feed] addAvatarToDatabase failed', err);
+        }
     },
 
     /**
@@ -374,24 +461,27 @@ const feed = {
         }
     },
 
-    addOnlineOfflineToDatabase(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'feed_online_offline')}`,
-            {
-                created_at: entry.created_at,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                type: entry.type,
-                location: entry.location,
-                world_name: entry.worldName,
-                // Online 事件无时长，调用方传空串；PG BIGINT 列拒绝 text
-                // 空串（42804），SQLite/MySQL 因动态类型/宽松转换容忍。
-                // 统一归一化为 NULL —— 三引擎均接受，语义也更准确。
-                time: entry.time === '' ? null : entry.time,
-                group_name: entry.groupName
-            },
-            'ignore'
-        );
+    async addOnlineOfflineToDatabase(entry) {
+        const table = adapter.userTable(dbVars.userPrefix, 'feed_online_offline');
+        const data = {
+            created_at: entry.created_at,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            type: entry.type,
+            location: entry.location,
+            world_name: entry.worldName,
+            // Online 事件无时长，调用方传空串；PG BIGINT 列拒绝 text
+            // 空串（42804），SQLite/MySQL 因动态类型/宽松转换容忍。
+            // 统一归一化为 NULL —— 三引擎均接受，语义也更准确。
+            time: entry.time === '' ? null : entry.time,
+            group_name: entry.groupName
+        };
+        try {
+            if (await hasRecentDuplicate(table, data)) return;
+            await adapter.insert(table, data, 'ignore');
+        } catch (err) {
+            console.error('[feed] addOnlineOfflineToDatabase failed', err);
+        }
     },
 
     /**
@@ -889,4 +979,4 @@ const feed = {
     }
 };
 
-export { feed };
+export { feed, hasRecentDuplicate };

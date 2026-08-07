@@ -2,6 +2,7 @@ import { ref, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 
 import { database } from '../services/database';
+import { onFeedExternalWrite } from '../services/database/feed.js';
 import { useFriendStore } from './friend';
 import { useVrcxStore } from './vrcx';
 import { watchState } from '../services/watchState';
@@ -26,10 +27,43 @@ export const useFeedStore = defineStore('Feed', () => {
         pageSizeLinked: true
     });
 
+    // ── 跨客户端同步 ──────────────────────────────────────────────────
+    // 两个客户端连同一数据库时，另一客户端的写入不会触发本进程事件。但本客户端
+    // 写入前预检(hasRecentDuplicate)发现窗口内已有相同内容（另一客户端已写入）
+    // 时，feed.js 会发出"外部写"信号 → 这里静默重查，让另一客户端写入的内容
+    // 显示在本客户端。无需轮询，写入即触发。
+    let feedExternalWriteUnsub = null;
+    let feedReloadScheduled = false;
+
+    function scheduleFeedReload() {
+        if (feedReloadScheduled) return;
+        feedReloadScheduled = true;
+        setTimeout(() => {
+            feedReloadScheduled = false;
+            feedTableLookup({ silent: true });
+        }, 1000);
+    }
+
+    function subscribeFeedSync() {
+        if (feedExternalWriteUnsub) {
+            feedExternalWriteUnsub();
+            feedExternalWriteUnsub = null;
+        }
+        if (!watchState.isLoggedIn) return;
+        try {
+            feedExternalWriteUnsub = onFeedExternalWrite(() =>
+                scheduleFeedReload()
+            );
+        } catch (err) {
+            console.error('[feed] onFeedExternalWrite subscribe failed', err);
+        }
+    }
+
     watch(
         () => watchState.isLoggedIn,
         (isLoggedIn) => {
             feedTableData.value = [];
+            subscribeFeedSync();
             if (isLoggedIn) {
                 initFeedTable();
             }
@@ -140,7 +174,8 @@ export const useFeedStore = defineStore('Feed', () => {
         return true;
     }
 
-    async function feedTableLookup() {
+    async function feedTableLookup(options = {}) {
+        const { silent = false } = options;
         await configRepository.setString(
             'VRCX_feedTableFilters',
             JSON.stringify(feedTable.value.filter)
@@ -149,7 +184,7 @@ export const useFeedStore = defineStore('Feed', () => {
             'VRCX_feedTableVIPFilter',
             feedTable.value.vip
         );
-        feedTable.value.loading = true;
+        if (!silent) feedTable.value.loading = true;
         try {
             let vipList = [];
             if (feedTable.value.vip) {
@@ -185,7 +220,7 @@ export const useFeedStore = defineStore('Feed', () => {
             feedTableData.value = [];
             feedTableData.value = [...feedTableData.value, ...rows];
         } finally {
-            feedTable.value.loading = false;
+            if (!silent) feedTable.value.loading = false;
         }
     }
 
