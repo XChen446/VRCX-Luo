@@ -606,8 +606,8 @@ declare global {
         Execute: (sql: string, args: any, connId?: number) => Promise<any[]>;
         ExecuteJson: (...args: any[]) => Promise<string>;
         ExecuteNonQuery: (...args: any[]) => Promise<number>;
-        ExecuteJsonOnConnection: (connectionString: string, sql: string, args?: any) => Promise<string>;
-        ExecuteNonQueryOnConnection: (connectionString: string, sql: string, args?: any) => Promise<number>;
+        ExecuteJsonOnConnection: (connectionString: string, sql: string, args?: any, connId?: number) => Promise<string>;
+        ExecuteNonQueryOnConnection: (connectionString: string, sql: string, args?: any, connId?: number) => Promise<number>;
         BeginTransaction: () => number;
         /**
          * Begin a transaction on an external database file (specified by

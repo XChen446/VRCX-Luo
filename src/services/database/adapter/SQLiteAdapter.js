@@ -967,6 +967,18 @@ class SQLiteAdapter extends EngineAdapter {
             `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_online_offline')}_user_created_idx ON ${this.userTable(prefix, 'feed_online_offline')} (user_id, created_at)`
         );
         await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_gps')}_user_id_idx ON ${this.userTable(prefix, 'feed_gps')} (user_id)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_status')}_user_id_idx ON ${this.userTable(prefix, 'feed_status')} (user_id)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_bio')}_user_id_idx ON ${this.userTable(prefix, 'feed_bio')} (user_id)`
+        );
+        await this.executeNonQuery(
+            `CREATE INDEX IF NOT EXISTS ${this.userTable(prefix, 'feed_avatar')}_user_id_idx ON ${this.userTable(prefix, 'feed_avatar')} (user_id)`
+        );
+        await this.executeNonQuery(
             `CREATE TABLE IF NOT EXISTS ${this.userTable(prefix, 'activity_sync_state_v2')} (user_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL DEFAULT '', is_self INTEGER NOT NULL DEFAULT 0, source_last_created_at TEXT NOT NULL DEFAULT '', pending_session_start_at INTEGER, cached_range_days INTEGER NOT NULL DEFAULT 0)`
         );
         await this.executeNonQuery(

@@ -2,6 +2,8 @@ import { dbVars } from '../database';
 
 import { adapter } from './adapter/index.js';
 
+import { hasRecentDuplicate } from './feed.js';
+
 const friendLogHistory = {
     async getFriendLogHistory() {
         const rows = await adapter.select(
@@ -29,21 +31,29 @@ const friendLogHistory = {
             .reverse();
     },
 
-    addFriendLogHistory(entry) {
-        adapter.insert(
-            `${adapter.userTable(dbVars.userPrefix, 'friend_log_history')}`,
-            {
-                created_at: entry.created_at,
-                type: entry.type,
-                user_id: entry.userId,
-                display_name: entry.displayName,
-                previous_display_name: entry.previousDisplayName,
-                trust_level: entry.trustLevel,
-                previous_trust_level: entry.previousTrustLevel,
-                friend_number: entry.friendNumber
-            },
-            'ignore'
+    async addFriendLogHistory(entry) {
+        const table = adapter.userTable(
+            dbVars.userPrefix,
+            'friend_log_history'
         );
+        const data = {
+            created_at: entry.created_at,
+            type: entry.type,
+            user_id: entry.userId,
+            display_name: entry.displayName,
+            previous_display_name: entry.previousDisplayName,
+            trust_level: entry.trustLevel,
+            previous_trust_level: entry.previousTrustLevel,
+            friend_number: entry.friendNumber
+        };
+        try {
+            await adapter.withTransaction(async () => {
+                if (await hasRecentDuplicate(table, data)) return;
+                await adapter.insert(table, data, 'ignore');
+            });
+        } catch (err) {
+            console.error('[feed] addFriendLogHistory failed', err);
+        }
     },
 
     // @deprecated Currently unused — kept for future batch-insert callers
