@@ -13,11 +13,17 @@
  * 全程 OnConnection 路径(ExecuteJsonOnConnection / BeginTransactionOnConnection
  * 带连接串),绕开 C# Init()/IsConnected 的 VRCXStorage 依赖。
  *
- * args 序列化:node-api-dotnet 把 C# `IDictionary<string, object>` 参数投影为
- * `Map<string, unknown>`,直接传普通 JS 对象会抛 "JSValue cannot be casted to
- * target type JSMap"(探针实证)。loadBridge() 用 Proxy 包裹桥实例,把所有
- * 普通对象参数转为 Map(与生产 LINUX 分支 `new Map(Object.entries(args))`
- * 同款转换),保证 adapter 的命名参数路径真实执行。
+ * args 序列化(node-api-dotnet marshal 规则,探针实证):
+ * - C# `IDictionary<string, object>` 参数投影为 `Map<string, unknown>`,直接传
+ *   普通 JS 对象会抛 "JSValue cannot be casted to target type JSMap"。普通对象
+ *   参数必须转 Map(与生产 LINUX 分支 `new Map(Object.entries(args))` 同款转换)。
+ * - JS 数组 → C# `object` 参数会 marshal 失败(NormalizeArgs 收不到 object[]/
+ *   IList,表现为 Npgsql "bind message supplies 0 parameters")。数组参数必须
+ *   显式转为托管 `object[]`(Type.GetType('System.Object') + Array.CreateInstance
+ *   + 索引器赋值,探针实证可行)。
+ * - JS number → C# object 参数正常(connId 透传即可,无需包装)。
+ * loadBridge() 用 Proxy 包裹桥实例:MySQL(命名参数对象)走 Map 转换,
+ * PgSQL(位置参数数组)走托管数组转换,保证 adapter 的真实参数路径可执行。
  */
 
 import { existsSync } from 'node:fs';
@@ -49,19 +55,60 @@ function toMapArgs(args) {
 }
 
 /**
- * 桥实例代理:方法调用的每个参数先过 toMapArgs(普通对象 → Map)。
- * 桥方法参数均为 string/number/null/object[]/IDictionary,普通对象只会出现在
- * args 位,转换无损且与生产 LINUX 分支同款。
+ * 惰性获取 System.Object 的 Type(进程内缓存)。
+ * @param {object} dotnet - node-api-dotnet 根对象
+ * @returns {() => object} 返回 Type 的工厂函数
+ */
+function makeObjectTypeGetter(dotnet) {
+    /** @type {object|null} */
+    let objectType = null;
+    return () => {
+        if (!objectType) {
+            objectType = dotnet.System.Type.GetType('System.Object');
+        }
+        return objectType;
+    };
+}
+
+/**
+ * 把 JS 数组转为托管 object[](索引器赋值,探针实证)。
+ * C# `NormalizeArgs` 只认 object[]/IList;node-api-dotnet 对 JS 数组 →
+ * object 参数 marshal 失败(变 null,Npgsql 报 "bind message supplies 0
+ * parameters"),必须显式构造托管数组。
+ * @param {*} args
+ * @param {object} dotnet - node-api-dotnet 根对象
+ * @param {() => object} getObjectType - System.Object Type 工厂
+ * @returns {*}
+ */
+function toBridgeArgs(args, dotnet, getObjectType) {
+    if (Array.isArray(args)) {
+        const arr = dotnet.System.Array.CreateInstance(
+            getObjectType(),
+            args.length
+        );
+        for (let i = 0; i < args.length; i++) {
+            arr[i] = args[i];
+        }
+        return arr;
+    }
+    return toMapArgs(args);
+}
+
+/**
+ * 桥实例代理:方法调用的每个参数先过 convert。
+ * MySQL(命名参数对象):toMapArgs(普通对象 → Map)。
+ * PgSQL(位置参数数组):toBridgeArgs(数组 → 托管 object[],对象 → Map)。
+ * 桥方法参数均为 string/number/null/object[]/IDictionary,转换无损。
  * @param {object} instance
+ * @param {(arg: *) => *} convert - 参数转换函数
  * @returns {object}
  */
-function wrapBridge(instance) {
+function wrapBridge(instance, convert) {
     return new Proxy(instance, {
         get(target, prop, receiver) {
             const value = Reflect.get(target, prop, receiver);
             if (typeof value !== 'function') return value;
-            return (...callArgs) =>
-                value.apply(target, callArgs.map(toMapArgs));
+            return (...callArgs) => value.apply(target, callArgs.map(convert));
         }
     });
 }
@@ -122,8 +169,11 @@ export function loadBridge() {
     }
     const dotnet = requireFromHelper('node-api-dotnet/net9.0');
     dotnet.load(dllPath);
-    const mysql = wrapBridge(new dotnet.VRCX.MySQL());
-    const pg = wrapBridge(new dotnet.VRCX.PostgreSQL());
+    const getObjectType = makeObjectTypeGetter(dotnet);
+    const mysql = wrapBridge(new dotnet.VRCX.MySQL(), toMapArgs);
+    const pg = wrapBridge(new dotnet.VRCX.PostgreSQL(), (arg) =>
+        toBridgeArgs(arg, dotnet, getObjectType)
+    );
     globalThis.MySQL = mysql;
     globalThis.PostgreSQL = pg;
     cachedBridge = { dotnet, mysql, pg, dllPath };
