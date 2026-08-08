@@ -457,7 +457,7 @@ namespace VRCX
 
             var connectionString =
                 $"Host={host};Port={port};Username={username};Password={password};Database={name}"
-                + ";Maximum Pool Size=100"      // 与 MySQL MaximumPoolSize=100 对称
+                + ";Maximum Pool Size=16"
                 + ";Minimum Pool Size=1"        // 预热保活 1 条连接:池在空闲剪枝时不剪到
                                                // 低于 1,确保挂机数小时后下一次查询不必
                                                // 重建 TCP+认证(异地 PG 可达 200ms+)。
@@ -471,7 +471,7 @@ namespace VRCX
 
             var builder = new NpgsqlDataSourceBuilder(connectionString);
             _dataSource = builder.Build();
-            _maxPoolSize = 100; // 连接字符串硬编码 Maximum Pool Size=100
+            _maxPoolSize = 16; // 连接字符串硬编码 Maximum Pool Size=16
             _initialized = true;
         }
 
