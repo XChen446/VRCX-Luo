@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PgSQLAdapter } from './PgSQLAdapter.js';
-import { loadBridge, buildPgConnectionString } from './__tests__/bridgeLoader.js';
+import {
+    loadBridge,
+    buildPgConnectionString
+} from './__tests__/bridgeLoader.js';
 
 /**
  * Phase 9 slice S12 (task 9.15) 续 — C# 桥路径消费方升级。
@@ -48,10 +51,13 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
     /** @type {PgSQLAdapter} */
     let adapter;
     /** @type {*} 保存 vitest.setup.js 的 noopAsync stub 原值,afterAll 恢复 */
-    let savedBridge;
+    let savedPostgreSQLBridge;
+    /** @type {*} loadBridge() 同时注入 globalThis.MySQL,对称保存/恢复 */
+    let savedMySQLBridge;
 
     beforeAll(async () => {
-        savedBridge = globalThis.PostgreSQL;
+        savedPostgreSQLBridge = globalThis.PostgreSQL;
+        savedMySQLBridge = globalThis.MySQL;
         loadBridge(); // 幂等单例,注入 globalThis.MySQL / globalThis.PostgreSQL
         adapter = new PgSQLAdapter({
             connection: buildPgConnectionString()
@@ -59,7 +65,8 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
     }, 30000);
 
     afterAll(() => {
-        globalThis.PostgreSQL = savedBridge;
+        globalThis.PostgreSQL = savedPostgreSQLBridge;
+        globalThis.MySQL = savedMySQLBridge;
     });
 
     // ── 套件 A:桥加载与连接 ──────────────────────────────────────────
@@ -92,9 +99,21 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
     describe('B seed 数据消费(只读)', () => {
         it('B1 关键表行数与 CI Verify 对齐', async () => {
             const counts = {
-                cache_avatar: await adapter.countWhere('public.cache_avatar', null, null),
-                gamelog_location: await adapter.countWhere('public.gamelog_location', null, null),
-                gamelog_join_leave: await adapter.countWhere('public.gamelog_join_leave', null, null),
+                cache_avatar: await adapter.countWhere(
+                    'public.cache_avatar',
+                    null,
+                    null
+                ),
+                gamelog_location: await adapter.countWhere(
+                    'public.gamelog_location',
+                    null,
+                    null
+                ),
+                gamelog_join_leave: await adapter.countWhere(
+                    'public.gamelog_join_leave',
+                    null,
+                    null
+                ),
                 abc_notes: await adapter.countWhere(
                     adapter.userTable('abc', 'notes'),
                     null,
@@ -128,16 +147,24 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
         });
 
         it('B2 命名参数 WHERE 绑定往返', async () => {
-            const rows = await adapter.select('public.gamelog_join_leave', ['display_name'], {
-                user_id: 'usr_alice'
-            });
+            const rows = await adapter.select(
+                'public.gamelog_join_leave',
+                ['display_name'],
+                {
+                    user_id: 'usr_alice'
+                }
+            );
             expect(rows).toEqual([['Alice']]);
         });
 
         it('B3 代表性行内容:usr_alice(memos + abc_notes)', async () => {
-            const memo = await adapter.selectOne('public.memos', ['user_id', 'memo'], {
-                user_id: 'usr_alice'
-            });
+            const memo = await adapter.selectOne(
+                'public.memos',
+                ['user_id', 'memo'],
+                {
+                    user_id: 'usr_alice'
+                }
+            );
             expect(memo).toEqual(['usr_alice', 'Seed memo for Alice']);
             const note = await adapter.selectOne(
                 adapter.userTable('abc', 'notes'),
@@ -148,25 +175,38 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
         });
 
         it('B4 缓存表内容 + 数字类型', async () => {
-            const row = await adapter.selectOne('public.cache_avatar', ['name', 'version'], {
-                id: 'avtr_2'
-            });
+            const row = await adapter.selectOne(
+                'public.cache_avatar',
+                ['name', 'version'],
+                {
+                    id: 'avtr_2'
+                }
+            );
             expect(row).toEqual(['Avatar Two', 2]);
         });
 
         it('B5 复合语义行:friend_log_history', async () => {
             const row = await adapter.selectOne(
                 adapter.userTable('abc', 'friend_log_history'),
-                ['display_name', 'trust_level', 'previous_trust_level', 'friend_number'],
+                [
+                    'display_name',
+                    'trust_level',
+                    'previous_trust_level',
+                    'friend_number'
+                ],
                 { user_id: 'usr_bob' }
             );
             expect(row).toEqual(['Bob', 'Known User', 'Trusted User', 4]);
         });
 
         it('B6 保留字列往返(cookies 的 key/value,PG 裸列名)', async () => {
-            const row = await adapter.selectOne('public.cookies', ['key', 'value'], {
-                key: 'seed_cookie_key'
-            });
+            const row = await adapter.selectOne(
+                'public.cookies',
+                ['key', 'value'],
+                {
+                    key: 'seed_cookie_key'
+                }
+            );
             expect(row).toEqual(['seed_cookie_key', '{"auth":"seed"}']);
         });
     });
@@ -190,10 +230,14 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
             expect(cacheTables).toContain('public.cache_world');
         });
 
+        // F3 的 22 计数依赖文件内声明顺序执行(vitest 约定,与 MySQL 文件
+        // 同构):当前只统计 account_* 表,仍须保持 F 在 C 套件之前。
         it('F3 listTablesTypes:account_* 22 条目结构', async () => {
             const tables = await adapter.listTablesTypes();
             expect(tables).toHaveLength(22);
-            expect(tables.some((t) => t.tableName === 'account_abc.notes')).toBe(true);
+            expect(
+                tables.some((t) => t.tableName === 'account_abc.notes')
+            ).toBe(true);
             for (const t of tables) {
                 expect(t.tableName).toMatch(/^account_\w+\.\w+$/);
                 expect(Array.isArray(t.columns)).toBe(true);
@@ -221,23 +265,35 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
                 num: 1
             });
             expect(affected).toBe(1);
-            const row = await adapter.selectOne('test_it_crud', ['id', 'val', 'num'], {
-                id: 'it1'
-            });
+            const row = await adapter.selectOne(
+                'test_it_crud',
+                ['id', 'val', 'num'],
+                {
+                    id: 'it1'
+                }
+            );
             expect(row).toEqual(['it1', 'v1', 1]);
         });
 
         it('C2 update + select 验证', async () => {
-            const affected = await adapter.update('test_it_crud', { val: 'v1-upd' }, {
+            const affected = await adapter.update(
+                'test_it_crud',
+                { val: 'v1-upd' },
+                {
+                    id: 'it1'
+                }
+            );
+            expect(affected).toBe(1);
+            const rows = await adapter.select('test_it_crud', ['val'], {
                 id: 'it1'
             });
-            expect(affected).toBe(1);
-            const rows = await adapter.select('test_it_crud', ['val'], { id: 'it1' });
             expect(rows).toEqual([['v1-upd']]);
         });
 
         it('C3 delete + countWhere 验证', async () => {
-            const affected = await adapter.delete('test_it_crud', { id: 'it1' });
+            const affected = await adapter.delete('test_it_crud', {
+                id: 'it1'
+            });
             expect(affected).toBe(1);
             const count = await adapter.countWhere('test_it_crud', 'id = @id', {
                 id: 'it1'
@@ -267,7 +323,9 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
                 id: 'it2'
             });
             expect(count).toBe(1);
-            const row = await adapter.selectOne('test_it_crud', ['val'], { id: 'it2' });
+            const row = await adapter.selectOne('test_it_crud', ['val'], {
+                id: 'it2'
+            });
             expect(row).toEqual(['a2']);
         });
 
@@ -296,12 +354,16 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
         });
 
         afterAll(async () => {
-            await adapter.executeNonQuery('DROP TABLE test_it_crud');
+            await adapter.executeNonQuery('DROP TABLE IF EXISTS test_it_crud');
         });
 
         it('D1 withTransaction commit 后可见', async () => {
             await adapter.withTransaction(async () => {
-                await adapter.insert('test_it_crud', { id: 'it1', val: 'v1', num: 1 });
+                await adapter.insert('test_it_crud', {
+                    id: 'it1',
+                    val: 'v1',
+                    num: 1
+                });
             });
             const row = await adapter.selectOne('test_it_crud', ['id', 'val'], {
                 id: 'it1'
@@ -328,10 +390,18 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
 
         it('D3 事务内读得到未 commit 的写', async () => {
             await adapter.withTransaction(async () => {
-                await adapter.insert('test_it_crud', { id: 'it3', val: 'v3', num: 3 });
-                const row = await adapter.selectOne('test_it_crud', ['id', 'val'], {
-                    id: 'it3'
+                await adapter.insert('test_it_crud', {
+                    id: 'it3',
+                    val: 'v3',
+                    num: 3
                 });
+                const row = await adapter.selectOne(
+                    'test_it_crud',
+                    ['id', 'val'],
+                    {
+                        id: 'it3'
+                    }
+                );
                 expect(row).toEqual(['it3', 'v3']);
             });
         });
@@ -345,16 +415,26 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
             expect(adapter._txStack).toHaveLength(0);
             // 随后一次正常事务成功(栈已恢复)
             await adapter.withTransaction(async () => {
-                await adapter.insert('test_it_crud', { id: 'it4', val: 'v4', num: 4 });
+                await adapter.insert('test_it_crud', {
+                    id: 'it4',
+                    val: 'v4',
+                    num: 4
+                });
             });
             expect(adapter._txStack).toHaveLength(0);
-            const row = await adapter.selectOne('test_it_crud', ['id'], { id: 'it4' });
+            const row = await adapter.selectOne('test_it_crud', ['id'], {
+                id: 'it4'
+            });
             expect(row).toEqual(['it4']);
         });
 
         it('D5 keepAlive:事务内 true,事务后 false', async () => {
             const inTx = await adapter.withTransaction(async () => {
-                await adapter.insert('test_it_crud', { id: 'it5', val: 'v5', num: 5 });
+                await adapter.insert('test_it_crud', {
+                    id: 'it5',
+                    val: 'v5',
+                    num: 5
+                });
                 return await adapter.keepAlive();
             });
             expect(inTx).toBe(true);
@@ -366,21 +446,37 @@ describeIntegration('PgSQLAdapter 集成(真实 C# 桥 + seed 库)', () => {
             // commit 路径:配对后栈清空,写入可见
             const connId1 = await adapter.beginTransaction();
             expect(adapter._txStack).toHaveLength(1);
-            await adapter.insert('test_it_crud', { id: 'it6', val: 'v6', num: 6 });
+            await adapter.insert('test_it_crud', {
+                id: 'it6',
+                val: 'v6',
+                num: 6
+            });
             await adapter.commit(connId1);
             expect(adapter._txStack).toHaveLength(0);
-            const committed = await adapter.countWhere('test_it_crud', 'id = @id', {
-                id: 'it6'
-            });
+            const committed = await adapter.countWhere(
+                'test_it_crud',
+                'id = @id',
+                {
+                    id: 'it6'
+                }
+            );
             expect(committed).toBe(1);
             // rollback 路径:配对后栈清空,写入不可见
             const connId2 = await adapter.beginTransaction();
-            await adapter.insert('test_it_crud', { id: 'it7', val: 'v7', num: 7 });
+            await adapter.insert('test_it_crud', {
+                id: 'it7',
+                val: 'v7',
+                num: 7
+            });
             await adapter.rollback(connId2);
             expect(adapter._txStack).toHaveLength(0);
-            const rolledBack = await adapter.countWhere('test_it_crud', 'id = @id', {
-                id: 'it7'
-            });
+            const rolledBack = await adapter.countWhere(
+                'test_it_crud',
+                'id = @id',
+                {
+                    id: 'it7'
+                }
+            );
             expect(rolledBack).toBe(0);
         });
     });

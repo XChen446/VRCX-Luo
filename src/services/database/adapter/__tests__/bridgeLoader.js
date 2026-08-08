@@ -60,7 +60,8 @@ function wrapBridge(instance) {
         get(target, prop, receiver) {
             const value = Reflect.get(target, prop, receiver);
             if (typeof value !== 'function') return value;
-            return (...callArgs) => value.apply(target, callArgs.map(toMapArgs));
+            return (...callArgs) =>
+                value.apply(target, callArgs.map(toMapArgs));
         }
     });
 }
