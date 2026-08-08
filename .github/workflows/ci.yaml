@@ -164,6 +164,32 @@ jobs:
       - run: npm ci
       - name: Create test database
         run: mysql -h 127.0.0.1 -u root -proot -e "CREATE DATABASE IF NOT EXISTS vrcx_test;"
+      - name: Import seed data
+        shell: bash
+        run: mysql -h "$MYSQL_TEST_HOST" -P "$MYSQL_TEST_PORT" -u "$MYSQL_TEST_USER" "$MYSQL_TEST_DATABASE" < test/fixtures/seed.mysql.sql
+        env:
+          MYSQL_PWD: ${{ env.MYSQL_TEST_PASSWORD }}
+      - name: Verify seed import
+        shell: bash
+        env:
+          MYSQL_PWD: ${{ env.MYSQL_TEST_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for pair in cache_avatar:2 gamelog_location:2 gamelog_join_leave:2 abc_notes:2 abc_feed_gps:2 abc_friend_log_history:2 abc_notifications:1; do
+            table="${pair%%:*}"
+            expected="${pair##*:}"
+            actual="$(mysql -h "$MYSQL_TEST_HOST" -P "$MYSQL_TEST_PORT" -u "$MYSQL_TEST_USER" --batch --skip-column-names "$MYSQL_TEST_DATABASE" -e "SELECT COUNT(*) FROM $table" | tr -d '\r')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::seed verify failed: $table expected=$expected actual=$actual"
+              exit 1
+            fi
+          done
+          user_tables="$(mysql -h "$MYSQL_TEST_HOST" -P "$MYSQL_TEST_PORT" -u "$MYSQL_TEST_USER" --batch --skip-column-names "$MYSQL_TEST_DATABASE" -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'abc\_%'" | tr -d '\r')"
+          global_tables="$(mysql -h "$MYSQL_TEST_HOST" -P "$MYSQL_TEST_PORT" -u "$MYSQL_TEST_USER" --batch --skip-column-names "$MYSQL_TEST_DATABASE" -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name NOT LIKE 'abc\_%'" | tr -d '\r')"
+          if [ "$user_tables" != "22" ] || [ "$global_tables" != "18" ]; then
+            echo "::error::seed table-count mismatch user=$user_tables global=$global_tables"
+            exit 1
+          fi
       - run: npm test -- --run
 
   # Phase 9 slice S12 (task 9.15): PostgreSQL 16/17 integration test matrix.
@@ -201,6 +227,32 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Import seed data
+        shell: bash
+        run: psql -v ON_ERROR_STOP=1 -f test/fixtures/seed.pgsql.sql
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+      - name: Verify seed import
+        shell: bash
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+        run: |
+          set -euo pipefail
+          for pair in public.cache_avatar:2 public.gamelog_location:2 public.gamelog_join_leave:2 account_abc.notes:2 account_abc.feed_gps:2 account_abc.friend_log_history:2 account_abc.notifications:1; do
+            table="${pair%%:*}"
+            expected="${pair##*:}"
+            actual="$(psql -tA -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM $table" | tr -d '\r')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::seed verify failed: $table expected=$expected actual=$actual"
+              exit 1
+            fi
+          done
+          user_tables="$(psql -tA -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'account_abc'" | tr -d '\r')"
+          global_tables="$(psql -tA -v ON_ERROR_STOP=1 -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" | tr -d '\r')"
+          if [ "$user_tables" != "22" ] || [ "$global_tables" != "18" ]; then
+            echo "::error::seed table-count mismatch user=$user_tables global=$global_tables"
+            exit 1
+          fi
       - name: Run PgSQL integration tests
         run: npm test -- --run '.pgsql.test.js'
         env:
