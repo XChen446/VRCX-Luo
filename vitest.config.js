@@ -28,7 +28,8 @@ export default defineConfig({
                 'src/localization/**',
                 'src/lib/**/!(*.test).js',
                 'src/components/ui/**/*.vue',
-                'src/components/ui/**/index.js'
+                'src/components/ui/**/index.js',
+                'src/services/database/adapter/__tests__/**'
             ]
         }
     },
