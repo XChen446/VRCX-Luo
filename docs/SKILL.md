@@ -25,6 +25,9 @@ description: Use when answering questions about VRCX-K's architecture, database 
 | 数据库表结构（全部表名/字段/主外键） | `architecture/models/vrcx_mcd_mld.md` / `vrcx_sr_mld.md` | "某表有哪些列"、表关系 |
 | 多账号设计 | `architecture/MULTI_ACCOUNT_V4_DETAIL_DESIGN.md` | AccountHub/AccountSession 设计 |
 | 新引擎开发模式 | `architecture/PGSQL_DESIGN.md` | 新增数据库引擎的接口/方言/测试参考 |
+| 适配器编写（如何实现新引擎适配器） | `architecture/ADAPTER_GUIDE.md` | "怎么写一个新 EngineAdapter"、C# 桥封装、类型映射、注册 |
+| 引擎搬迁（SQLite → MySQL/PgSQL） | `architecture/ENGINE_MIGRATION_GUIDE.md` | 数据搬迁操作、push/pull 机制、故障排查 |
+| 新引擎贡献流程 | `architecture/ENGINE_CONTRIBUTOR_GUIDE.md` | 贡献新引擎的立项→设计→实现→验收全流程 |
 | 功能清单（Luo 分支 / jirai 继承） | `features/LUO_FEATURES.md` / `features/JIRAI_FEATURES.md` | "某功能是否存在、何时加入" |
 | ER 图/DDL 多格式 | `architecture/models/vrcx_erd.*`、`vrcx_mcd_ddl.sql` 等 | 图表/DDL 形态需要 |
 
@@ -37,6 +40,8 @@ description: Use when answering questions about VRCX-K's architecture, database 
 | "某个功能是不是存在 / 什么时候加的" | `features/` 两篇 → Grep 关键词 |
 | "事务里能不能 await 用户交互" | `TRANSACTION_DESIGN.md` → keepAlive 节 |
 | "新增一张表要动哪些地方" | `CONFIG_REFACTOR.md`（迁移）+ `ADAPTER_API.md`（方法）+ 模型链（更新协议） |
+| "怎么加一个新数据库引擎" | `ENGINE_CONTRIBUTOR_GUIDE.md`（流程）+ `ADAPTER_GUIDE.md`（编码步骤）+ `PGSQL_DESIGN.md`（案例） |
+| "怎么把 SQLite 数据搬到 MySQL/PG / 切引擎" | `ENGINE_MIGRATION_GUIDE.md` → 前置条件 + UI 步骤 |
 
 ## 检索规则
 
@@ -49,7 +54,7 @@ description: Use when answering questions about VRCX-K's architecture, database 
 
 | 状态标注 | 含义 | 引用方式 |
 |---|---|---|
-| 现状文档（DATA_REFRESH / ADAPTER_API / CONFIG_REFACTOR / TRANSACTION_DESIGN） | 与代码同步维护 | 可直接引用 |
+| 现状文档（DATA_REFRESH / ADAPTER_API / CONFIG_REFACTOR / TRANSACTION_DESIGN / ADAPTER_GUIDE / ENGINE_MIGRATION_GUIDE / ENGINE_CONTRIBUTOR_GUIDE） | 与代码同步维护 | 可直接引用 |
 | 设计稿 + "已实现"标注（PGSQL_DESIGN / MULTI_ACCOUNT） | 设计意图，含"实现演进/偏离"标注 | 引用时交叉验证代码，标注处如实引用 |
 | 历史清单（features/ 两篇） | 功能记录，可能滞后 | 结合 git 历史 / tasklist 佐证 |
 

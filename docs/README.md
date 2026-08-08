@@ -19,6 +19,9 @@
 | 文档 | 内容 |
 |---|---|
 | [EngineAdapter API 参考](./architecture/ADAPTER_API.md) | 三引擎统一契约：全部公开方法签名、方言差异、事务、事件推送（onTableChange 消费方指南） |
+| [适配器编写指南](./architecture/ADAPTER_GUIDE.md) | 从零实现新 EngineAdapter 的步骤化教程：C# 桥封装、47 个 @abstract、参数绑定、类型映射、注册、测试与检查清单 |
+| [引擎迁移指南](./architecture/ENGINE_MIGRATION_GUIDE.md) | SQLite → MySQL/PgSQL 数据搬迁：前置条件、UI 操作步骤、push/pull 机制、故障排查与已知限制 |
+| [新引擎贡献指南](./architecture/ENGINE_CONTRIBUTOR_GUIDE.md) | 添加新数据库引擎的全流程：立项→设计→实现→测试→文档→验收，含检查清单与代码规范 |
 | [PostgreSQL 适配器设计（Phase 9）](./architecture/PGSQL_DESIGN.md) | 新引擎设计模式参考：接口清单、方言差异表、失败模式、测试计划（已实现，含偏离标注） |
 | [依赖安全记录](./architecture/SECURITY_NOTES.md) | npm audit 基线、已知豁免漏洞、allowScripts 批准记录 |
 | [Windows CEF 本地测试与安全重启](#) | 见主 README「从源码构建」章节（AGENTS.md 亦含要点） |
